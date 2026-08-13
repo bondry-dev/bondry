@@ -257,13 +257,13 @@ extension BondryEncryptedStore {
   }
 }
 
-private func requireSuccess(_ status: BondryStatus) throws {
+func requireSuccess(_ status: BondryStatus) throws {
   guard status == BONDRY_STATUS_OK else {
     throw BondryEncryptedStoreError(status: status)
   }
 }
 
-private func queryRecords<Record>(
+func queryRecords<Record>(
   _ query: (UnsafeMutablePointer<Record>?, Int, UnsafeMutablePointer<Int>) -> BondryStatus
 ) throws -> [Record] {
   var requiredCount = 0
@@ -292,7 +292,7 @@ private func queryRecords<Record>(
   throw BondryEncryptedStoreError.bufferTooSmall
 }
 
-private func withUTF8Bytes<Result>(
+func withUTF8Bytes<Result>(
   _ value: String,
   _ body: (UnsafePointer<UInt8>, Int) throws -> Result
 ) rethrows -> Result {
@@ -308,7 +308,7 @@ private func withUTF8Bytes<Result>(
   }
 }
 
-private func withOptionalUTF8Bytes<Result>(
+func withOptionalUTF8Bytes<Result>(
   _ value: String?,
   _ body: (UnsafePointer<UInt8>?, Int) throws -> Result
 ) rethrows -> Result {

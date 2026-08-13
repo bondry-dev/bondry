@@ -51,17 +51,25 @@ public struct BondryPrincipal: Equatable, Identifiable, Sendable {
 
   init(record: BondryPrincipalV1) throws {
     id = try decodeCString(record.id)
-    kind =
-      switch record.kind {
-      case BONDRY_PRINCIPAL_KIND_USER_V1:
-        .user
-      case BONDRY_PRINCIPAL_KIND_APPLICATION_V1:
-        .application
-      case BONDRY_PRINCIPAL_KIND_SYSTEM_V1:
-        .system
-      default:
-        throw BondryEncryptedStoreError.invalidData
-      }
+    kind = try Self.decodeKind(record.kind)
+  }
+
+  init(id: String, cKind: UInt32) throws {
+    self.id = id
+    kind = try Self.decodeKind(cKind)
+  }
+
+  private static func decodeKind(_ value: UInt32) throws -> BondryPrincipalKind {
+    switch value {
+    case BONDRY_PRINCIPAL_KIND_USER_V1:
+      .user
+    case BONDRY_PRINCIPAL_KIND_APPLICATION_V1:
+      .application
+    case BONDRY_PRINCIPAL_KIND_SYSTEM_V1:
+      .system
+    default:
+      throw BondryEncryptedStoreError.invalidData
+    }
   }
 }
 

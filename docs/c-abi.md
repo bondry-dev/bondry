@@ -60,7 +60,9 @@ Rust unwinding is caught at each fallible ABI entry point and maps to `BONDRY_ST
 
 ## Apple Bindings
 
-`BondrySQLCipher` is the native Swift wrapper over ABI v1. It validates the linked ABI version, accepts only file URLs, maps every public status, closes its handle during deinitialization, and never exposes the opaque pointer. It provides Swift models for clients, non-secret token metadata, principals, exact capability grants, and audit events while transparently retrying list queries that grow between calls.
+`BondrySQLCipher` is the native Swift wrapper over ABI v1. It validates the linked ABI version, accepts only file URLs, maps every public status, closes its handle during deinitialization, and never exposes the opaque pointer. It provides Swift models for clients, non-secret token metadata, principals, exact capability grants, audit events, and capability descriptors while transparently retrying list queries that grow between calls.
+
+Swift hosts register `@Sendable async throws` capability handlers and dispatch JSON as `Data`. The wrapper copies every borrowed C invocation before starting Swift concurrency work and retains each handler until the C release callback. Unknown Swift errors become the fixed `handler_failed` code; only an explicit `BondryCapabilityHandlerError` code crosses the trust boundary. Dispatch uses checked continuations and supports completion before the C entry point returns or later from another thread. A Swift task cancelled before dispatch does not start it. Once the C core accepts an invocation, it runs through handler completion and required auditing even if the waiting task is cancelled later.
 
 New token secrets remain in a private C record owned by shared Swift storage. The record is cleared when its last `BondryIssuedToken` value is released. Byte-oriented consumers can avoid a `String` copy with `withUnsafeSecretBytes`; `copySecret()` exists for callers that deliberately need one.
 

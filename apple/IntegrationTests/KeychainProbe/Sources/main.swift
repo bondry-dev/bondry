@@ -92,9 +92,37 @@ do {
     } catch BondryEncryptedStoreError.authenticationRejected {
     }
     guard try store.authenticate(token: replacement).id == client.id,
-      try store.revokeToken(replacement.metadata.id),
-      try store.tokens(for: client.id).count == 2,
-      try store.recentAuditEvents(limit: 10).isEmpty
+      try store.tokens(for: client.id).count == 2
+    else {
+      throw ProbeError.administrationMismatch
+    }
+    try store.registerCapability(
+      BondryCapability(
+        id: "probe.read",
+        summary: "Read probe state",
+        effect: .readOnly
+      )
+    ) { invocation in
+      guard invocation.principal.id == client.id,
+        invocation.adapterID == "rest",
+        invocation.capabilityID == "probe.read",
+        invocation.inputJSON == Data(#"{"detail":true}"#.utf8)
+      else {
+        throw ProbeError.administrationMismatch
+      }
+      return Data(#"{"ready":true}"#.utf8)
+    }
+    guard try store.capabilities().map(\.id) == ["probe.read"],
+      try await store.dispatch(
+        invocationID: "probe-request",
+        adapterID: "rest",
+        token: replacement,
+        capabilityID: "probe.read",
+        inputJSON: Data(#"{"detail":true}"#.utf8)
+      ) == Data(#"{"ready":true}"#.utf8),
+      try store.recentAuditEvents(limit: 10).map(\.outcome) == [.succeeded, .started],
+      try store.unregisterCapability("probe.read"),
+      try store.revokeToken(replacement.metadata.id)
     else {
       throw ProbeError.administrationMismatch
     }
@@ -112,7 +140,10 @@ do {
     throw ProbeError.cleanupFailed(deleteStatus)
   }
 
-  print("Keychain, SQLCipher, and authentication round trips passed; temporary data was removed.")
+  print(
+    "Keychain, SQLCipher, and capability dispatch round trips passed; "
+      + "temporary data was removed."
+  )
 } catch {
   fail("Keychain probe failed: \(error)")
 }

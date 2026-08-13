@@ -71,6 +71,8 @@ final class BondryEncryptedStoreTests: XCTestCase {
       (BONDRY_STATUS_INVALID_PATH, .invalidPath),
       (BONDRY_STATUS_INVALID_ARGUMENT, .invalidArgument),
       (BONDRY_STATUS_BUFFER_TOO_SMALL, .bufferTooSmall),
+      (BONDRY_STATUS_INVALID_JSON, .invalidJSON),
+      (BONDRY_STATUS_PAYLOAD_TOO_LARGE, .payloadTooLarge),
       (BONDRY_STATUS_FILE_SYSTEM, .fileSystem),
       (BONDRY_STATUS_DATABASE, .database),
       (BONDRY_STATUS_UNSUPPORTED_SCHEMA, .unsupportedSchema),
@@ -85,6 +87,7 @@ final class BondryEncryptedStoreTests: XCTestCase {
       (BONDRY_STATUS_ENTROPY_UNAVAILABLE, .entropyUnavailable),
       (BONDRY_STATUS_TIME_UNAVAILABLE, .timeUnavailable),
       (BONDRY_STATUS_GENERATION_EXHAUSTED, .generationExhausted),
+      (BONDRY_STATUS_ALREADY_EXISTS, .alreadyExists),
       (BONDRY_STATUS_INTERNAL_FAILURE, .internalFailure(BONDRY_STATUS_INTERNAL_FAILURE)),
       (99, .internalFailure(99)),
     ]

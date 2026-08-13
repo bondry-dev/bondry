@@ -47,6 +47,29 @@ let principal = try store.authenticate(token: issued)
 let tokenForDeliberateCopy = issued.copySecret()
 ```
 
+Applications can register protocol-neutral async capabilities and dispatch with the issued token without creating a Swift `String` copy of its secret:
+
+```swift
+try store.registerCapability(
+  BondryCapability(
+    id: "battery.status",
+    summary: "Read battery status",
+    effect: .readOnly
+  )
+) { invocation in
+  try await batteryStatusJSON(for: invocation.inputJSON)
+}
+
+let output = try await store.dispatch(
+  adapterID: "rest",
+  token: issued,
+  capabilityID: "battery.status",
+  inputJSON: Data("{}".utf8)
+)
+```
+
+Capability inputs and outputs must be JSON and are limited to 1 MiB each. Throw `BondryCapabilityHandlerError.failed(code:)` only with a stable, non-sensitive code intended for audit and adapter responses. Other Swift errors are mapped to `handler_failed` without exposing their descriptions.
+
 The wrapper passes the bytes only for the duration of the open call. The host must not write them to defaults, logs, crash metadata, environment variables, or a file next to the database.
 
 `DatabaseKeyMaterial` redacts its normal and debug descriptions. Swift's value semantics can still leave transient copies in process memory, so the provider does not claim memory protection after a successful read.
@@ -77,4 +100,4 @@ xcodebuild -quiet -project KeychainProbe.xcodeproj \
 DerivedData/Build/Products/Debug/KeychainProbe.app/Contents/MacOS/KeychainProbe
 ```
 
-The probe uses a random service name, opens a real encrypted Rust store through `BondrySQLCipher`, exercises client and token administration through the Swift API, verifies that its file has no plaintext SQLite header, and removes both the Keychain item and database before exiting. Generated projects and build products are ignored by Git.
+The probe uses a random service name, opens a real encrypted Rust store through `BondrySQLCipher`, exercises client and token administration plus async capability dispatch through the Swift API, verifies that its file has no plaintext SQLite header, and removes both the Keychain item and database before exiting. Generated projects and build products are ignored by Git.

@@ -9,6 +9,8 @@ public enum BondryEncryptedStoreError: Error, Equatable, Sendable {
   case invalidPath
   case invalidArgument
   case bufferTooSmall
+  case invalidJSON
+  case payloadTooLarge
   case fileSystem
   case database
   case unsupportedSchema
@@ -23,6 +25,7 @@ public enum BondryEncryptedStoreError: Error, Equatable, Sendable {
   case entropyUnavailable
   case timeUnavailable
   case generationExhausted
+  case alreadyExists
   case invalidHandle
   case internalFailure(Int32)
 
@@ -40,6 +43,10 @@ public enum BondryEncryptedStoreError: Error, Equatable, Sendable {
       self = .invalidArgument
     case BONDRY_STATUS_BUFFER_TOO_SMALL:
       self = .bufferTooSmall
+    case BONDRY_STATUS_INVALID_JSON:
+      self = .invalidJSON
+    case BONDRY_STATUS_PAYLOAD_TOO_LARGE:
+      self = .payloadTooLarge
     case BONDRY_STATUS_FILE_SYSTEM:
       self = .fileSystem
     case BONDRY_STATUS_DATABASE:
@@ -68,6 +75,8 @@ public enum BondryEncryptedStoreError: Error, Equatable, Sendable {
       self = .timeUnavailable
     case BONDRY_STATUS_GENERATION_EXHAUSTED:
       self = .generationExhausted
+    case BONDRY_STATUS_ALREADY_EXISTS:
+      self = .alreadyExists
     default:
       self = .internalFailure(status)
     }
