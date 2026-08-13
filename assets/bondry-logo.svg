@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <title>Bondry</title>
+  <g fill="none" stroke-linecap="round" stroke-width="15" transform="rotate(-10 64 64)">
+    <path d="M25 39h53" stroke="#BCEFD9" />
+    <path d="M43 58h60" stroke="#7CDFC8" />
+    <path d="M24 78h61" stroke="#68CBE3" />
+    <path d="M47 98h55" stroke="#687FDD" />
+  </g>
+</svg>

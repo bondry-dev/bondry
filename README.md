@@ -1,4 +1,8 @@
-# Bondry
+<p align="center">
+  <img src="assets/bondry-logo.svg" width="160" height="160" alt="Bondry">
+</p>
+
+<h1 align="center">Bondry</h1>
 
 Bondry is an embeddable automation foundation for exposing an application's capabilities through multiple interfaces without coupling application logic to any one protocol.
 
