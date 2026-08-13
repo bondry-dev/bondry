@@ -109,7 +109,11 @@ version = "0.0.1"
 dependencies = [
  "bondry-auth",
  "bondry-core",
+ "bondry-http",
+ "bondry-mcp",
+ "bondry-rest",
  "bondry-store-sqlcipher",
+ "serde",
  "serde_json",
  "tempfile",
 ]

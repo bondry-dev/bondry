@@ -8,6 +8,10 @@ struct BondryStoreHandle {
     uint8_t marker;
 };
 
+struct BondryServerHandle {
+    uint8_t marker;
+};
+
 static uint32_t abi_version = BONDRY_ABI_VERSION_V1;
 static BondryStatus open_status = BONDRY_STATUS_OK;
 static BondryStatus check_status = BONDRY_STATUS_OK;
@@ -51,6 +55,14 @@ static uint32_t captured_capability_effect = 0;
 static size_t captured_input_length = 0;
 static uint8_t captured_input[1024];
 static uint32_t dispatch_outcome = 0;
+static BondryStatus server_start_status = BONDRY_STATUS_OK;
+static BondryStatus server_stop_status = BONDRY_STATUS_OK;
+static int return_null_server_handle = 0;
+static int return_invalid_server_address = 0;
+static size_t server_start_count = 0;
+static size_t server_stop_count = 0;
+static size_t captured_server_configuration_length = 0;
+static uint8_t captured_server_configuration[65536];
 static void *capability_context = NULL;
 static BondryCapabilityInvokeV1 capability_invoke = NULL;
 static BondryCapabilityReleaseV1 capability_release = NULL;
@@ -187,6 +199,14 @@ void bondry_test_reset(void) {
     captured_input_length = 0;
     memset(captured_input, 0, sizeof(captured_input));
     dispatch_outcome = 0;
+    server_start_status = BONDRY_STATUS_OK;
+    server_stop_status = BONDRY_STATUS_OK;
+    return_null_server_handle = 0;
+    return_invalid_server_address = 0;
+    server_start_count = 0;
+    server_stop_count = 0;
+    captured_server_configuration_length = 0;
+    memset(captured_server_configuration, 0, sizeof(captured_server_configuration));
 }
 
 void bondry_test_set_abi_version(uint32_t version) {
@@ -215,6 +235,22 @@ void bondry_test_set_client_list_growth(int enabled) {
 
 void bondry_test_set_dispatch_outcome(uint32_t outcome) {
     dispatch_outcome = outcome;
+}
+
+void bondry_test_set_server_start_status(int32_t status) {
+    server_start_status = status;
+}
+
+void bondry_test_set_server_stop_status(int32_t status) {
+    server_stop_status = status;
+}
+
+void bondry_test_set_null_server_handle(int enabled) {
+    return_null_server_handle = enabled;
+}
+
+void bondry_test_set_invalid_server_address(int enabled) {
+    return_invalid_server_address = enabled;
 }
 
 size_t bondry_test_open_count(void) {
@@ -283,6 +319,24 @@ size_t bondry_test_dispatch_count(void) {
 
 size_t bondry_test_release_capability_count(void) {
     return release_capability_count;
+}
+
+size_t bondry_test_server_start_count(void) {
+    return server_start_count;
+}
+
+size_t bondry_test_server_stop_count(void) {
+    return server_stop_count;
+}
+
+size_t bondry_test_server_configuration_length(void) {
+    return captured_server_configuration_length;
+}
+
+uint8_t bondry_test_server_configuration_byte(size_t index) {
+    return index < sizeof(captured_server_configuration)
+        ? captured_server_configuration[index]
+        : 0;
 }
 
 size_t bondry_test_path_length(void) {
@@ -408,6 +462,60 @@ BondryStatus bondry_store_close_v1(BondryStoreHandle *store) {
         free(store);
     }
     return BONDRY_STATUS_OK;
+}
+
+BondryStatus bondry_server_start_v1(
+    const BondryStoreHandle *store,
+    const uint8_t *configuration_json,
+    size_t configuration_json_length,
+    BondryServerHandle **out_server,
+    BondryServerAddressV1 *out_address
+) {
+    server_start_count += 1;
+    capture_bytes(
+        captured_server_configuration,
+        sizeof(captured_server_configuration),
+        &captured_server_configuration_length,
+        configuration_json,
+        configuration_json_length
+    );
+    if (out_server != NULL) {
+        *out_server = NULL;
+    }
+    if (out_address != NULL) {
+        memset(out_address, 0, sizeof(*out_address));
+    }
+    if (server_start_status != BONDRY_STATUS_OK) {
+        return server_start_status;
+    }
+    if (store == NULL || configuration_json == NULL || out_server == NULL ||
+        out_address == NULL) {
+        return BONDRY_STATUS_NULL_POINTER;
+    }
+    if (return_null_server_handle) {
+        return BONDRY_STATUS_OK;
+    }
+    BondryServerHandle *server = malloc(sizeof(*server));
+    if (server == NULL) {
+        return BONDRY_STATUS_INTERNAL_FAILURE;
+    }
+    server->marker = 1;
+    *out_server = server;
+    if (return_invalid_server_address) {
+        out_address->address[0] = 0xFF;
+    } else {
+        write_string(out_address->address, sizeof(out_address->address), "127.0.0.1");
+    }
+    out_address->port = 54321;
+    return BONDRY_STATUS_OK;
+}
+
+BondryStatus bondry_server_stop_v1(BondryServerHandle *server) {
+    if (server != NULL) {
+        server_stop_count += 1;
+        free(server);
+    }
+    return server_stop_status;
 }
 
 BondryStatus bondry_client_create_v1(

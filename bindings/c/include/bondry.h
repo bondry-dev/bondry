@@ -36,6 +36,9 @@ typedef int32_t BondryStatus;
 #define BONDRY_STATUS_TIME_UNAVAILABLE ((BondryStatus)26)
 #define BONDRY_STATUS_GENERATION_EXHAUSTED ((BondryStatus)27)
 #define BONDRY_STATUS_ALREADY_EXISTS ((BondryStatus)28)
+#define BONDRY_STATUS_SERVER_BIND ((BondryStatus)29)
+#define BONDRY_STATUS_SERVER_START ((BondryStatus)30)
+#define BONDRY_STATUS_SERVER_STOP ((BondryStatus)31)
 #define BONDRY_STATUS_INTERNAL_FAILURE ((BondryStatus)255)
 
 #define BONDRY_IDENTIFIER_CAPACITY_V1 ((size_t)129)
@@ -43,7 +46,9 @@ typedef int32_t BondryStatus;
 #define BONDRY_TOKEN_CAPACITY_V1 ((size_t)100)
 #define BONDRY_AUDIT_DETAIL_CAPACITY_V1 ((size_t)129)
 #define BONDRY_CAPABILITY_SUMMARY_CAPACITY_V1 ((size_t)257)
+#define BONDRY_SERVER_ADDRESS_CAPACITY_V1 ((size_t)46)
 #define BONDRY_MAX_JSON_PAYLOAD_LENGTH_V1 ((size_t)1048576)
+#define BONDRY_SERVER_CONFIGURATION_VERSION_V1 ((uint32_t)1)
 
 #define BONDRY_PRINCIPAL_KIND_USER_V1 ((uint32_t)1)
 #define BONDRY_PRINCIPAL_KIND_APPLICATION_V1 ((uint32_t)2)
@@ -70,6 +75,12 @@ typedef int32_t BondryStatus;
 #define BONDRY_DISPATCH_OUTCOME_INVALID_INPUT_V1 ((uint32_t)6)
 
 typedef struct BondryStoreHandle BondryStoreHandle;
+typedef struct BondryServerHandle BondryServerHandle;
+
+typedef struct BondryServerAddressV1 {
+    uint8_t address[BONDRY_SERVER_ADDRESS_CAPACITY_V1];
+    uint16_t port;
+} BondryServerAddressV1;
 
 typedef struct BondryClientV1 {
     uint8_t id[BONDRY_IDENTIFIER_CAPACITY_V1];
@@ -182,6 +193,21 @@ BondryStatus bondry_store_check_v1(const BondryStoreHandle *store);
 
 /* A non-null handle must be live and must not be used again. Null is allowed. */
 BondryStatus bondry_store_close_v1(BondryStoreHandle *store);
+
+/* The configuration is a bounded UTF-8 JSON document. On success, out_server
+ * owns one handle that must be passed exactly once to stop, and out_address
+ * contains the actual bound IP address and port. The running server owns the
+ * storage and capability references it needs after this call returns. */
+BondryStatus bondry_server_start_v1(
+    const BondryStoreHandle *store,
+    const uint8_t *configuration_json,
+    size_t configuration_json_length,
+    BondryServerHandle **out_server,
+    BondryServerAddressV1 *out_address
+);
+
+/* A non-null handle must be live and must not be used again. Null is allowed. */
+BondryStatus bondry_server_stop_v1(BondryServerHandle *server);
 
 BondryStatus bondry_client_create_v1(
     const BondryStoreHandle *store,

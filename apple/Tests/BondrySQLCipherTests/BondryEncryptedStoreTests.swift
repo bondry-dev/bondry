@@ -88,6 +88,9 @@ final class BondryEncryptedStoreTests: XCTestCase {
       (BONDRY_STATUS_TIME_UNAVAILABLE, .timeUnavailable),
       (BONDRY_STATUS_GENERATION_EXHAUSTED, .generationExhausted),
       (BONDRY_STATUS_ALREADY_EXISTS, .alreadyExists),
+      (BONDRY_STATUS_SERVER_BIND, .serverBind),
+      (BONDRY_STATUS_SERVER_START, .serverStart),
+      (BONDRY_STATUS_SERVER_STOP, .serverStop),
       (BONDRY_STATUS_INTERNAL_FAILURE, .internalFailure(BONDRY_STATUS_INTERNAL_FAILURE)),
       (99, .internalFailure(99)),
     ]

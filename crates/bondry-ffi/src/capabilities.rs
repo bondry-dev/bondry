@@ -1,12 +1,12 @@
 use std::{
-    collections::hash_map::Entry,
+    collections::{HashMap, hash_map::Entry},
     ffi::c_void,
     future::{Future, ready},
     panic::{AssertUnwindSafe, catch_unwind},
     pin::Pin,
     ptr, slice,
     sync::{
-        Arc, Mutex,
+        Arc, Mutex, RwLock,
         atomic::{AtomicBool, Ordering},
     },
     task::{Context, Poll, Wake, Waker},
@@ -14,11 +14,13 @@ use std::{
 
 use bondry_auth::AuthenticationError;
 use bondry_core::{
-    AdapterId, AuditSink, CapabilityDescriptor, CapabilityEffect, CapabilityHandler, CapabilityId,
-    CapabilityRegistry, DenialReason, DispatchError, Dispatcher, GrantStore, HandlerError,
-    HandlerErrorCode, HandlerFuture, Invocation, InvocationContext, InvocationId,
+    AdapterId, AuditSink, AutomationService, CapabilityDescriptor, CapabilityDiscoveryError,
+    CapabilityEffect, CapabilityHandler, CapabilityId, CapabilityRegistry, DenialReason,
+    DispatchError, DispatchFuture as ServiceDispatchFuture, Dispatcher, GrantStore, HandlerError,
+    HandlerErrorCode, HandlerFuture, Invocation, InvocationContext, InvocationId, Principal,
     StoredGrantPolicy,
 };
+use bondry_store_sqlcipher::SqlCipherStore;
 use serde_json::Value;
 
 use crate::{
@@ -126,6 +128,69 @@ struct SharedForeignHandler(Arc<ForeignHandler>);
 impl CapabilityHandler for SharedForeignHandler {
     fn invoke(&self, context: InvocationContext, input: Value) -> HandlerFuture {
         self.0.invoke(context, input)
+    }
+}
+
+pub(crate) struct ForeignAutomationService {
+    store: Arc<SqlCipherStore>,
+    capabilities: Arc<RwLock<HashMap<CapabilityId, RegisteredCapability>>>,
+}
+
+impl ForeignAutomationService {
+    pub(crate) const fn new(
+        store: Arc<SqlCipherStore>,
+        capabilities: Arc<RwLock<HashMap<CapabilityId, RegisteredCapability>>>,
+    ) -> Self {
+        Self {
+            store,
+            capabilities,
+        }
+    }
+
+    fn dispatcher(&self, capability: Option<&CapabilityId>) -> Result<Dispatcher, ()> {
+        let capabilities = self.capabilities.read().map_err(|_| ())?;
+        let selected = match capability {
+            Some(capability) => capabilities.get(capability).into_iter().collect::<Vec<_>>(),
+            None => capabilities.values().collect(),
+        };
+        let mut registry = CapabilityRegistry::new();
+        for registered in selected {
+            registry
+                .register(
+                    registered.descriptor.clone(),
+                    SharedForeignHandler(registered.handler.clone()),
+                )
+                .map_err(|_| ())?;
+        }
+        let policy_store: Arc<dyn GrantStore> = self.store.clone();
+        let audit: Arc<dyn AuditSink> = self.store.clone();
+        Ok(Dispatcher::from_shared(
+            registry,
+            Arc::new(StoredGrantPolicy::from_shared(policy_store)),
+            audit,
+        ))
+    }
+}
+
+impl AutomationService for ForeignAutomationService {
+    fn capabilities(
+        &self,
+        principal: &Principal,
+        adapter: &AdapterId,
+    ) -> Result<Vec<CapabilityDescriptor>, CapabilityDiscoveryError> {
+        self.dispatcher(None)
+            .map_err(|()| CapabilityDiscoveryError::PolicyUnavailable)?
+            .capabilities(principal, adapter)
+    }
+
+    fn dispatch(&self, invocation: Invocation) -> ServiceDispatchFuture<'_> {
+        let dispatcher = self.dispatcher(Some(invocation.capability()));
+        Box::pin(async move {
+            match dispatcher {
+                Ok(dispatcher) => dispatcher.dispatch(invocation).await,
+                Err(()) => Err(DispatchError::AccessDenied(DenialReason::PolicyUnavailable)),
+            }
+        })
     }
 }
 

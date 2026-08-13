@@ -16,6 +16,7 @@ mod auth;
 mod capabilities;
 mod grants;
 mod records;
+mod server;
 
 pub use audit::{bondry_audit_for_principal_v1, bondry_audit_recent_v1};
 pub use auth::{
@@ -32,6 +33,10 @@ pub use grants::{bondry_grant_add_v1, bondry_grant_remove_v1, bondry_grants_list
 pub use records::{
     BondryAuditEventV1, BondryCapabilityV1, BondryClientV1, BondryDispatchResultV1, BondryGrantV1,
     BondryInvocationV1, BondryIssuedTokenV1, BondryPrincipalV1, BondryTokenMetadataV1,
+};
+pub use server::{
+    BONDRY_SERVER_ADDRESS_CAPACITY_V1, BONDRY_SERVER_CONFIGURATION_VERSION_V1,
+    BondryServerAddressV1, BondryServerHandle, bondry_server_start_v1, bondry_server_stop_v1,
 };
 
 /// The first Bondry C ABI version.
@@ -85,6 +90,12 @@ pub const BONDRY_STATUS_TIME_UNAVAILABLE: i32 = 26;
 pub const BONDRY_STATUS_GENERATION_EXHAUSTED: i32 = 27;
 /// A capability with the same identifier is already registered.
 pub const BONDRY_STATUS_ALREADY_EXISTS: i32 = 28;
+/// The requested local address or port could not be bound.
+pub const BONDRY_STATUS_SERVER_BIND: i32 = 29;
+/// The local server could not start.
+pub const BONDRY_STATUS_SERVER_START: i32 = 30;
+/// The local server did not stop cleanly.
+pub const BONDRY_STATUS_SERVER_STOP: i32 = 31;
 /// Bondry stopped an internal failure at the ABI boundary.
 pub const BONDRY_STATUS_INTERNAL_FAILURE: i32 = 255;
 
@@ -97,7 +108,8 @@ pub struct BondryStoreHandle {
 struct StoreHandle {
     store: Arc<SqlCipherStore>,
     auth: AuthManager,
-    capabilities: RwLock<HashMap<bondry_core::CapabilityId, capabilities::RegisteredCapability>>,
+    capabilities:
+        Arc<RwLock<HashMap<bondry_core::CapabilityId, capabilities::RegisteredCapability>>>,
 }
 
 /// Returns the ABI version implemented by the linked library.
@@ -160,7 +172,7 @@ pub unsafe extern "C" fn bondry_store_open_v1(
         let handle = Box::new(StoreHandle {
             store,
             auth: AuthManager::from_shared(auth_store),
-            capabilities: RwLock::new(HashMap::new()),
+            capabilities: Arc::new(RwLock::new(HashMap::new())),
         });
 
         // SAFETY: out_store was validated above and receives ownership of this allocation.

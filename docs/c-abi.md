@@ -20,6 +20,7 @@ It also exposes administrative operations without adding transport or applicatio
 - Query recent or per-principal audit metadata with a limit from 1 through 1,000
 - Register, enumerate, and unregister host-owned capability handlers
 - Authenticate and asynchronously dispatch protocol-neutral JSON invocations
+- Start and stop a shared local HTTP server with independently enabled REST and MCP adapters
 
 The store is an opaque handle. Foreign callers never allocate it, inspect its layout, or receive a Rust reference. Opening transfers one ownership unit to the caller, and closing consumes it. A non-null handle must be closed exactly once and must not be closed concurrently with another operation.
 
@@ -45,6 +46,49 @@ Foreign handler completion can be synchronous or asynchronous and can occur on a
 
 An `OK` return accepts the dispatch and guarantees exactly one result callback, which may occur before the entry point returns. An immediate validation, authentication, or storage error never calls the result callback and leaves its context caller-owned. Accepted results distinguish success, missing capability, access denial, invalid capability input, audit unavailability, and handler failure. Result pointers remain valid only for the callback duration.
 
+## Local Server
+
+`bondry_server_start_v1` accepts a bounded, versioned JSON configuration and returns an opaque server handle plus the actual bound IP address and port. Port zero requests an operating-system-selected port. The configuration selects REST, MCP, or both; bearer authentication remains the default at the Swift layer. Disabled authentication requires an explicit principal so grants and audit events remain attributable.
+
+The configuration includes the bind address, exact browser origins, rate limits, body and connection limits, timeouts, network-risk acknowledgements, and MCP implementation metadata. Unknown fields, duplicate adapters, inconsistent authentication fields, invalid limits, and MCP metadata without an enabled MCP adapter are rejected. Syntax errors return `BONDRY_STATUS_INVALID_JSON`; a syntactically valid but invalid configuration returns `BONDRY_STATUS_INVALID_ARGUMENT`.
+
+Configuration version one has this complete shape:
+
+```json
+{
+  "version": 1,
+  "bindAddress": "127.0.0.1",
+  "port": 0,
+  "authentication": {
+    "mode": "bearer",
+    "principalId": null,
+    "principalKind": null
+  },
+  "adapters": ["rest", "mcp"],
+  "mcpServer": {
+    "name": "example-app",
+    "title": "Example App",
+    "version": "1.0.0"
+  },
+  "allowedOrigins": [],
+  "requestsPerMinute": 120,
+  "authenticationFailuresPerMinute": 30,
+  "maxBodyBytes": 1048576,
+  "maxConnections": 64,
+  "headerReadTimeoutMilliseconds": 5000,
+  "requestTimeoutMilliseconds": 30000,
+  "shutdownGracePeriodMilliseconds": 2000,
+  "allowCleartextNetwork": false,
+  "allowUnauthenticatedNetwork": false
+}
+```
+
+Disabled authentication uses `mode: "disabled"` with a validated `principalId` and a `principalKind` of `user`, `application`, or `system`. Bearer mode requires both principal fields to be null. `mcpServer` must be null when MCP is disabled and must contain validated implementation metadata when MCP is enabled.
+
+The server clones the encrypted storage and live capability registry references it needs before returning. The store handle may therefore be closed after successful startup, although normal Swift ownership keeps the store and server together. Registration, unregistration, token revocation, client disablement, and grant changes take effect on subsequent requests without restarting the server.
+
+`bondry_server_stop_v1` consumes one server handle and waits for bounded graceful shutdown. Null is a no-op. Startup distinguishes invalid configuration, address binding failure, and other runtime startup failure without returning operating-system error text or paths.
+
 ## Errors and Panics
 
 Every function returns a stable integer status except the version query. Status values reveal safe administrative or storage categories but never Rust error text, SQL, paths, key material, or credential lookup details.
@@ -60,7 +104,7 @@ Rust unwinding is caught at each fallible ABI entry point and maps to `BONDRY_ST
 
 ## Apple Bindings
 
-`BondrySQLCipher` is the native Swift wrapper over ABI v1. It validates the linked ABI version, accepts only file URLs, maps every public status, closes its handle during deinitialization, and never exposes the opaque pointer. It provides Swift models for clients, non-secret token metadata, principals, exact capability grants, audit events, and capability descriptors while transparently retrying list queries that grow between calls.
+`BondrySQLCipher` is the native Swift wrapper over ABI v1. It validates the linked ABI version, accepts only file URLs, maps every public status, closes its handle during deinitialization, and never exposes the opaque pointer. It provides Swift models for clients, non-secret token metadata, principals, exact capability grants, audit events, capability descriptors, server configuration, and server lifecycle while transparently retrying list queries that grow between calls.
 
 Swift hosts register `@Sendable async throws` capability handlers and dispatch JSON as `Data`. The wrapper copies every borrowed C invocation before starting Swift concurrency work and retains each handler until the C release callback. Unknown Swift errors become the fixed `handler_failed` code; only an explicit `BondryCapabilityHandlerError` code crosses the trust boundary. Dispatch uses checked continuations and supports completion before the C entry point returns or later from another thread. A Swift task cancelled before dispatch does not start it. Once the C core accepts an invocation, it runs through handler completion and required auditing even if the waiting task is cancelled later.
 

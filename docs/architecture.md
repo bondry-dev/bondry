@@ -67,4 +67,4 @@ The host application defines capabilities and decides which principals and adapt
 
 The core targets platforms supported by Rust's standard library. Platform behavior belongs in adapters. Persistent local servers are not assumed on platforms that suspend background applications.
 
-Language bindings build on the versioned C ABI. ABI v1 covers encrypted-store ownership, client and token administration, bearer-token authentication, exact authorization grants, bounded audit queries, capability registration, and asynchronous dispatch. Foreign handlers receive protocol-neutral JSON and trusted invocation metadata only after authentication and exact-grant authorization.
+Language bindings build on the versioned C ABI. ABI v1 covers encrypted-store ownership, client and token administration, bearer-token authentication, exact authorization grants, bounded audit queries, capability registration, asynchronous dispatch, and local HTTP server ownership. Foreign handlers receive protocol-neutral JSON and trusted invocation metadata only after authentication and exact-grant authorization.

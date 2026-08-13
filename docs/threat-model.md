@@ -35,6 +35,7 @@ Capability handlers are host-application code. They are trusted to enforce domai
 - The Apple provider stores the database key in Data Protection Keychain as a non-synchronizing, device-only item that is available only while the device is unlocked.
 - The Apple provider generates keys with Security.framework cryptographic randomness, rejects malformed stored keys, and resolves concurrent first-use creation without overwriting the winning key.
 - The C ABI validates pointer presence, lengths, UTF-8 input, typed values, bounded query limits, ABI versions, and opaque-handle results before use.
+- The C server boundary rejects oversized, malformed, unknown, duplicated, or internally inconsistent configuration before opening a listener.
 - Rust layouts and error objects never cross the ABI, and unwinding is stopped before control returns to foreign code.
 - C authentication failures do not distinguish malformed, unknown, mismatched, expired, revoked, or disabled-client bearer tokens.
 - C results use caller-owned fixed-capacity records. One-time token records have an explicit clearing operation, and audit records exclude credentials and payloads.
@@ -48,6 +49,7 @@ Capability handlers are host-application code. They are trusted to enforce domai
 - MCP rejects duplicated or mismatched routing headers, requires modern per-request protocol metadata, and uses the same response for missing and unauthorized tools.
 - MCP strips optional custom-header schema annotations because the adapter does not accept capability-defined transport headers.
 - MCP tool results expose generated invocation identifiers and stable handler failure codes without exposing credentials or internal error messages.
+- Swift server handles are single-owner, stop idempotently, and perform bounded shutdown during explicit stop or deinitialization.
 
 ## Known Gaps
 

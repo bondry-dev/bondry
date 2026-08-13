@@ -26,6 +26,9 @@ public enum BondryEncryptedStoreError: Error, Equatable, Sendable {
   case timeUnavailable
   case generationExhausted
   case alreadyExists
+  case serverBind
+  case serverStart
+  case serverStop
   case invalidHandle
   case internalFailure(Int32)
 
@@ -77,6 +80,12 @@ public enum BondryEncryptedStoreError: Error, Equatable, Sendable {
       self = .generationExhausted
     case BONDRY_STATUS_ALREADY_EXISTS:
       self = .alreadyExists
+    case BONDRY_STATUS_SERVER_BIND:
+      self = .serverBind
+    case BONDRY_STATUS_SERVER_START:
+      self = .serverStart
+    case BONDRY_STATUS_SERVER_STOP:
+      self = .serverStop
     default:
       self = .internalFailure(status)
     }
