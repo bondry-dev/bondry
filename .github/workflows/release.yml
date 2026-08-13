@@ -57,11 +57,6 @@ jobs:
             printf 'Version must be a numeric semantic version without a prefix.\n' >&2
             exit 1
           fi
-          if ! cargo metadata --no-deps --format-version 1 \
-            | jq -e --arg version "$VERSION" 'all(.packages[]; .version == $version)' > /dev/null; then
-            printf 'Every workspace package must match release version %s.\n' "$VERSION" >&2
-            exit 1
-          fi
           if git ls-remote --exit-code --tags origin "refs/tags/v$VERSION" > /dev/null 2>&1; then
             printf 'Tag v%s already exists.\n' "$VERSION" >&2
             exit 1
@@ -70,8 +65,10 @@ jobs:
         run: |
           sudo xcode-select --switch /Applications/Xcode_26.2.app/Contents/Developer
           xcodebuild -version
-      - name: Install ShellCheck
-        run: .github/scripts/install-shellcheck.sh
+      - name: Install release tools
+        run: |
+          brew install gh jq ripgrep
+          .github/scripts/install-shellcheck.sh
       - name: Install Rust
         run: |
           rustup toolchain install 1.90.0 --profile minimal --component clippy,rustfmt
@@ -82,6 +79,46 @@ jobs:
             aarch64-apple-ios-sim \
             x86_64-apple-ios
           cargo install --locked --version 0.9.1 --features cli cargo-about
+      - name: Verify release tools
+        run: |
+          set -eu
+          for command in \
+            awk \
+            cargo \
+            cargo-about \
+            cmp \
+            cp \
+            gh \
+            git \
+            jq \
+            lipo \
+            nm \
+            rg \
+            rustc \
+            sed \
+            shasum \
+            shellcheck \
+            strings \
+            swift \
+            unzip \
+            xcodebuild \
+            xcrun \
+            zip
+          do
+            command -v "$command" > /dev/null || {
+              printf 'Required release tool is unavailable: %s\n' "$command" >&2
+              exit 1
+            }
+          done
+      - name: Validate workspace version
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          if ! cargo metadata --no-deps --format-version 1 \
+            | jq -e --arg version "$VERSION" 'all(.packages[]; .version == $version)' > /dev/null; then
+            printf 'Every workspace package must match release version %s.\n' "$VERSION" >&2
+            exit 1
+          fi
       - name: Run release checks
         run: |
           cargo fmt --all --check

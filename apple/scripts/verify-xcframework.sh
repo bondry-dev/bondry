@@ -6,6 +6,11 @@ if [ "$#" -ne 1 ]; then
     exit 64
 fi
 
+if ! command -v rg > /dev/null; then
+    printf 'Required command is unavailable: rg\n' >&2
+    exit 1
+fi
+
 script_directory=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 bondry_root=$(CDPATH='' cd -- "$script_directory/../.." && pwd)
 xcframework=$1

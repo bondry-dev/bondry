@@ -61,8 +61,10 @@ jobs:
         run: |
           sudo xcode-select --switch /Applications/Xcode_26.2.app/Contents/Developer
           xcodebuild -version
-      - name: Install ShellCheck
-        run: .github/scripts/install-shellcheck.sh
+      - name: Install Apple build tools
+        run: |
+          brew install ripgrep
+          .github/scripts/install-shellcheck.sh
       - name: Install Rust
         run: |
           rustup toolchain install 1.90.0 --profile minimal --component clippy,rustfmt
@@ -73,6 +75,25 @@ jobs:
             aarch64-apple-ios-sim \
             x86_64-apple-ios
           cargo install --locked --version 0.9.1 --features cli cargo-about
+      - name: Verify Apple build tools
+        run: |
+          set -eu
+          for command in \
+            cargo \
+            cargo-about \
+            lipo \
+            rg \
+            rustc \
+            shellcheck \
+            swift \
+            xcodebuild \
+            xcrun
+          do
+            command -v "$command" > /dev/null || {
+              printf 'Required Apple build tool is unavailable: %s\n' "$command" >&2
+              exit 1
+            }
+          done
       - name: Check shell scripts
         run: shellcheck .github/scripts/*.sh apple/scripts/*.sh
       - name: Check Swift formatting
