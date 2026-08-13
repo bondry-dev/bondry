@@ -1,6 +1,6 @@
 # C ABI
 
-`bondry-ffi` is the language-neutral boundary for embedding Bondry. The canonical public header is `bindings/c/include/bondry.h`.
+`bondry-runtime-ffi` is the language-neutral runtime boundary. Its canonical header is `bindings/c/include/bondry.h`. The optional `bondry-local-server-ffi` has its own `bindings/c/include/bondry_local_server.h` header and calls the runtime exclusively through the runtime ABI.
 
 ## Version One
 
@@ -8,6 +8,7 @@ ABI v1 exposes encrypted-store lifecycle operations:
 
 - `bondry_abi_version_v1`
 - `bondry_store_open_v1`
+- `bondry_store_retain_v1`
 - `bondry_store_check_v1`
 - `bondry_store_close_v1`
 
@@ -18,12 +19,12 @@ It also exposes administrative operations without adding transport or applicatio
 - Authenticate a bearer token into a non-secret application principal
 - Add, remove, and enumerate exact principal-adapter-capability grants
 - Query recent or per-principal audit metadata with a limit from 1 through 1,000
-- Register, enumerate, and unregister host-owned capability handlers
+- Register, enumerate, and unregister host-owned capability handlers with complete JSON Schema contracts
+- Discover complete descriptors authorized for a principal and adapter
 - Authenticate and asynchronously dispatch protocol-neutral JSON invocations
 - Dispatch trusted operating-system invocations with an explicit platform principal
-- Start and stop a shared local HTTP server with independently enabled REST and MCP adapters
 
-The store is an opaque handle. Foreign callers never allocate it, inspect its layout, or receive a Rust reference. Opening transfers one ownership unit to the caller, and closing consumes it. A non-null handle must be closed exactly once and must not be closed concurrently with another operation.
+The runtime store is an opaque, reference-counted handle. Foreign callers never allocate it, inspect its layout, or receive a Rust reference. Opening and retaining each transfer one independent ownership unit; closing consumes one unit. A non-null ownership unit must be closed exactly once and must not be closed concurrently with an operation using that same unit.
 
 Paths cross the ABI as explicit-length UTF-8 bytes. Database keys must contain exactly 32 bytes. The open call copies the key into zeroizing Rust storage, initializes SQLCipher, and drops the temporary Rust key before returning.
 
@@ -50,6 +51,8 @@ Foreign handler completion can be synchronous or asynchronous and can occur on a
 An `OK` return accepts the dispatch and guarantees exactly one result callback, which may occur before the entry point returns. An immediate validation, authentication, or storage error never calls the result callback and leaves its context caller-owned. Accepted results distinguish success, missing capability, access denial, invalid capability input, audit unavailability, and handler failure. Result pointers remain valid only for the callback duration.
 
 ## Local Server
+
+Local-server symbols are not present in `BondryRuntime`. A host links `BondryLocalServer` only when it needs HTTP, REST, or MCP. Server startup retains its own runtime ownership unit, so the caller and server have independent lifetimes.
 
 `bondry_server_start_v1` accepts a bounded, versioned JSON configuration and returns an opaque server handle plus the actual bound IP address and port. Port zero requests an operating-system-selected port. The configuration selects REST, MCP, or both; bearer authentication remains the default at the Swift layer. Disabled authentication requires an explicit principal so grants and audit events remain attributable.
 
@@ -88,7 +91,7 @@ Configuration version one has this complete shape:
 
 Disabled authentication uses `mode: "disabled"` with a validated `principalId` and a `principalKind` of `user`, `application`, or `system`. Bearer mode requires both principal fields to be null. `mcpServer` must be null when MCP is disabled and must contain validated implementation metadata when MCP is enabled.
 
-The server clones the encrypted storage and live capability registry references it needs before returning. The store handle may therefore be closed after successful startup, although normal Swift ownership keeps the store and server together. Registration, unregistration, token revocation, client disablement, and grant changes take effect on subsequent requests without restarting the server.
+The server retains the runtime handle before returning. The caller may therefore close its own handle after successful startup. Registration, unregistration, token revocation, client disablement, and grant changes take effect on subsequent requests without restarting the server.
 
 `bondry_server_stop_v1` consumes one server handle and waits for bounded graceful shutdown. Null is a no-op. Startup distinguishes invalid configuration, address binding failure, and other runtime startup failure without returning operating-system error text or paths.
 
@@ -107,7 +110,9 @@ Rust unwinding is caught at each fallible ABI entry point and maps to `BONDRY_ST
 
 ## Apple Bindings
 
-`BondrySQLCipher` is the native Swift wrapper over ABI v1. It validates the linked ABI version, accepts only file URLs, maps every public status, closes its handle during deinitialization, and never exposes the opaque pointer. It provides Swift models for clients, non-secret token metadata, principals, exact capability grants, audit events, capability descriptors, server configuration, and server lifecycle while transparently retrying list queries that grow between calls.
+`Bondry` is the native Swift runtime wrapper. It validates the linked ABI version, accepts only file URLs, maps every public runtime status, closes its handle during deinitialization, and never exposes the opaque pointer outside the package. It provides Swift models for clients, non-secret token metadata, principals, exact capability grants, audit events, complete capability descriptors, and dispatch while transparently retrying queries that grow between calls.
+
+`BondryLocalServer` owns server configuration, lifecycle, endpoints, and server-specific errors. It can access the runtime handle only through Swift package access and the public retained-handle ABI; server concepts are absent from the `Bondry` product.
 
 Swift hosts register `@Sendable async throws` capability handlers and dispatch JSON as `Data`. The wrapper copies every borrowed C invocation before starting Swift concurrency work and retains each handler until the C release callback. Unknown Swift errors become the fixed `handler_failed` code; only an explicit `BondryCapabilityHandlerError` code crosses the trust boundary. Dispatch uses checked continuations and supports completion before the C entry point returns or later from another thread. A Swift task cancelled before dispatch does not start it. Once the C core accepts an invocation, it runs through handler completion and required auditing even if the waiting task is cancelled later.
 
@@ -134,7 +139,8 @@ The C smoke test compiles against only the public header and links the Rust stat
 ```sh
 clang -std=c11 -Wall -Wextra -Werror -mmacosx-version-min=13.0 \
   bindings/c/tests/store_smoke.c -I bindings/c/include \
-  target/apple/macos/debug/libbondry_ffi.a -liconv \
+  target/apple/macos/debug/libbondry_runtime_ffi.a \
+  -framework CoreFoundation -framework Security -liconv \
   -o /tmp/bondry-store-smoke
 /tmp/bondry-store-smoke /tmp/bondry-store-smoke.db
 ```

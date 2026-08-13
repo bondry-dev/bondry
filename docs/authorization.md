@@ -14,4 +14,4 @@ The adapter is part of the grant. Allowing a client to call `battery.status` thr
 
 `bondry-store-sqlcipher` implements `GrantStore` with idempotent add and remove operations, exact lookup, and stable per-principal enumeration. Grants are encrypted with the rest of the database. Schema version two migrates an existing version-one authentication and audit database without deleting its clients, tokens, or events.
 
-The C ABI and `BondrySQLCipher` expose grant administration but do not decide which capabilities an application may offer. That remains a host-owned decision so an automation setting can never enable a feature that the application itself has disabled.
+The runtime C ABI and `Bondry` expose grant administration but do not decide which capabilities an application may offer. That remains a host-owned decision so an automation setting can never enable a feature that the application itself has disabled.

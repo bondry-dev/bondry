@@ -21,7 +21,7 @@ The store has no plaintext open function. Opening it requires a 256-bit `Databas
 
 Apple builds use SQLCipher's CommonCrypto provider and link the system Security and CoreFoundation frameworks. Other platforms use the vendored OpenSSL provider so the reference store does not depend on a system OpenSSL installation.
 
-Foreign-language hosts open and administer the reference store through the opaque handle in C ABI v1. Swift hosts use `BondrySQLCipher` to open the store with `DatabaseKeyMaterial` from `BondryApple` without persisting an intermediate key copy, then manage clients, tokens, authentication, and audit queries through native Swift models.
+Foreign-language hosts open and administer the reference store through the opaque runtime handle in C ABI v1. Swift hosts use `BondryRuntime` with `DatabaseKeyMaterial` from `BondryApple` without persisting an intermediate key copy, then manage clients, tokens, authentication, capabilities, and audit queries through native Swift models.
 
 Losing the database key makes the database unrecoverable. Copying the key next to the database defeats the encryption boundary.
 

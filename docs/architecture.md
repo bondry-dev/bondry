@@ -32,9 +32,9 @@ Bondry depends on storage contracts, not a particular database. Host application
 
 `bondry-store-sqlcipher` is an optional encrypted reference implementation for local transactional authentication, authorization, and audit storage. It is not a core dependency and has no plaintext fallback. Its database key must come from a platform-secure secret provider.
 
-`BondryApple` is a separate Swift package that stores the SQLCipher database key in Apple Data Protection Keychain. The Rust core remains independent of Security.framework and Apple platform behavior.
+`BondryApple` is a separate Swift product that stores the SQLCipher database key in Apple Data Protection Keychain. The Rust core remains independent of Security.framework and Apple platform behavior.
 
-`bondry-ffi` exposes encrypted-store ownership through a versioned C ABI. `BondrySQLCipher` wraps that ABI for Swift without exposing Rust layouts or pointers to application code.
+`bondry-runtime-ffi` exposes runtime ownership through a versioned C ABI. `Bondry` wraps that ABI for Swift without exposing Rust layouts or pointers to application code. `bondry-local-server-ffi` is a separate native boundary that depends on the runtime ABI rather than its Rust implementation.
 
 ## Adapters
 
@@ -42,7 +42,7 @@ Adapters translate external protocols into core invocations. Each adapter is res
 
 An adapter passes only a trusted principal into the core. Network adapters authenticate credentials before this boundary. Platform adapters may instead rely on an operating-system-owned invocation path and a principal selected by the host. Raw bearer tokens, cookies, passkeys, security-key responses, and other credentials must not cross this boundary.
 
-REST and MCP share `bondry-http` without sharing protocol translation or authorization grants. The runtime authenticates and rate-limits before removing credentials and handing a bounded request to an adapter. `BondryAppIntents` exposes Apple Shortcuts through a host-selected local system principal and the dedicated `shortcuts` adapter identifier.
+REST and MCP share `bondry-http` without sharing protocol translation or authorization grants. The optional `BondryLocalServer` product authenticates and rate-limits before removing credentials and handing a bounded request to an adapter. Applications that use only `Bondry` or `BondryAppIntents` do not link the HTTP, REST, or MCP implementation. `BondryAppIntents` exposes Apple Shortcuts through a host-selected local system principal and the dedicated `shortcuts` adapter identifier.
 
 `bondry-rest` exposes authorized descriptors and generic capability invocation under `/api/v1`. It relies on the shared dispatcher for exact grants, input validation, handler execution, and audit outcomes.
 
@@ -67,4 +67,4 @@ The host application defines capabilities and decides which principals and adapt
 
 The core targets platforms supported by Rust's standard library. Platform behavior belongs in adapters. Persistent local servers are not assumed on platforms that suspend background applications.
 
-Language bindings build on the versioned C ABI. ABI v1 covers encrypted-store ownership, client and token administration, bearer-token authentication, exact authorization grants, bounded audit queries, capability registration, token-authenticated and trusted-platform asynchronous dispatch, and local HTTP server ownership. Foreign handlers receive protocol-neutral JSON and trusted invocation metadata only after exact-grant authorization.
+Language bindings build on versioned C ABIs. The runtime ABI covers retained runtime ownership, client and token administration, bearer-token authentication, exact authorization grants, bounded audit queries, complete capability descriptors, capability registration, and asynchronous dispatch. The separate local-server ABI covers HTTP server ownership and reaches the runtime only through that stable boundary. Foreign handlers receive protocol-neutral JSON and trusted invocation metadata only after exact-grant authorization.

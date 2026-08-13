@@ -1,6 +1,6 @@
 # Apple Keychain
 
-`BondryApple` provides the Apple-specific database-key boundary for `bondry-store-sqlcipher`. It is a separate Swift package so the portable Rust core does not depend on Security.framework.
+`BondryApple` provides the Apple-specific database-key boundary for `bondry-store-sqlcipher`. It is a separate Swift product so the portable Rust core does not depend on Security.framework.
 
 ## Protection Policy
 
@@ -16,7 +16,7 @@ The public API supports loading a key and atomically creating one when absent. I
 
 ## Host Integration
 
-Add the package from the `apple` directory, then create one stable service and account pair for each encrypted database:
+Add the `BondryApple` product, then create one stable service and account pair for each encrypted database:
 
 ```swift
 import BondryApple
@@ -28,29 +28,29 @@ let configuration = try KeychainDatabaseKeyConfiguration(
 let key = try KeychainDatabaseKeyProvider(configuration: configuration).loadOrCreate()
 ```
 
-Use the separate `BondrySQLCipher` product to pass the key directly into the Rust encrypted store:
+Use the separate `Bondry` product to pass the key directly into the native runtime:
 
 ```swift
-import BondrySQLCipher
+import Bondry
 
-let store = try BondryEncryptedStore.open(at: databaseURL, key: key)
-try store.checkHealth()
+let runtime = try BondryRuntime.open(at: databaseURL, key: key)
+try runtime.checkHealth()
 
-let client = try store.createClient(named: "Local AI Client")
-_ = try store.addGrant(
+let client = try runtime.createClient(named: "Local AI Client")
+_ = try runtime.addGrant(
   principalID: client.id,
   adapterID: "rest",
   capabilityID: "battery.status"
 )
-let issued = try store.issueToken(for: client.id, label: "Primary")
-let principal = try store.authenticate(token: issued)
+let issued = try runtime.issueToken(for: client.id, label: "Primary")
+let principal = try runtime.authenticate(token: issued)
 let tokenForDeliberateCopy = issued.copySecret()
 ```
 
 Applications can register protocol-neutral async capabilities and dispatch with the issued token without creating a Swift `String` copy of its secret:
 
 ```swift
-try store.registerCapability(
+try runtime.registerCapability(
   BondryCapability(
     id: "battery.status",
     summary: "Read battery status",
@@ -60,7 +60,7 @@ try store.registerCapability(
   try await batteryStatusJSON(for: invocation.inputJSON)
 }
 
-let output = try await store.dispatch(
+let output = try await runtime.dispatch(
   adapterID: "rest",
   token: issued,
   capabilityID: "battery.status",
@@ -100,4 +100,4 @@ xcodebuild -quiet -project KeychainProbe.xcodeproj \
 DerivedData/Build/Products/Debug/KeychainProbe.app/Contents/MacOS/KeychainProbe
 ```
 
-The probe uses a random service name, opens a real encrypted Rust store through `BondrySQLCipher`, exercises client and token administration plus async capability dispatch through the Swift API, verifies that its file has no plaintext SQLite header, and removes both the Keychain item and database before exiting. Generated projects and build products are ignored by Git.
+The probe uses a random service name, opens a real encrypted runtime through `Bondry`, exercises client and token administration plus async capability dispatch through the Swift API, verifies that its file has no plaintext SQLite header, and removes both the Keychain item and database before exiting. Generated projects and build products are ignored by Git.

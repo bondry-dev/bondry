@@ -18,7 +18,7 @@ struct MyAppIntentsPackage: AppIntentsPackage {
 }
 ```
 
-After opening the encrypted store and registering application capabilities, create one stable local principal and register the runtime as an App Intents dependency:
+After opening `BondryRuntime` and registering application capabilities, create one stable local principal and register the Shortcuts adapter as an App Intents dependency:
 
 ```swift
 let shortcutsPrincipal = BondryPrincipal(
@@ -26,19 +26,19 @@ let shortcutsPrincipal = BondryPrincipal(
   kind: .system
 )
 let shortcutsRuntime = BondryShortcutsRuntime(
-  store: store,
+  runtime: runtime,
   principal: shortcutsPrincipal
 )
 shortcutsRuntime.register()
 
-_ = try store.addGrant(
+_ = try runtime.addGrant(
   principalID: shortcutsPrincipal.id,
   adapterID: BondryShortcutsRuntime.adapterID,
   capabilityID: "battery.read"
 )
 ```
 
-Keep the runtime's store alive for as long as Shortcuts can invoke the application. Use a stable principal identifier so grants and audit history remain attributable across launches.
+Keep `BondryRuntime` alive for as long as Shortcuts can invoke the application. Use a stable principal identifier so grants and audit history remain attributable across launches.
 
 ## Generic Action
 

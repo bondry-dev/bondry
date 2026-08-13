@@ -1,18 +1,22 @@
 # Apple Distribution
 
-Bondry's native Swift targets depend on the Rust C ABI. Release builds distribute that ABI as a static `BondryFFI.xcframework`; the binary itself is not committed to the source repository.
+Bondry ships two static XCFrameworks so a consumer links only the native functionality selected by its Swift products:
 
-Apple builds use SQLCipher's CommonCrypto provider. Swift package targets that link the static binary must also link Security, CoreFoundation, and `libiconv`.
+- `BondryRuntime.xcframework` contains encrypted storage, authentication, authorization, audit, capability registration, and dispatch.
+- `BondryLocalServer.xcframework` contains the optional local HTTP runtime plus REST and MCP adapters. It calls the runtime through the versioned C ABI and does not contain the SQLCipher store implementation.
+
+`BondryApple` has no native binary dependency. `Bondry` selects `BondryRuntime`; `BondryLocalServer` selects both runtime and server; `BondryAppIntents` selects only the runtime. Declaring both binary targets in the package manifest may download both developer artifacts, but SwiftPM links only targets in the selected product graph.
+
+The `main` branch manifest uses local wrapper targets for development. Release preparation replaces it atomically with the binary-target manifest stored in `apple/Distribution/Package.release.swift`, with the version and both checksums fixed to the prepared artifacts.
+
+Apple builds use SQLCipher's CommonCrypto provider. Runtime consumers link Security, CoreFoundation, and `libiconv`.
 
 ## Build
 
-The builder requires Xcode, Swift, Rust, Cargo, `cargo-about` 0.9.1, and these Rust standard-library targets:
+The builder requires Xcode, Swift, Rust, Cargo, `cargo-about` 0.9.1, and the supported Apple Rust targets:
 
 ```sh
 cargo install --locked --version 0.9.1 --features cli cargo-about
-```
-
-```sh
 rustup target add \
   aarch64-apple-darwin \
   x86_64-apple-darwin \
@@ -21,63 +25,45 @@ rustup target add \
   x86_64-apple-ios
 ```
 
-Build a distributable artifact from a clean checkout:
+Build and verify both artifacts:
 
 ```sh
 apple/scripts/build-xcframework.sh
 ```
 
-For a local or manually managed release, prepare the root Swift package manifest and its release checksum with:
+Prepare a local release manifest with both generated checksums:
 
 ```sh
-apple/scripts/prepare-release.sh 0.0.1
+apple/scripts/prepare-release.sh 0.0.2
 ```
 
-The command writes excluded build outputs below `target/apple/distribution`:
-
-- `BondryFFI.xcframework`
-- `BondryFFI.xcframework.zip`
-- `BondryFFI.xcframework.zip.sha256`
-
-Set `BONDRY_APPLE_ARTIFACT_DIR` to place the final outputs elsewhere. Set `CARGO_TARGET_DIR` to reuse another Cargo build cache. Archive timestamps default to the source commit time; controlled build environments can supply `SOURCE_DATE_EPOCH` explicitly.
+Excluded outputs are written below `target/apple/distribution`. Set `BONDRY_APPLE_ARTIFACT_DIR` to choose another destination and `CARGO_TARGET_DIR` to reuse another Cargo cache. Archive timestamps default to the source commit time and can be fixed with `SOURCE_DATE_EPOCH`.
 
 ## Verification
 
-The build fails unless all of these checks pass:
+The build fails unless:
 
-- macOS contains `arm64` and `x86_64` slices.
-- iOS device contains `arm64`.
-- iOS Simulator contains `arm64` and `x86_64` slices.
-- Every slice contains the canonical public header and `CBondry` module map.
-- The artifact contains the Bondry license, SQLCipher notice, and generated Rust dependency licenses.
-- The public ABI version symbol is exported.
-- Rust source paths are remapped, and no private build-machine user path is embedded.
+- macOS contains `arm64` and `x86_64`, iOS device contains `arm64`, and iOS Simulator contains `arm64` and `x86_64`.
+- Every slice contains its canonical header and correctly named Clang module.
+- Both artifacts contain the project license, SQLCipher notice, and generated dependency licenses.
+- No native library contains a private build-machine path.
+- `BondryRuntime` exports the runtime ABI and no `bondry_server_*` symbol.
+- `BondryLocalServer` exports the server ABI and does not define `bondry_store_open_v1`.
 - C consumers link at the macOS 13 and iOS 16 deployment targets.
-- The macOS C smoke test opens and checks an encrypted store.
-- A temporary SwiftPM consumer compiles all Swift products against the binary target and opens a real encrypted store.
-- The release archive is structurally valid and has a SwiftPM checksum.
-- Archive entries have stable ordering and normalized file timestamps.
+- A real runtime-only Swift executable contains neither local-server symbols nor REST or MCP routes and remains below the linked-size budget.
+- A real server-enabled Swift executable starts and stops a local server and remains below its linked-size budget.
+- Both archives are structurally valid, deterministic, and have independently verified SwiftPM checksums.
 
-An existing artifact can be checked independently:
+Verify existing frameworks directly:
 
 ```sh
-apple/scripts/verify-xcframework.sh path/to/BondryFFI.xcframework
+apple/scripts/verify-xcframework.sh \
+  path/to/BondryRuntime.xcframework \
+  path/to/BondryLocalServer.xcframework
 ```
 
 ## Release Contract
 
-Attach `BondryFFI.xcframework.zip` to the matching GitHub release. The Swift package manifest for that release must use the exact checksum printed by the builder:
+Each release contains four immutable assets: two XCFramework archives and their checksum files. The tagged manifest records both exact checksums. Preparation builds each archive once; protected publication verifies, attests, and uploads those same bytes without rebuilding them.
 
-```swift
-.binaryTarget(
-  name: "BondryFFI",
-  url: "https://github.com/bondry-dev/bondry/releases/download/v0.0.1/BondryFFI.xcframework.zip",
-  checksum: "<swift-package-checksum>"
-)
-```
-
-`BondrySQLCipher` depends on the binary target and imports its `CBondry` module. `BondryApple` remains independent of the Rust binary, while `BondryAppIntents` depends on `BondrySQLCipher`.
-
-The GitHub release preparation workflow builds the archive once, records that archive's checksum in the tagged manifest, and stores the exact archive for the protected publication workflow. Publication verifies and promotes the stored artifact without rebuilding it. Do not create release tags manually or reuse an existing tag for a different archive or checksum. A source change to the C ABI, its transitive native dependencies, or the canonical header requires a newly prepared artifact and manifest.
-
-During private development, consumers should use a locally generated artifact. Public applications should move to the immutable release URL so a clean clone and CI build never depend on an adjacent checkout or machine-specific library path.
+Do not create release tags manually or reuse a tag for different bytes. A source change to either ABI, a transitive native dependency, or a canonical header requires a newly prepared version.
