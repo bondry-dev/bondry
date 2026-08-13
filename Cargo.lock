@@ -47,6 +47,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "bondry-ffi"
+version = "0.0.1"
+dependencies = [
+ "bondry-store-sqlcipher",
+ "tempfile",
+]
+
+[[package]]
 name = "bondry-store-sqlcipher"
 version = "0.0.1"
 dependencies = [

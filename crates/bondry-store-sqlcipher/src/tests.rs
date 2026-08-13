@@ -18,7 +18,7 @@ use futures::executor::block_on;
 use serde_json::json;
 use tempfile::TempDir;
 
-use crate::{AuditQueryLimit, DatabaseKey, SqlCipherStore, SqlCipherStoreError};
+use crate::{AuditQueryLimit, DatabaseKey, DatabaseKeyError, SqlCipherStore, SqlCipherStoreError};
 
 fn database_path(directory: &TempDir) -> std::path::PathBuf {
     directory.path().join("bondry.db")
@@ -291,6 +291,23 @@ fn redacts_database_keys() {
     let key = fixed_key(16);
     assert_eq!(format!("{key:?}"), "DatabaseKey([REDACTED])");
     assert_eq!(key.expose_bytes(), &[16_u8; 32]);
+}
+
+#[test]
+fn reconstructs_database_keys_only_from_exact_slices() -> Result<(), DatabaseKeyError> {
+    let bytes = [0x17_u8; 32];
+    let key = DatabaseKey::from_slice(&bytes)?;
+
+    assert_eq!(key.expose_bytes(), &bytes);
+    assert_eq!(
+        DatabaseKey::from_slice(&bytes[..31]).err(),
+        Some(DatabaseKeyError::InvalidLength)
+    );
+    assert_eq!(
+        DatabaseKey::from_slice(&[0_u8; 33]).err(),
+        Some(DatabaseKeyError::InvalidLength)
+    );
+    Ok(())
 }
 
 fn token_id(value: u8) -> Result<TokenId, Box<dyn std::error::Error>> {

@@ -30,6 +30,17 @@ impl SqlCipherStore {
         Self::initialize(Connection::open_in_memory()?, key)
     }
 
+    /// Verifies that the encrypted connection is available and responsive.
+    pub fn check_health(&self) -> Result<(), SqlCipherStoreError> {
+        let connection = self.connection()?;
+        let value: i64 = connection.query_row("SELECT 1", [], |row| row.get(0))?;
+        if value == 1 {
+            Ok(())
+        } else {
+            Err(SqlCipherStoreError::InvalidData)
+        }
+    }
+
     fn initialize(
         mut connection: Connection,
         key: &DatabaseKey,

@@ -2,6 +2,7 @@
 members = [
     "crates/bondry-auth",
     "crates/bondry-core",
+    "crates/bondry-ffi",
     "crates/bondry-store-sqlcipher",
 ]
 resolver = "3"
