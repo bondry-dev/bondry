@@ -36,6 +36,8 @@ The publication deployment:
 1. Downloads the exact archive produced by the successful preparation run.
 2. Verifies the workflow run, tag, release commit, metadata, archive, checksum file, and `Package.swift` agree.
 3. Creates a public provenance attestation for that archive.
-4. Publishes the same archive and checksum as a GitHub prerelease protected by the repository's immutable-release policy.
+4. Uses a pinned release action to upload both assets to a draft with bounded API retries.
+5. Publishes the draft as a GitHub prerelease protected by the repository's immutable-release policy.
+6. Downloads both published assets and compares them with the prepared files.
 
 Publication never rebuilds the binary. A failed publication can retry the prepared artifact without changing its checksum. Published versions and their assets must never be replaced.

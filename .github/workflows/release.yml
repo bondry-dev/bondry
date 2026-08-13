@@ -211,6 +211,7 @@ jobs:
               preparation_run_id: $preparation_run_id
             }' > "$RUNNER_TEMP/release/release-metadata.json"
           printf 'checksum=%s\n' "$checksum" >> "$GITHUB_OUTPUT"
+          printf 'release_commit=%s\n' "$release_commit" >> "$GITHUB_OUTPUT"
       - name: Upload release artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -230,10 +231,12 @@ jobs:
         env:
           CHECKSUM: ${{ steps.release.outputs.checksum }}
           GH_TOKEN: ${{ github.token }}
+          RELEASE_COMMIT: ${{ steps.release.outputs.release_commit }}
           VERSION: ${{ inputs.version }}
         run: |
           gh workflow run publish-release.yml \
             --ref "v$VERSION" \
             --raw-field version="$VERSION" \
             --raw-field preparation_run_id="$GITHUB_RUN_ID" \
-            --raw-field checksum="$CHECKSUM"
+            --raw-field checksum="$CHECKSUM" \
+            --raw-field release_commit="$RELEASE_COMMIT"

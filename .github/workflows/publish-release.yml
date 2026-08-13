@@ -16,6 +16,10 @@ on:
         description: SwiftPM checksum of the prepared artifact
         required: true
         type: string
+      release_commit:
+        description: Commit referenced by the release tag
+        required: true
+        type: string
 
 permissions: {}
 
@@ -40,6 +44,7 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
+          ref: refs/tags/v${{ inputs.version }}
       - name: Select Xcode
         run: |
           sudo xcode-select --switch /Applications/Xcode_26.2.app/Contents/Developer
@@ -59,6 +64,7 @@ jobs:
         env:
           CHECKSUM: ${{ inputs.checksum }}
           PREPARATION_RUN_ID: ${{ inputs.preparation_run_id }}
+          RELEASE_COMMIT: ${{ inputs.release_commit }}
           VERSION: ${{ inputs.version }}
         run: |
           set -eu
@@ -78,12 +84,19 @@ jobs:
             printf 'Checksum must contain 64 lowercase hexadecimal characters.\n' >&2
             exit 1
           fi
-          if [ "$GITHUB_REF" != "refs/tags/v$VERSION" ]; then
-            printf 'Publication must run from tag v%s.\n' "$VERSION" >&2
+          if ! printf '%s\n' "$RELEASE_COMMIT" | awk 'length == 40 && /^[0-9a-f]+$/ { valid = 1 } END { exit !valid }'; then
+            printf 'Release commit must contain 40 lowercase hexadecimal characters.\n' >&2
             exit 1
           fi
-          if [ "$(git rev-parse HEAD)" != "$GITHUB_SHA" ]; then
-            printf 'The checked-out release commit does not match the workflow commit.\n' >&2
+          case "$GITHUB_REF" in
+            "refs/tags/v$VERSION" | refs/heads/main) ;;
+            *)
+              printf 'Publication must run from tag v%s or the main recovery path.\n' "$VERSION" >&2
+              exit 1
+              ;;
+          esac
+          if [ "$(git rev-parse HEAD)" != "$RELEASE_COMMIT" ]; then
+            printf 'The checked-out release tag does not match the requested commit.\n' >&2
             exit 1
           fi
           if [ "$(git cat-file -t "refs/tags/v$VERSION")" != tag ]; then
@@ -103,10 +116,12 @@ jobs:
           github-token: ${{ github.token }}
           run-id: ${{ inputs.preparation_run_id }}
       - name: Verify prepared release
+        id: release
         env:
           CHECKSUM: ${{ inputs.checksum }}
           GH_TOKEN: ${{ github.token }}
           PREPARATION_RUN_ID: ${{ inputs.preparation_run_id }}
+          RELEASE_COMMIT: ${{ inputs.release_commit }}
           VERSION: ${{ inputs.version }}
         run: |
           set -eu
@@ -129,7 +144,7 @@ jobs:
             --arg version "$VERSION" \
             --arg checksum "$CHECKSUM" \
             --arg source_commit "$source_commit" \
-            --arg release_commit "$GITHUB_SHA" \
+            --arg release_commit "$RELEASE_COMMIT" \
             --arg preparation_run_id "$PREPARATION_RUN_ID" \
             '.version == $version and
              .checksum == $checksum and
@@ -153,23 +168,89 @@ jobs:
           cmp Package.swift "$RUNNER_TEMP/Package.swift"
           swift package dump-package > /dev/null
           unzip -tq "$archive"
-          if gh release view "v$VERSION" > /dev/null 2>&1; then
-            printf 'Release v%s already exists.\n' "$VERSION" >&2
-            exit 1
-          fi
-      - name: Attest release artifact
-        uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
-        with:
-          subject-path: ${{ runner.temp }}/release/BondryFFI.xcframework.zip
-      - name: Publish GitHub release
+          release_state=$(gh release view "v$VERSION" --json isDraft --jq .isDraft 2>/dev/null || printf 'missing')
+          case "$release_state" in
+            true | missing)
+              printf 'published=false\n' >> "$GITHUB_OUTPUT"
+              ;;
+            false)
+              printf 'published=true\n' >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              printf 'Release v%s has an unknown state.\n' "$VERSION" >&2
+              exit 1
+              ;;
+          esac
+      - name: Verify existing attestation
+        if: github.sha != inputs.release_commit
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ inputs.version }}
         run: |
-          gh release create "v$VERSION" \
+          gh attestation verify \
             "$RUNNER_TEMP/release/BondryFFI.xcframework.zip" \
+            --repo "$GITHUB_REPOSITORY" \
+            --format json > "$RUNNER_TEMP/attestation.json"
+          jq -e --arg ref "refs/tags/v$VERSION" '
+            any(.[];
+              .verificationResult.statement.predicate.buildDefinition.externalParameters.workflow.ref == $ref
+            )
+          ' "$RUNNER_TEMP/attestation.json" > /dev/null
+      - name: Attest release artifact
+        if: github.sha == inputs.release_commit
+        uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
+        with:
+          subject-path: ${{ runner.temp }}/release/BondryFFI.xcframework.zip
+      - name: Upload draft release
+        if: steps.release.outputs.published != 'true'
+        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
+        with:
+          tag_name: v${{ inputs.version }}
+          name: Bondry v${{ inputs.version }}
+          draft: true
+          prerelease: true
+          generate_release_notes: true
+          files: |
+            ${{ runner.temp }}/release/BondryFFI.xcframework.zip
+            ${{ runner.temp }}/release/BondryFFI.xcframework.zip.sha256
+          fail_on_unmatched_files: true
+          preserve_order: true
+      - name: Publish draft release
+        if: steps.release.outputs.published != 'true'
+        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
+        with:
+          tag_name: v${{ inputs.version }}
+          name: Bondry v${{ inputs.version }}
+          draft: false
+          prerelease: true
+      - name: Verify published release
+        env:
+          VERSION: ${{ inputs.version }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          published_directory="$RUNNER_TEMP/published"
+          release_data=$(gh release view "v$VERSION" \
+            --json assets,isDraft,isPrerelease,tagName)
+          if ! printf '%s\n' "$release_data" | jq -e \
+            --arg tag "v$VERSION" '
+              .isDraft == false and
+              .isPrerelease == true and
+              .tagName == $tag and
+              ([.assets[].name] | sort) == [
+                "BondryFFI.xcframework.zip",
+                "BondryFFI.xcframework.zip.sha256"
+              ]
+            ' > /dev/null; then
+            printf 'The published release metadata or assets are incomplete.\n' >&2
+            exit 1
+          fi
+          mkdir -p "$published_directory"
+          gh release download "v$VERSION" \
+            --dir "$published_directory" \
+            --pattern 'BondryFFI.xcframework.zip*'
+          cmp \
+            "$RUNNER_TEMP/release/BondryFFI.xcframework.zip" \
+            "$published_directory/BondryFFI.xcframework.zip"
+          cmp \
             "$RUNNER_TEMP/release/BondryFFI.xcframework.zip.sha256" \
-            --generate-notes \
-            --prerelease \
-            --title "Bondry v$VERSION" \
-            --verify-tag
+            "$published_directory/BondryFFI.xcframework.zip.sha256"
