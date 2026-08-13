@@ -54,6 +54,7 @@ static uint8_t captured_summary[512];
 static uint32_t captured_capability_effect = 0;
 static size_t captured_input_length = 0;
 static uint8_t captured_input[1024];
+static uint32_t captured_principal_kind = 0;
 static uint32_t dispatch_outcome = 0;
 static BondryStatus server_start_status = BONDRY_STATUS_OK;
 static BondryStatus server_stop_status = BONDRY_STATUS_OK;
@@ -198,6 +199,7 @@ void bondry_test_reset(void) {
     captured_capability_effect = 0;
     captured_input_length = 0;
     memset(captured_input, 0, sizeof(captured_input));
+    captured_principal_kind = 0;
     dispatch_outcome = 0;
     server_start_status = BONDRY_STATUS_OK;
     server_stop_status = BONDRY_STATUS_OK;
@@ -413,6 +415,10 @@ size_t bondry_test_input_length(void) {
 
 uint8_t bondry_test_input_byte(size_t index) {
     return index < sizeof(captured_input) ? captured_input[index] : 0;
+}
+
+uint32_t bondry_test_principal_kind(void) {
+    return captured_principal_kind;
 }
 
 uint32_t bondry_abi_version_v1(void) {
@@ -1112,6 +1118,115 @@ static void complete_forced_dispatch(
     completion(completion_context, &result);
 }
 
+static void write_bytes(
+    uint8_t *destination,
+    size_t capacity,
+    const uint8_t *source,
+    size_t source_length
+) {
+    memset(destination, 0, capacity);
+    if (source != NULL && source_length > 0) {
+        size_t length = source_length < capacity - 1 ? source_length : capacity - 1;
+        memcpy(destination, source, length);
+    }
+}
+
+static BondryStatus dispatch_test(
+    const BondryStoreHandle *store,
+    const uint8_t *invocation_id,
+    size_t invocation_id_length,
+    const uint8_t *adapter_id,
+    size_t adapter_id_length,
+    const uint8_t *principal_id,
+    size_t principal_id_length,
+    uint32_t principal_kind,
+    const uint8_t *capability_id,
+    size_t capability_id_length,
+    const uint8_t *input_json,
+    size_t input_json_length,
+    BondryDispatchCompletionV1 completion,
+    void *completion_context
+) {
+    capture_bytes(
+        captured_adapter,
+        sizeof(captured_adapter),
+        &captured_adapter_length,
+        adapter_id,
+        adapter_id_length
+    );
+    capture_bytes(
+        captured_capability,
+        sizeof(captured_capability),
+        &captured_capability_length,
+        capability_id,
+        capability_id_length
+    );
+    capture_bytes(
+        captured_input,
+        sizeof(captured_input),
+        &captured_input_length,
+        input_json,
+        input_json_length
+    );
+    captured_principal_kind = principal_kind;
+    if (administration_status != BONDRY_STATUS_OK) {
+        return administration_status;
+    }
+    if (store == NULL || invocation_id == NULL || invocation_id_length == 0 ||
+        adapter_id == NULL || principal_id == NULL || capability_id == NULL ||
+        input_json == NULL || completion == NULL) {
+        return BONDRY_STATUS_NULL_POINTER;
+    }
+    if (dispatch_outcome != 0) {
+        complete_forced_dispatch(completion, completion_context);
+        return BONDRY_STATUS_OK;
+    }
+    if (!capability_registered || capability_invoke == NULL) {
+        BondryDispatchResultV1 result;
+        memset(&result, 0, sizeof(result));
+        result.outcome = BONDRY_DISPATCH_OUTCOME_CAPABILITY_NOT_FOUND_V1;
+        completion(completion_context, &result);
+        return BONDRY_STATUS_OK;
+    }
+    DispatchBridge *bridge = malloc(sizeof(*bridge));
+    if (bridge == NULL) {
+        return BONDRY_STATUS_INTERNAL_FAILURE;
+    }
+    bridge->completion = completion;
+    bridge->context = completion_context;
+    BondryInvocationV1 invocation;
+    memset(&invocation, 0, sizeof(invocation));
+    write_bytes(
+        invocation.invocation_id,
+        sizeof(invocation.invocation_id),
+        invocation_id,
+        invocation_id_length
+    );
+    write_bytes(
+        invocation.principal_id,
+        sizeof(invocation.principal_id),
+        principal_id,
+        principal_id_length
+    );
+    invocation.principal_kind = principal_kind;
+    write_bytes(
+        invocation.adapter_id,
+        sizeof(invocation.adapter_id),
+        adapter_id,
+        adapter_id_length
+    );
+    write_bytes(
+        invocation.capability_id,
+        sizeof(invocation.capability_id),
+        capability_id,
+        capability_id_length
+    );
+    invocation.input_json = input_json;
+    invocation.input_json_length = input_json_length;
+    capability_invoke(capability_context, &invocation, complete_handler, bridge);
+    return BONDRY_STATUS_OK;
+}
+
 BondryStatus bondry_dispatch_token_v1(
     const BondryStoreHandle *store,
     const uint8_t *invocation_id,
@@ -1135,61 +1250,65 @@ BondryStatus bondry_dispatch_token_v1(
         token,
         token_length
     );
-    capture_bytes(
-        captured_adapter,
-        sizeof(captured_adapter),
-        &captured_adapter_length,
-        adapter_id,
-        adapter_id_length
-    );
-    capture_bytes(
-        captured_capability,
-        sizeof(captured_capability),
-        &captured_capability_length,
-        capability_id,
-        capability_id_length
-    );
-    capture_bytes(
-        captured_input,
-        sizeof(captured_input),
-        &captured_input_length,
-        input_json,
-        input_json_length
-    );
-    if (administration_status != BONDRY_STATUS_OK) {
-        return administration_status;
-    }
-    if (store == NULL || invocation_id == NULL || invocation_id_length == 0 ||
-        adapter_id == NULL || token == NULL ||
-        capability_id == NULL || input_json == NULL || completion == NULL) {
+    if (token == NULL) {
         return BONDRY_STATUS_NULL_POINTER;
     }
-    if (dispatch_outcome != 0) {
-        complete_forced_dispatch(completion, completion_context);
-        return BONDRY_STATUS_OK;
-    }
-    if (!capability_registered || capability_invoke == NULL) {
-        BondryDispatchResultV1 result;
-        memset(&result, 0, sizeof(result));
-        result.outcome = BONDRY_DISPATCH_OUTCOME_CAPABILITY_NOT_FOUND_V1;
-        completion(completion_context, &result);
-        return BONDRY_STATUS_OK;
-    }
-    DispatchBridge *bridge = malloc(sizeof(*bridge));
-    if (bridge == NULL) {
-        return BONDRY_STATUS_INTERNAL_FAILURE;
-    }
-    bridge->completion = completion;
-    bridge->context = completion_context;
-    BondryInvocationV1 invocation;
-    memset(&invocation, 0, sizeof(invocation));
-    write_string(invocation.invocation_id, sizeof(invocation.invocation_id), "request_test");
-    write_string(invocation.principal_id, sizeof(invocation.principal_id), "client_test");
-    invocation.principal_kind = BONDRY_PRINCIPAL_KIND_APPLICATION_V1;
-    write_string(invocation.adapter_id, sizeof(invocation.adapter_id), "rest");
-    write_string(invocation.capability_id, sizeof(invocation.capability_id), "battery.read");
-    invocation.input_json = input_json;
-    invocation.input_json_length = input_json_length;
-    capability_invoke(capability_context, &invocation, complete_handler, bridge);
-    return BONDRY_STATUS_OK;
+    return dispatch_test(
+        store,
+        (const uint8_t *)"request_test",
+        12,
+        adapter_id,
+        adapter_id_length,
+        (const uint8_t *)"client_test",
+        11,
+        BONDRY_PRINCIPAL_KIND_APPLICATION_V1,
+        capability_id,
+        capability_id_length,
+        input_json,
+        input_json_length,
+        completion,
+        completion_context
+    );
+}
+
+BondryStatus bondry_dispatch_principal_v1(
+    const BondryStoreHandle *store,
+    const uint8_t *invocation_id,
+    size_t invocation_id_length,
+    const uint8_t *adapter_id,
+    size_t adapter_id_length,
+    const uint8_t *principal_id,
+    size_t principal_id_length,
+    uint32_t principal_kind,
+    const uint8_t *capability_id,
+    size_t capability_id_length,
+    const uint8_t *input_json,
+    size_t input_json_length,
+    BondryDispatchCompletionV1 completion,
+    void *completion_context
+) {
+    dispatch_count += 1;
+    capture_bytes(
+        captured_identifier,
+        sizeof(captured_identifier),
+        &captured_identifier_length,
+        principal_id,
+        principal_id_length
+    );
+    return dispatch_test(
+        store,
+        invocation_id,
+        invocation_id_length,
+        adapter_id,
+        adapter_id_length,
+        principal_id,
+        principal_id_length,
+        principal_kind,
+        capability_id,
+        capability_id_length,
+        input_json,
+        input_json_length,
+        completion,
+        completion_context
+    );
 }

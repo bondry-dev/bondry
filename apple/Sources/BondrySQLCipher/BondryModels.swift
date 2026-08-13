@@ -49,6 +49,11 @@ public struct BondryPrincipal: Equatable, Identifiable, Sendable {
   public let id: String
   public let kind: BondryPrincipalKind
 
+  public init(id: String, kind: BondryPrincipalKind) {
+    self.id = id
+    self.kind = kind
+  }
+
   init(record: BondryPrincipalV1) throws {
     id = try decodeCString(record.id)
     kind = try Self.decodeKind(record.kind)

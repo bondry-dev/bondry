@@ -16,6 +16,13 @@ pub const BONDRY_TOKEN_CAPACITY_V1: usize = 100;
 pub const BONDRY_AUDIT_DETAIL_CAPACITY_V1: usize = 129;
 pub const BONDRY_CAPABILITY_SUMMARY_CAPACITY_V1: usize = 257;
 
+/// A human user principal.
+pub const BONDRY_PRINCIPAL_KIND_USER_V1: u32 = 1;
+/// An application or integration principal.
+pub const BONDRY_PRINCIPAL_KIND_APPLICATION_V1: u32 = 2;
+/// A trusted operating-system or host service principal.
+pub const BONDRY_PRINCIPAL_KIND_SYSTEM_V1: u32 = 3;
+
 pub const BONDRY_AUDIT_OUTCOME_CAPABILITY_NOT_FOUND_V1: u32 = 1;
 pub const BONDRY_AUDIT_OUTCOME_DENIED_V1: u32 = 2;
 pub const BONDRY_AUDIT_OUTCOME_STARTED_V1: u32 = 3;
@@ -236,9 +243,9 @@ impl BondryPrincipalV1 {
         let mut record = Self::zeroed();
         record.id = terminated(principal.id().as_str());
         record.kind = match principal.kind() {
-            bondry_core::PrincipalKind::User => 1,
-            bondry_core::PrincipalKind::Application => 2,
-            bondry_core::PrincipalKind::System => 3,
+            bondry_core::PrincipalKind::User => BONDRY_PRINCIPAL_KIND_USER_V1,
+            bondry_core::PrincipalKind::Application => BONDRY_PRINCIPAL_KIND_APPLICATION_V1,
+            bondry_core::PrincipalKind::System => BONDRY_PRINCIPAL_KIND_SYSTEM_V1,
         };
         record
     }
@@ -328,9 +335,9 @@ impl BondryInvocationV1 {
         record.invocation_id = terminated(context.id().as_str());
         record.principal_id = terminated(context.principal().id().as_str());
         record.principal_kind = match context.principal().kind() {
-            bondry_core::PrincipalKind::User => 1,
-            bondry_core::PrincipalKind::Application => 2,
-            bondry_core::PrincipalKind::System => 3,
+            bondry_core::PrincipalKind::User => BONDRY_PRINCIPAL_KIND_USER_V1,
+            bondry_core::PrincipalKind::Application => BONDRY_PRINCIPAL_KIND_APPLICATION_V1,
+            bondry_core::PrincipalKind::System => BONDRY_PRINCIPAL_KIND_SYSTEM_V1,
         };
         record.adapter_id = terminated(context.adapter().as_str());
         record.capability_id = terminated(context.capability().as_str());

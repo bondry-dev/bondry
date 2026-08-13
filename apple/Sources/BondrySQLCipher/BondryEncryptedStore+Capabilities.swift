@@ -74,6 +74,49 @@ extension BondryEncryptedStore {
     }
   }
 
+  /// Dispatches for a principal whose identity was established by the host platform.
+  public func dispatchPlatformInvocation(
+    invocationID: String = UUID().uuidString,
+    adapterID: String,
+    principal: BondryPrincipal,
+    capabilityID: String,
+    inputJSON: Data
+  ) async throws -> Data {
+    try Task.checkCancellation()
+    return try await withCheckedThrowingContinuation { continuation in
+      let context = Unmanaged.passRetained(
+        DispatchContinuationBox(continuation: continuation)
+      ).toOpaque()
+      let status = withUTF8Bytes(invocationID) { invocationBytes, invocationLength in
+        withUTF8Bytes(adapterID) { adapterBytes, adapterLength in
+          withUTF8Bytes(principal.id) { principalBytes, principalLength in
+            withUTF8Bytes(capabilityID) { capabilityBytes, capabilityLength in
+              withDataBytes(inputJSON) { inputBytes, inputLength in
+                bondry_dispatch_principal_v1(
+                  handle,
+                  invocationBytes,
+                  invocationLength,
+                  adapterBytes,
+                  adapterLength,
+                  principalBytes,
+                  principalLength,
+                  principal.kind.cValue,
+                  capabilityBytes,
+                  capabilityLength,
+                  inputBytes,
+                  inputLength,
+                  receiveSwiftDispatch,
+                  context
+                )
+              }
+            }
+          }
+        }
+      }
+      handleImmediateDispatchFailure(status, context: context)
+    }
+  }
+
   public func dispatch(
     invocationID: String = UUID().uuidString,
     adapterID: String,
@@ -288,6 +331,16 @@ extension BondryCapabilityEffect {
     switch self {
     case .readOnly: BONDRY_CAPABILITY_EFFECT_READ_ONLY_V1
     case .mutating: BONDRY_CAPABILITY_EFFECT_MUTATING_V1
+    }
+  }
+}
+
+extension BondryPrincipalKind {
+  fileprivate var cValue: UInt32 {
+    switch self {
+    case .user: BONDRY_PRINCIPAL_KIND_USER_V1
+    case .application: BONDRY_PRINCIPAL_KIND_APPLICATION_V1
+    case .system: BONDRY_PRINCIPAL_KIND_SYSTEM_V1
     }
   }
 }

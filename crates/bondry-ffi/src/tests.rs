@@ -26,15 +26,18 @@ use super::{
     bondry_abi_version_v1, bondry_audit_for_principal_v1, bondry_audit_recent_v1,
     bondry_capabilities_list_v1, bondry_capability_register_v1, bondry_capability_unregister_v1,
     bondry_client_create_v1, bondry_client_set_enabled_v1, bondry_clients_list_v1,
-    bondry_dispatch_token_v1, bondry_grant_add_v1, bondry_grant_remove_v1, bondry_grants_list_v1,
-    bondry_issued_token_clear_v1, bondry_store_check_v1, bondry_store_close_v1,
-    bondry_store_open_v1, bondry_token_authenticate_v1, bondry_token_issue_v1,
-    bondry_token_revoke_v1, bondry_token_rotate_v1, bondry_tokens_list_v1, catch_status,
+    bondry_dispatch_principal_v1, bondry_dispatch_token_v1, bondry_grant_add_v1,
+    bondry_grant_remove_v1, bondry_grants_list_v1, bondry_issued_token_clear_v1,
+    bondry_store_check_v1, bondry_store_close_v1, bondry_store_open_v1,
+    bondry_token_authenticate_v1, bondry_token_issue_v1, bondry_token_revoke_v1,
+    bondry_token_rotate_v1, bondry_tokens_list_v1, catch_status,
     records::{
+        BONDRY_AUDIT_OUTCOME_DENIED_V1, BONDRY_AUDIT_OUTCOME_SUCCEEDED_V1,
         BONDRY_CAPABILITY_EFFECT_MUTATING_V1, BONDRY_CAPABILITY_EFFECT_READ_ONLY_V1,
         BONDRY_DISPATCH_OUTCOME_ACCESS_DENIED_V1, BONDRY_DISPATCH_OUTCOME_CAPABILITY_NOT_FOUND_V1,
         BONDRY_DISPATCH_OUTCOME_HANDLER_FAILED_V1, BONDRY_DISPATCH_OUTCOME_SUCCEEDED_V1,
         BONDRY_HANDLER_RESULT_FAILED_V1, BONDRY_HANDLER_RESULT_SUCCEEDED_V1,
+        BONDRY_PRINCIPAL_KIND_SYSTEM_V1,
     },
 };
 
@@ -1026,6 +1029,157 @@ fn rejects_dispatch_before_accepting_callback_ownership() -> Result<(), Box<dyn 
 }
 
 #[test]
+fn dispatches_trusted_principals_through_exact_grants_and_audit()
+-> Result<(), Box<dyn std::error::Error>> {
+    let (_directory, store) = open_test_store(0x5C)?;
+    let principal = b"shortcuts.local-user";
+    let releases = Arc::new(AtomicUsize::new(0));
+    let control = Arc::new(TestHandlerControl::default());
+    let context = test_handler_context_with_control(releases.clone(), control.clone());
+    assert_eq!(
+        unsafe {
+            bondry_capability_register_v1(
+                store,
+                b"battery.status".as_ptr(),
+                14,
+                b"Read battery status".as_ptr(),
+                19,
+                BONDRY_CAPABILITY_EFFECT_READ_ONLY_V1,
+                context,
+                Some(test_handler),
+                Some(release_test_handler),
+            )
+        },
+        BONDRY_STATUS_OK
+    );
+    let mut changed = 0;
+    assert_eq!(
+        unsafe {
+            bondry_grant_add_v1(
+                store,
+                principal.as_ptr(),
+                principal.len(),
+                b"shortcuts".as_ptr(),
+                9,
+                b"battery.status".as_ptr(),
+                14,
+                &mut changed,
+            )
+        },
+        BONDRY_STATUS_OK
+    );
+
+    let denied = start_test_principal_dispatch(
+        store,
+        b"rest",
+        principal,
+        BONDRY_PRINCIPAL_KIND_SYSTEM_V1,
+        b"battery.status",
+        b"{}",
+    )?;
+    assert_eq!(
+        denied.recv_timeout(Duration::from_secs(1))?.outcome,
+        BONDRY_DISPATCH_OUTCOME_ACCESS_DENIED_V1
+    );
+    assert_eq!(control.calls.load(Ordering::SeqCst), 0);
+
+    let succeeded = start_test_principal_dispatch(
+        store,
+        b"shortcuts",
+        principal,
+        BONDRY_PRINCIPAL_KIND_SYSTEM_V1,
+        b"battery.status",
+        br#"{"detail":true}"#,
+    )?;
+    assert_eq!(
+        succeeded.recv_timeout(Duration::from_secs(1))?.outcome,
+        BONDRY_DISPATCH_OUTCOME_SUCCEEDED_V1
+    );
+    let observed = control
+        .observed
+        .lock()
+        .map_err(|_| std::io::Error::other("observed invocation lock poisoned"))?
+        .clone();
+    assert_eq!(observed.principal_id, "shortcuts.local-user");
+    assert_eq!(observed.principal_kind, BONDRY_PRINCIPAL_KIND_SYSTEM_V1);
+    assert_eq!(observed.adapter_id, "shortcuts");
+    assert_eq!(observed.capability_id, "battery.status");
+    assert_eq!(observed.input, br#"{"detail":true}"#);
+
+    let events = unsafe_query_audit(store, 10)?;
+    assert!(events.iter().any(|event| {
+        owned_field(&event.principal_id) == "shortcuts.local-user"
+            && owned_field(&event.adapter_id) == "rest"
+            && event.outcome == BONDRY_AUDIT_OUTCOME_DENIED_V1
+    }));
+    assert!(events.iter().any(|event| {
+        owned_field(&event.principal_id) == "shortcuts.local-user"
+            && owned_field(&event.adapter_id) == "shortcuts"
+            && event.outcome == BONDRY_AUDIT_OUTCOME_SUCCEEDED_V1
+    }));
+    close_test_store(store);
+    assert_eq!(releases.load(Ordering::SeqCst), 1);
+    Ok(())
+}
+
+#[test]
+fn validates_trusted_principal_dispatch_before_accepting_callback_ownership()
+-> Result<(), Box<dyn std::error::Error>> {
+    let (_directory, store) = open_test_store(0x5D)?;
+    assert_eq!(
+        unsafe {
+            bondry_dispatch_principal_v1(
+                store,
+                b"request-invalid".as_ptr(),
+                15,
+                b"shortcuts".as_ptr(),
+                9,
+                ptr::null(),
+                0,
+                BONDRY_PRINCIPAL_KIND_SYSTEM_V1,
+                b"battery.status".as_ptr(),
+                14,
+                b"{}".as_ptr(),
+                2,
+                Some(receive_dispatch),
+                ptr::null_mut(),
+            )
+        },
+        BONDRY_STATUS_NULL_POINTER
+    );
+    assert_immediate_principal_dispatch_status(
+        store,
+        b"invalid principal",
+        BONDRY_PRINCIPAL_KIND_SYSTEM_V1,
+        b"{}",
+        BONDRY_STATUS_INVALID_ARGUMENT,
+    );
+    assert_immediate_principal_dispatch_status(
+        store,
+        b"shortcuts.local-user",
+        99,
+        b"{}",
+        BONDRY_STATUS_INVALID_ARGUMENT,
+    );
+    assert_immediate_principal_dispatch_status(
+        store,
+        b"shortcuts.local-user",
+        BONDRY_PRINCIPAL_KIND_SYSTEM_V1,
+        b"not-json",
+        super::BONDRY_STATUS_INVALID_JSON,
+    );
+    assert_immediate_principal_dispatch_status(
+        store,
+        b"shortcuts.local-user",
+        BONDRY_PRINCIPAL_KIND_SYSTEM_V1,
+        &vec![b' '; 1_048_577],
+        BONDRY_STATUS_PAYLOAD_TOO_LARGE,
+    );
+    close_test_store(store);
+    Ok(())
+}
+
+#[test]
 fn keeps_deferred_handlers_alive_after_unregister_and_close()
 -> Result<(), Box<dyn std::error::Error>> {
     let (_directory, store) = open_test_store(0x5A)?;
@@ -1160,6 +1314,7 @@ const TEST_HANDLER_THREADED: u8 = 5;
 #[derive(Clone, Default)]
 struct ObservedInvocation {
     principal_id: String,
+    principal_kind: u32,
     adapter_id: String,
     capability_id: String,
     input: Vec<u8>,
@@ -1245,6 +1400,7 @@ unsafe extern "C" fn test_handler(
     if let Ok(mut observed) = context.control.observed.lock() {
         *observed = ObservedInvocation {
             principal_id: owned_field(&invocation.principal_id),
+            principal_kind: invocation.principal_kind,
             adapter_id: owned_field(&invocation.adapter_id),
             capability_id: owned_field(&invocation.capability_id),
             input,
@@ -1371,6 +1527,45 @@ fn start_test_dispatch(
     Ok(receiver)
 }
 
+fn start_test_principal_dispatch(
+    store: *const BondryStoreHandle,
+    adapter: &[u8],
+    principal: &[u8],
+    principal_kind: u32,
+    capability: &[u8],
+    input: &[u8],
+) -> Result<Receiver<OwnedDispatchResult>, Box<dyn std::error::Error>> {
+    let (sender, receiver) = mpsc::channel::<OwnedDispatchResult>();
+    let context = Box::into_raw(Box::new(sender)).cast::<c_void>();
+    let status = unsafe {
+        bondry_dispatch_principal_v1(
+            store,
+            b"request-platform".as_ptr(),
+            16,
+            adapter.as_ptr(),
+            adapter.len(),
+            principal.as_ptr(),
+            principal.len(),
+            principal_kind,
+            capability.as_ptr(),
+            capability.len(),
+            input.as_ptr(),
+            input.len(),
+            Some(receive_dispatch),
+            context,
+        )
+    };
+    if status != BONDRY_STATUS_OK {
+        unsafe {
+            drop(Box::from_raw(
+                context.cast::<mpsc::Sender<OwnedDispatchResult>>(),
+            ))
+        };
+        return Err(std::io::Error::other(format!("dispatch failed with status {status}")).into());
+    }
+    Ok(receiver)
+}
+
 fn assert_immediate_dispatch_status(
     store: *const BondryStoreHandle,
     token: &[u8],
@@ -1399,6 +1594,42 @@ fn assert_immediate_dispatch_status(
     assert_eq!(status, expected);
     assert!(receiver.recv_timeout(Duration::from_millis(20)).is_err());
     // SAFETY: Immediate dispatch errors leave completion context caller-owned.
+    unsafe {
+        drop(Box::from_raw(
+            context.cast::<mpsc::Sender<OwnedDispatchResult>>(),
+        ))
+    };
+}
+
+fn assert_immediate_principal_dispatch_status(
+    store: *const BondryStoreHandle,
+    principal: &[u8],
+    principal_kind: u32,
+    input: &[u8],
+    expected: i32,
+) {
+    let (sender, receiver) = mpsc::channel::<OwnedDispatchResult>();
+    let context = Box::into_raw(Box::new(sender)).cast::<c_void>();
+    let status = unsafe {
+        bondry_dispatch_principal_v1(
+            store,
+            b"request-invalid".as_ptr(),
+            15,
+            b"shortcuts".as_ptr(),
+            9,
+            principal.as_ptr(),
+            principal.len(),
+            principal_kind,
+            b"battery.status".as_ptr(),
+            14,
+            input.as_ptr(),
+            input.len(),
+            Some(receive_dispatch),
+            context,
+        )
+    };
+    assert_eq!(status, expected);
+    assert!(receiver.recv_timeout(Duration::from_millis(20)).is_err());
     unsafe {
         drop(Box::from_raw(
             context.cast::<mpsc::Sender<OwnedDispatchResult>>(),

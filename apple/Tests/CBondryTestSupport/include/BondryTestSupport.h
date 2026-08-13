@@ -56,5 +56,6 @@ uint8_t bondry_test_summary_byte(size_t index);
 uint32_t bondry_test_capability_effect(void);
 size_t bondry_test_input_length(void);
 uint8_t bondry_test_input_byte(size_t index);
+uint32_t bondry_test_principal_kind(void);
 
 #endif

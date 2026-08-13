@@ -18,7 +18,7 @@ use bondry_core::{
     CapabilityEffect, CapabilityHandler, CapabilityId, CapabilityRegistry, DenialReason,
     DispatchError, DispatchFuture as ServiceDispatchFuture, Dispatcher, GrantStore, HandlerError,
     HandlerErrorCode, HandlerFuture, Invocation, InvocationContext, InvocationId, Principal,
-    StoredGrantPolicy,
+    PrincipalId, PrincipalKind, StoredGrantPolicy,
 };
 use bondry_store_sqlcipher::SqlCipherStore;
 use serde_json::Value;
@@ -34,7 +34,9 @@ use crate::{
         BONDRY_DISPATCH_OUTCOME_ACCESS_DENIED_V1, BONDRY_DISPATCH_OUTCOME_AUDIT_UNAVAILABLE_V1,
         BONDRY_DISPATCH_OUTCOME_CAPABILITY_NOT_FOUND_V1, BONDRY_DISPATCH_OUTCOME_HANDLER_FAILED_V1,
         BONDRY_DISPATCH_OUTCOME_INVALID_INPUT_V1, BONDRY_DISPATCH_OUTCOME_SUCCEEDED_V1,
-        BONDRY_HANDLER_RESULT_FAILED_V1, BONDRY_HANDLER_RESULT_SUCCEEDED_V1, optional_terminated,
+        BONDRY_HANDLER_RESULT_FAILED_V1, BONDRY_HANDLER_RESULT_SUCCEEDED_V1,
+        BONDRY_PRINCIPAL_KIND_APPLICATION_V1, BONDRY_PRINCIPAL_KIND_SYSTEM_V1,
+        BONDRY_PRINCIPAL_KIND_USER_V1, optional_terminated,
     },
     required_utf8, write_records,
 };
@@ -639,31 +641,17 @@ pub unsafe extern "C" fn bondry_dispatch_token_v1(
         let Some(completion) = completion else {
             return BONDRY_STATUS_NULL_POINTER;
         };
-        let invocation_id = match unsafe { required_utf8(invocation_id, invocation_id_length) }
-            .and_then(|value| InvocationId::new(value).map_err(|_| BONDRY_STATUS_INVALID_ARGUMENT))
-        {
-            Ok(invocation_id) => invocation_id,
+        let dispatch = match unsafe {
+            parse_dispatch(
+                RawBuffer::new(invocation_id, invocation_id_length),
+                RawBuffer::new(adapter_id, adapter_id_length),
+                RawBuffer::new(capability_id, capability_id_length),
+                RawBuffer::new(input_json, input_json_length),
+            )
+        } {
+            Ok(dispatch) => dispatch,
             Err(status) => return status,
         };
-        let adapter = match unsafe { required_utf8(adapter_id, adapter_id_length) }
-            .and_then(|value| AdapterId::new(value).map_err(|_| BONDRY_STATUS_INVALID_ARGUMENT))
-        {
-            Ok(adapter) => adapter,
-            Err(status) => return status,
-        };
-        let capability = match unsafe { parse_capability_id(capability_id, capability_id_length) } {
-            Ok(capability) => capability,
-            Err(status) => return status,
-        };
-        if input_json.is_null() {
-            return BONDRY_STATUS_NULL_POINTER;
-        }
-        if input_json_length > isize::MAX as usize {
-            return BONDRY_STATUS_INVALID_LENGTH;
-        }
-        if input_json_length > MAX_JSON_PAYLOAD_LENGTH {
-            return BONDRY_STATUS_PAYLOAD_TOO_LARGE;
-        }
         let token = match unsafe { required_utf8(token, token_length) } {
             Ok(token) => token,
             Err(status) => return status,
@@ -673,49 +661,201 @@ pub unsafe extern "C" fn bondry_dispatch_token_v1(
             Err(AuthenticationError::Rejected) => return BONDRY_STATUS_AUTHENTICATION_REJECTED,
             Err(AuthenticationError::StorageUnavailable) => return BONDRY_STATUS_UNAVAILABLE,
         };
-        // SAFETY: input_json is non-null, bounded, and readable by contract.
-        let input = unsafe { slice::from_raw_parts(input_json, input_json_length) };
-        let input = match serde_json::from_slice(input) {
-            Ok(input) => input,
-            Err(_) => return BONDRY_STATUS_INVALID_JSON,
+        let dispatch = match unsafe { dispatch.parse_input() } {
+            Ok(dispatch) => dispatch,
+            Err(status) => return status,
         };
-        let registered = {
-            let Ok(capabilities) = handle.capabilities.read() else {
-                return BONDRY_STATUS_UNAVAILABLE;
-            };
-            capabilities.get(&capability).cloned()
-        };
-        let mut registry = CapabilityRegistry::new();
-        if let Some(registered) = registered
-            && registry
-                .register(
-                    registered.descriptor,
-                    SharedForeignHandler(registered.handler),
-                )
-                .is_err()
-        {
-            return BONDRY_STATUS_INTERNAL_FAILURE;
-        }
-        let store = handle.store.clone();
-        let policy_store: Arc<dyn GrantStore> = store.clone();
-        let audit: Arc<dyn AuditSink> = store;
-        let dispatcher = Dispatcher::from_shared(
-            registry,
-            Arc::new(StoredGrantPolicy::from_shared(policy_store)),
-            audit,
-        );
-        let invocation = Invocation::new(invocation_id, adapter, principal, capability, input);
-        let future = Box::pin(async move { dispatcher.dispatch(invocation).await });
-        DispatchTask::new(
-            future,
-            DispatchCallback {
-                callback: completion,
-                context: completion_context,
-            },
-        )
-        .request_poll();
-        BONDRY_STATUS_OK
+        start_dispatch(handle, principal, dispatch, completion, completion_context)
     })
+}
+
+/// Asynchronously dispatches one protocol-neutral JSON invocation for a host-trusted principal.
+///
+/// # Safety
+///
+/// Input buffers must be readable for their declared lengths. The host must establish the
+/// principal identity before calling this function. The completion callback and context must
+/// remain valid until the callback is invoked. An accepted dispatch calls completion exactly
+/// once, possibly before this function returns. Immediate errors do not call completion.
+#[must_use]
+#[unsafe(no_mangle)]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn bondry_dispatch_principal_v1(
+    store: *const BondryStoreHandle,
+    invocation_id: *const u8,
+    invocation_id_length: usize,
+    adapter_id: *const u8,
+    adapter_id_length: usize,
+    principal_id: *const u8,
+    principal_id_length: usize,
+    principal_kind: u32,
+    capability_id: *const u8,
+    capability_id_length: usize,
+    input_json: *const u8,
+    input_json_length: usize,
+    completion: Option<BondryDispatchCompletionV1>,
+    completion_context: *mut c_void,
+) -> i32 {
+    catch_status(|| {
+        let Ok(handle) = crate::auth::store_handle(store) else {
+            return BONDRY_STATUS_NULL_POINTER;
+        };
+        let Some(completion) = completion else {
+            return BONDRY_STATUS_NULL_POINTER;
+        };
+        let dispatch = match unsafe {
+            parse_dispatch(
+                RawBuffer::new(invocation_id, invocation_id_length),
+                RawBuffer::new(adapter_id, adapter_id_length),
+                RawBuffer::new(capability_id, capability_id_length),
+                RawBuffer::new(input_json, input_json_length),
+            )
+        } {
+            Ok(dispatch) => dispatch,
+            Err(status) => return status,
+        };
+        let principal_id = match unsafe { required_utf8(principal_id, principal_id_length) }
+            .and_then(|value| PrincipalId::new(value).map_err(|_| BONDRY_STATUS_INVALID_ARGUMENT))
+        {
+            Ok(principal_id) => principal_id,
+            Err(status) => return status,
+        };
+        let kind = match principal_kind {
+            BONDRY_PRINCIPAL_KIND_USER_V1 => PrincipalKind::User,
+            BONDRY_PRINCIPAL_KIND_APPLICATION_V1 => PrincipalKind::Application,
+            BONDRY_PRINCIPAL_KIND_SYSTEM_V1 => PrincipalKind::System,
+            _ => return BONDRY_STATUS_INVALID_ARGUMENT,
+        };
+        let dispatch = match unsafe { dispatch.parse_input() } {
+            Ok(dispatch) => dispatch,
+            Err(status) => return status,
+        };
+        start_dispatch(
+            handle,
+            Principal::new(principal_id, kind),
+            dispatch,
+            completion,
+            completion_context,
+        )
+    })
+}
+
+struct ParsedDispatch {
+    invocation_id: InvocationId,
+    adapter: AdapterId,
+    capability: CapabilityId,
+    input: RawBuffer,
+}
+
+struct ReadyDispatch {
+    invocation_id: InvocationId,
+    adapter: AdapterId,
+    capability: CapabilityId,
+    input: Value,
+}
+
+#[derive(Clone, Copy)]
+struct RawBuffer {
+    bytes: *const u8,
+    length: usize,
+}
+
+impl RawBuffer {
+    const fn new(bytes: *const u8, length: usize) -> Self {
+        Self { bytes, length }
+    }
+}
+
+impl ParsedDispatch {
+    unsafe fn parse_input(self) -> Result<ReadyDispatch, i32> {
+        let input = unsafe { slice::from_raw_parts(self.input.bytes, self.input.length) };
+        let input = serde_json::from_slice(input).map_err(|_| BONDRY_STATUS_INVALID_JSON)?;
+        Ok(ReadyDispatch {
+            invocation_id: self.invocation_id,
+            adapter: self.adapter,
+            capability: self.capability,
+            input,
+        })
+    }
+}
+
+unsafe fn parse_dispatch(
+    invocation: RawBuffer,
+    adapter: RawBuffer,
+    capability: RawBuffer,
+    input: RawBuffer,
+) -> Result<ParsedDispatch, i32> {
+    let invocation_id = unsafe { required_utf8(invocation.bytes, invocation.length) }
+        .and_then(|value| InvocationId::new(value).map_err(|_| BONDRY_STATUS_INVALID_ARGUMENT))?;
+    let adapter = unsafe { required_utf8(adapter.bytes, adapter.length) }
+        .and_then(|value| AdapterId::new(value).map_err(|_| BONDRY_STATUS_INVALID_ARGUMENT))?;
+    let capability = unsafe { parse_capability_id(capability.bytes, capability.length) }?;
+    if input.bytes.is_null() {
+        return Err(BONDRY_STATUS_NULL_POINTER);
+    }
+    if input.length > isize::MAX as usize {
+        return Err(BONDRY_STATUS_INVALID_LENGTH);
+    }
+    if input.length > MAX_JSON_PAYLOAD_LENGTH {
+        return Err(BONDRY_STATUS_PAYLOAD_TOO_LARGE);
+    }
+    Ok(ParsedDispatch {
+        invocation_id,
+        adapter,
+        capability,
+        input,
+    })
+}
+
+fn start_dispatch(
+    handle: &crate::StoreHandle,
+    principal: Principal,
+    dispatch: ReadyDispatch,
+    completion: BondryDispatchCompletionV1,
+    completion_context: *mut c_void,
+) -> i32 {
+    let registered = {
+        let Ok(capabilities) = handle.capabilities.read() else {
+            return BONDRY_STATUS_UNAVAILABLE;
+        };
+        capabilities.get(&dispatch.capability).cloned()
+    };
+    let mut registry = CapabilityRegistry::new();
+    if let Some(registered) = registered
+        && registry
+            .register(
+                registered.descriptor,
+                SharedForeignHandler(registered.handler),
+            )
+            .is_err()
+    {
+        return BONDRY_STATUS_INTERNAL_FAILURE;
+    }
+    let store = handle.store.clone();
+    let policy_store: Arc<dyn GrantStore> = store.clone();
+    let audit: Arc<dyn AuditSink> = store;
+    let dispatcher = Dispatcher::from_shared(
+        registry,
+        Arc::new(StoredGrantPolicy::from_shared(policy_store)),
+        audit,
+    );
+    let invocation = Invocation::new(
+        dispatch.invocation_id,
+        dispatch.adapter,
+        principal,
+        dispatch.capability,
+        dispatch.input,
+    );
+    let future = Box::pin(async move { dispatcher.dispatch(invocation).await });
+    DispatchTask::new(
+        future,
+        DispatchCallback {
+            callback: completion,
+            context: completion_context,
+        },
+    )
+    .request_poll();
+    BONDRY_STATUS_OK
 }
 
 unsafe fn parse_descriptor(

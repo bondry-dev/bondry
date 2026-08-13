@@ -27,12 +27,14 @@ pub use auth::{
 pub use capabilities::{
     BondryCapabilityCompletionV1, BondryCapabilityInvokeV1, BondryCapabilityReleaseV1,
     BondryDispatchCompletionV1, bondry_capabilities_list_v1, bondry_capability_register_v1,
-    bondry_capability_unregister_v1, bondry_dispatch_token_v1,
+    bondry_capability_unregister_v1, bondry_dispatch_principal_v1, bondry_dispatch_token_v1,
 };
 pub use grants::{bondry_grant_add_v1, bondry_grant_remove_v1, bondry_grants_list_v1};
 pub use records::{
-    BondryAuditEventV1, BondryCapabilityV1, BondryClientV1, BondryDispatchResultV1, BondryGrantV1,
-    BondryInvocationV1, BondryIssuedTokenV1, BondryPrincipalV1, BondryTokenMetadataV1,
+    BONDRY_PRINCIPAL_KIND_APPLICATION_V1, BONDRY_PRINCIPAL_KIND_SYSTEM_V1,
+    BONDRY_PRINCIPAL_KIND_USER_V1, BondryAuditEventV1, BondryCapabilityV1, BondryClientV1,
+    BondryDispatchResultV1, BondryGrantV1, BondryInvocationV1, BondryIssuedTokenV1,
+    BondryPrincipalV1, BondryTokenMetadataV1,
 };
 pub use server::{
     BONDRY_SERVER_ADDRESS_CAPACITY_V1, BONDRY_SERVER_CONFIGURATION_VERSION_V1,

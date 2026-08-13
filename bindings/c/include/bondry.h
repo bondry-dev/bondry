@@ -391,6 +391,28 @@ BondryStatus bondry_dispatch_token_v1(
     void *completion_context
 );
 
+/* Dispatches for a principal whose identity was established by the embedding
+ * host. Use this only for trusted platform adapters such as App Intents. All
+ * untrusted protocol clients must authenticate through a credential-based
+ * entry point. Grants and audit records still apply. Callback ownership follows
+ * bondry_dispatch_token_v1. */
+BondryStatus bondry_dispatch_principal_v1(
+    const BondryStoreHandle *store,
+    const uint8_t *invocation_id,
+    size_t invocation_id_length,
+    const uint8_t *adapter_id,
+    size_t adapter_id_length,
+    const uint8_t *principal_id,
+    size_t principal_id_length,
+    uint32_t principal_kind,
+    const uint8_t *capability_id,
+    size_t capability_id_length,
+    const uint8_t *input_json,
+    size_t input_json_length,
+    BondryDispatchCompletionV1 completion,
+    void *completion_context
+);
+
 #ifdef __cplusplus
 }
 #endif

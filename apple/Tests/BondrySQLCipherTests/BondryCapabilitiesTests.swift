@@ -100,6 +100,57 @@ final class BondryCapabilitiesTests: XCTestCase {
     }
   }
 
+  func testDispatchesTrustedPlatformPrincipalWithoutCredentials() async throws {
+    let store = try makeStore()
+    let recorder = InvocationRecorder()
+    try store.registerCapability(capability()) { invocation in
+      await recorder.record(invocation)
+      return Data(#"{"level":85}"#.utf8)
+    }
+    let principal = BondryPrincipal(id: "shortcuts.local-user", kind: .system)
+    let input = Data(#"{"detail":true}"#.utf8)
+
+    let output = try await store.dispatchPlatformInvocation(
+      invocationID: "request_shortcuts",
+      adapterID: "shortcuts",
+      principal: principal,
+      capabilityID: "battery.read",
+      inputJSON: input
+    )
+
+    XCTAssertEqual(output, Data(#"{"level":85}"#.utf8))
+    XCTAssertEqual(bondry_test_dispatch_count(), 1)
+    XCTAssertEqual(capturedIdentifier(), principal.id)
+    XCTAssertEqual(capturedAdapter(), "shortcuts")
+    XCTAssertEqual(capturedCapability(), "battery.read")
+    XCTAssertEqual(capturedInput(), input)
+    XCTAssertEqual(bondry_test_principal_kind(), BONDRY_PRINCIPAL_KIND_SYSTEM_V1)
+    let recordedInvocation = await recorder.invocation
+    let invocation = try XCTUnwrap(recordedInvocation)
+    XCTAssertEqual(invocation.id, "request_shortcuts")
+    XCTAssertEqual(invocation.principal, principal)
+    XCTAssertEqual(invocation.adapterID, "shortcuts")
+    XCTAssertEqual(invocation.capabilityID, "battery.read")
+    XCTAssertEqual(invocation.inputJSON, input)
+  }
+
+  func testMapsImmediatePlatformDispatchFailure() async throws {
+    let store = try makeStore()
+    bondry_test_set_administration_status(BONDRY_STATUS_INVALID_ARGUMENT)
+
+    do {
+      _ = try await store.dispatchPlatformInvocation(
+        adapterID: "shortcuts",
+        principal: BondryPrincipal(id: "shortcuts.local-user", kind: .system),
+        capabilityID: "battery.read",
+        inputJSON: Data("{}".utf8)
+      )
+      XCTFail("Expected dispatch to fail")
+    } catch {
+      XCTAssertEqual(error as? BondryEncryptedStoreError, .invalidArgument)
+    }
+  }
+
   func testMapsSynchronousDispatchOutcomes() async throws {
     let store = try makeStore()
     let cases: [(UInt32, BondryDispatchError)] = [
