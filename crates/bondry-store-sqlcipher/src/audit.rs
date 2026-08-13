@@ -99,7 +99,7 @@ impl SqlCipherStore {
         P: rusqlite::Params,
     {
         let connection = self.connection()?;
-        let mut statement = connection.prepare(sql)?;
+        let mut statement = connection.prepare_cached(sql)?;
         let rows = statement.query_map(parameters, RawAuditEvent::read)?;
         let mut events = Vec::new();
         for row in rows {
@@ -118,24 +118,28 @@ impl AuditSink for SqlCipherStore {
             .and_then(|duration| i64::try_from(duration.as_millis()).ok())
             .ok_or(AuditError::Unavailable)?;
         let (outcome_kind, detail_code) = encode_outcome(event.outcome());
-        self.connection
+        let connection = self
+            .connection
             .lock()
-            .map_err(|_| AuditError::Unavailable)?
-            .execute(
+            .map_err(|_| AuditError::Unavailable)?;
+        let mut statement = connection
+            .prepare_cached(
                 "INSERT INTO audit_events (
                      occurred_at_ms, invocation_id, principal_id, adapter_id,
                      capability_id, outcome_kind, detail_code
                  ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-                params![
-                    occurred_at_ms,
-                    event.invocation().as_str(),
-                    event.principal().as_str(),
-                    event.adapter().as_str(),
-                    event.capability().as_str(),
-                    outcome_kind,
-                    detail_code,
-                ],
             )
+            .map_err(|_| AuditError::Unavailable)?;
+        statement
+            .execute(params![
+                occurred_at_ms,
+                event.invocation().as_str(),
+                event.principal().as_str(),
+                event.adapter().as_str(),
+                event.capability().as_str(),
+                outcome_kind,
+                detail_code,
+            ])
             .map(|_| ())
             .map_err(|_| AuditError::Unavailable)
     }

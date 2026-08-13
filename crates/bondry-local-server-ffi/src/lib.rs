@@ -5,7 +5,10 @@ use std::{
     net::IpAddr,
     panic::{AssertUnwindSafe, catch_unwind},
     ptr, slice,
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
     time::Duration,
 };
 
@@ -58,6 +61,7 @@ const BONDRY_DISPATCH_OUTCOME_HANDLER_FAILED_V1: u32 = 5;
 const BONDRY_DISPATCH_OUTCOME_INVALID_INPUT_V1: u32 = 6;
 const MAX_CONFIGURATION_LENGTH: usize = 65_536;
 const MAX_QUERY_ATTEMPTS: usize = 4;
+const INITIAL_DISCOVERY_CAPACITY: usize = 4_096;
 
 /// The runtime's opaque encrypted-store handle.
 #[repr(C)]
@@ -136,6 +140,7 @@ struct ServerHandle {
 
 struct RuntimeHandle {
     store: *mut BondryStoreHandle,
+    discovery_capacity: AtomicUsize,
 }
 
 // SAFETY: The retained runtime handle exposes only synchronized, thread-safe operations.
@@ -154,7 +159,10 @@ impl RuntimeHandle {
         if retained.is_null() {
             return Err(BONDRY_STATUS_INTERNAL_FAILURE);
         }
-        Ok(Arc::new(Self { store: retained }))
+        Ok(Arc::new(Self {
+            store: retained,
+            discovery_capacity: AtomicUsize::new(INITIAL_DISCOVERY_CAPACITY),
+        }))
     }
 
     fn discover(
@@ -165,26 +173,11 @@ impl RuntimeHandle {
         let principal_id = principal.id().as_str().as_bytes();
         let adapter_id = adapter.as_str().as_bytes();
         let principal_kind = encode_principal_kind(principal.kind());
-        let mut required_length = 0;
-        // SAFETY: Inputs are borrowed for this call and the length output is writable.
-        let status = unsafe {
-            bondry_capabilities_discover_json_v1(
-                self.store,
-                principal_id.as_ptr(),
-                principal_id.len(),
-                principal_kind,
-                adapter_id.as_ptr(),
-                adapter_id.len(),
-                ptr::null_mut(),
-                0,
-                &mut required_length,
-            )
-        };
-        if status != BONDRY_STATUS_OK {
-            return Err(CapabilityDiscoveryError::PolicyUnavailable);
-        }
-
-        let mut output = vec![0; required_length];
+        let capacity = self
+            .discovery_capacity
+            .load(Ordering::Relaxed)
+            .min(BONDRY_MAX_JSON_PAYLOAD_LENGTH_V1);
+        let mut output = vec![0; capacity];
         for _ in 0..MAX_QUERY_ATTEMPTS {
             let mut actual_length = 0;
             // SAFETY: The output allocation and all borrowed inputs remain valid for this call.
@@ -202,12 +195,21 @@ impl RuntimeHandle {
                 )
             };
             if status == BONDRY_STATUS_BUFFER_TOO_SMALL {
+                if actual_length <= output.len()
+                    || actual_length > BONDRY_MAX_JSON_PAYLOAD_LENGTH_V1
+                {
+                    return Err(CapabilityDiscoveryError::PolicyUnavailable);
+                }
+                self.discovery_capacity
+                    .fetch_max(actual_length, Ordering::Relaxed);
                 output.resize(actual_length, 0);
                 continue;
             }
             if status != BONDRY_STATUS_OK || actual_length > output.len() {
                 return Err(CapabilityDiscoveryError::PolicyUnavailable);
             }
+            self.discovery_capacity
+                .fetch_max(actual_length, Ordering::Relaxed);
             output.truncate(actual_length);
             return decode_capabilities(&output)
                 .map_err(|()| CapabilityDiscoveryError::PolicyUnavailable);
@@ -1207,6 +1209,7 @@ mod tests {
             Duration::from_secs(1),
         )?;
         stream.set_read_timeout(Some(Duration::from_secs(1)))?;
+        let request = request.replacen("\r\n\r\n", "\r\nConnection: close\r\n\r\n", 1);
         stream.write_all(request.as_bytes())?;
         let mut response = String::new();
         stream.read_to_string(&mut response)?;

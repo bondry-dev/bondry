@@ -1,4 +1,4 @@
-use std::{fmt, str::FromStr};
+use std::{fmt, str::FromStr, sync::Arc};
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use thiserror::Error;
@@ -48,11 +48,11 @@ macro_rules! identifier {
     ($name:ident, $documentation:literal) => {
         #[doc = $documentation]
         #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-        pub struct $name(String);
+        pub struct $name(Arc<str>);
 
         impl $name {
             /// Creates a validated identifier.
-            pub fn new(value: impl Into<String>) -> Result<Self, IdentifierError> {
+            pub fn new(value: impl Into<Arc<str>>) -> Result<Self, IdentifierError> {
                 let value = value.into();
                 validate(&value)?;
                 Ok(Self(value))

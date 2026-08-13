@@ -73,14 +73,25 @@ impl GrantStore for MemoryGrantStore {
             .map(|mut grants| grants.remove(grant))
     }
 
-    fn contains_grant(&self, grant: &CapabilityGrant) -> Result<bool, GrantStoreError> {
+    fn contains_grant(
+        &self,
+        principal: &PrincipalId,
+        adapter: &AdapterId,
+        capability: &CapabilityId,
+    ) -> Result<bool, GrantStoreError> {
         if self.unavailable.load(Ordering::SeqCst) {
             return Err(GrantStoreError::Unavailable);
         }
         self.grants
             .read()
             .map_err(|_| GrantStoreError::Unavailable)
-            .map(|grants| grants.contains(grant))
+            .map(|grants| {
+                grants.iter().any(|grant| {
+                    grant.principal() == principal
+                        && grant.adapter() == adapter
+                        && grant.capability() == capability
+                })
+            })
     }
 
     fn grants_for_principal(

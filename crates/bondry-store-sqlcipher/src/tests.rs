@@ -243,11 +243,16 @@ fn persists_and_filters_protocol_neutral_audit_events() -> Result<(), Box<dyn st
     drop(store);
 
     let store = SqlCipherStore::open(&path, &key)?;
-    assert!(store.contains_grant(&CapabilityGrant::new(
+    let persisted_grant = CapabilityGrant::new(
         client.id().clone(),
         AdapterId::new("mcp")?,
         CapabilityId::new("battery.snapshot")?,
-    ))?);
+    );
+    assert!(store.contains_grant(
+        persisted_grant.principal(),
+        persisted_grant.adapter(),
+        persisted_grant.capability(),
+    )?);
     let events = store.audit_events_for_principal(client.id(), AuditQueryLimit::new(10)?)?;
     assert_eq!(events.len(), 2);
     assert_eq!(events[0].event().outcome(), &AuditOutcome::Succeeded);
@@ -316,10 +321,10 @@ fn persists_lists_and_removes_exact_grants() -> Result<(), Box<dyn std::error::E
     drop(store);
 
     let store = SqlCipherStore::open(&path, &key)?;
-    assert!(store.contains_grant(&first)?);
+    assert!(store.contains_grant(first.principal(), first.adapter(), first.capability())?);
     assert!(store.remove_grant(&first)?);
     assert!(!store.remove_grant(&first)?);
-    assert!(!store.contains_grant(&first)?);
+    assert!(!store.contains_grant(first.principal(), first.adapter(), first.capability())?);
     assert_eq!(store.grants_for_principal(&principal)?, vec![second]);
     Ok(())
 }
@@ -350,7 +355,7 @@ fn migrates_version_one_without_losing_authentication_state()
         CapabilityId::new("battery.read")?,
     );
     assert!(store.add_grant(grant.clone())?);
-    assert!(store.contains_grant(&grant)?);
+    assert!(store.contains_grant(grant.principal(), grant.adapter(), grant.capability())?);
     Ok(())
 }
 

@@ -120,6 +120,24 @@ fn starts_on_an_automatic_port_and_releases_it() -> Result<(), Box<dyn std::erro
 }
 
 #[test]
+fn serves_multiple_requests_over_one_connection() -> Result<(), Box<dyn std::error::Error>> {
+    let server = start(authenticated_configuration())?;
+    let mut stream = TcpStream::connect(server.local_address())?;
+    stream.set_read_timeout(Some(Duration::from_secs(2)))?;
+    stream.write_all(
+        b"GET /echo HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer alpha\r\n\r\n\
+          GET /echo HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer beta\r\nConnection: close\r\n\r\n",
+    )?;
+    let mut responses = String::new();
+    stream.read_to_string(&mut responses)?;
+
+    assert_eq!(responses.matches("HTTP/1.1 200 OK").count(), 2);
+    assert!(responses.contains("client_alpha"));
+    assert!(responses.contains("client_beta"));
+    Ok(())
+}
+
+#[test]
 fn requires_one_well_formed_bearer_header() -> Result<(), Box<dyn std::error::Error>> {
     let server = start(authenticated_configuration())?;
     let address = server.local_address();

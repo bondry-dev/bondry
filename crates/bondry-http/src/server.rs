@@ -11,7 +11,11 @@ use bondry_core::PrincipalId;
 use bytes::{Bytes, BytesMut};
 use http::{Request, Response, StatusCode, header};
 use http_body_util::{BodyExt, Full};
-use hyper::{body::Incoming, server::conn::http1, service::service_fn};
+use hyper::{
+    body::{Body, Incoming},
+    server::conn::http1,
+    service::service_fn,
+};
 use hyper_util::rt::{TokioIo, TokioTimer};
 use serde_json::json;
 use thiserror::Error;
@@ -28,6 +32,7 @@ use crate::{
 };
 
 type ServerThread = thread::JoinHandle<io::Result<()>>;
+const MAX_BODY_PREALLOCATION: usize = 64 * 1_024;
 
 /// A running local HTTP server with deterministic shutdown ownership.
 pub struct LocalHttpServer {
@@ -46,10 +51,9 @@ impl LocalHttpServer {
         if adapters.is_empty() {
             return Err(ServerStartError::NoAdapters);
         }
-        let runtime = tokio::runtime::Builder::new_multi_thread()
+        let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_io()
             .enable_time()
-            .thread_name("bondry-http-worker")
             .build()
             .map_err(ServerStartError::Runtime)?;
         let (shutdown, shutdown_receiver) = oneshot::channel();
@@ -169,7 +173,8 @@ async fn run_server(
 
 async fn serve_connection(stream: TcpStream, peer: SocketAddr, state: Arc<ServerState>) {
     let _ = stream.set_nodelay(true);
-    let configuration = state.configuration.clone();
+    let header_read_timeout = state.configuration.header_read_timeout;
+    let request_timeout = state.configuration.request_timeout;
     let service = service_fn(move |request| {
         let state = Arc::clone(&state);
         async move {
@@ -187,14 +192,13 @@ async fn serve_connection(stream: TcpStream, peer: SocketAddr, state: Arc<Server
     });
     let mut builder = http1::Builder::new();
     builder
-        .keep_alive(false)
+        .keep_alive(true)
         .max_headers(64)
         .max_buf_size(32 * 1_024)
         .timer(TokioTimer::default())
-        .header_read_timeout(configuration.header_read_timeout);
-    let connection_timeout = configuration
-        .header_read_timeout
-        .saturating_add(configuration.request_timeout)
+        .header_read_timeout(header_read_timeout);
+    let connection_timeout = header_read_timeout
+        .saturating_add(request_timeout)
         .saturating_add(Duration::from_secs(5));
     let connection = builder.serve_connection(TokioIo::new(stream), service);
     let _ = tokio::time::timeout(connection_timeout, connection).await;
@@ -213,7 +217,6 @@ impl ServerState {
             .adapters
             .iter()
             .find(|adapter| adapter.accepts_path(request.uri().path()))
-            .cloned()
         else {
             return error_response(StatusCode::NOT_FOUND, "not_found");
         };
@@ -286,20 +289,40 @@ impl ServerState {
 }
 
 async fn read_body(mut body: Incoming, limit: usize) -> Result<Bytes, BodyReadError> {
-    let mut output = BytesMut::new();
+    let expected_length = body
+        .size_hint()
+        .exact()
+        .and_then(|length| usize::try_from(length).ok());
+    if expected_length.is_some_and(|length| length > limit) {
+        return Err(BodyReadError::TooLarge);
+    }
+    let mut first: Option<Bytes> = None;
+    let mut output: Option<BytesMut> = None;
+    let mut length = 0_usize;
     while let Some(frame) = body.frame().await {
         let frame = frame.map_err(|_| BodyReadError::Invalid)?;
         let data = frame.into_data().map_err(|_| BodyReadError::Invalid)?;
-        let length = output
-            .len()
+        length = length
             .checked_add(data.len())
             .ok_or(BodyReadError::TooLarge)?;
         if length > limit {
             return Err(BodyReadError::TooLarge);
         }
-        output.extend_from_slice(&data);
+        if let Some(output) = &mut output {
+            output.extend_from_slice(&data);
+        } else if let Some(initial) = first.take() {
+            let capacity = expected_length
+                .map_or(length, |expected| expected.min(MAX_BODY_PREALLOCATION))
+                .max(length);
+            let mut combined = BytesMut::with_capacity(capacity);
+            combined.extend_from_slice(&initial);
+            combined.extend_from_slice(&data);
+            output = Some(combined);
+        } else {
+            first = Some(data);
+        }
     }
-    Ok(output.freeze())
+    Ok(output.map_or_else(|| first.unwrap_or_default(), BytesMut::freeze))
 }
 
 enum BodyReadError {
