@@ -211,7 +211,7 @@ fn persists_and_filters_protocol_neutral_audit_events() -> Result<(), Box<dyn st
             capability.clone(),
             "Read battery snapshot",
             CapabilityEffect::ReadOnly,
-        ),
+        )?,
         |_, _| async { Ok(json!({ "level": 80 })) },
     )?;
     let grant = CapabilityGrant::new(client.id().clone(), adapter.clone(), capability.clone());

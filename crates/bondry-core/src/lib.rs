@@ -11,7 +11,8 @@ mod registry;
 
 pub use audit::{AuditError, AuditEvent, AuditOutcome, AuditSink, NoopAuditSink};
 pub use capability::{
-    CapabilityDescriptor, CapabilityEffect, CapabilityHandler, HandlerError, HandlerFuture,
+    CapabilityDescriptor, CapabilityEffect, CapabilityHandler, CapabilitySummaryError,
+    HandlerError, HandlerFuture, MAX_CAPABILITY_SUMMARY_LENGTH,
 };
 pub use dispatch::{DispatchError, Dispatcher};
 pub use identifier::{

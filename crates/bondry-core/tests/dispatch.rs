@@ -112,7 +112,19 @@ fn descriptor() -> Result<CapabilityDescriptor, Box<dyn std::error::Error>> {
         capability_id()?,
         "Read the current battery snapshot",
         CapabilityEffect::ReadOnly,
-    ))
+    )?)
+}
+
+#[test]
+fn capability_summaries_reject_empty_oversized_and_control_text()
+-> Result<(), Box<dyn std::error::Error>> {
+    let id = capability_id()?;
+    assert!(CapabilityDescriptor::new(id.clone(), "  ", CapabilityEffect::ReadOnly).is_err());
+    assert!(
+        CapabilityDescriptor::new(id.clone(), "x".repeat(257), CapabilityEffect::ReadOnly).is_err()
+    );
+    assert!(CapabilityDescriptor::new(id, "Read\nstate", CapabilityEffect::ReadOnly).is_err());
+    Ok(())
 }
 
 fn adapter_id() -> Result<AdapterId, Box<dyn std::error::Error>> {
