@@ -131,6 +131,20 @@ fn keeps_rotation_atomic_when_replacement_conflicts() -> Result<(), Box<dyn std:
 }
 
 #[test]
+fn lists_clients_in_stable_identifier_order() -> Result<(), Box<dyn std::error::Error>> {
+    let store = Arc::new(SqlCipherStore::open_in_memory(&fixed_key(21))?);
+    let manager = AuthManager::from_shared(store.clone());
+    let first = manager.create_client(ClientName::new("First")?)?;
+    let second = manager.create_client(ClientName::new("Second")?)?;
+    let mut expected = vec![first, second];
+    expected.sort_unstable_by(|left, right| left.id().cmp(right.id()));
+
+    assert_eq!(manager.clients()?, expected);
+    assert_eq!(store.clients()?, expected);
+    Ok(())
+}
+
+#[test]
 fn allows_only_one_rotation_across_independent_connections()
 -> Result<(), Box<dyn std::error::Error>> {
     let directory = TempDir::new()?;

@@ -4,20 +4,33 @@
 
 ## Version One
 
-ABI v1 exposes only encrypted-store lifecycle operations:
+ABI v1 exposes encrypted-store lifecycle operations:
 
 - `bondry_abi_version_v1`
 - `bondry_store_open_v1`
 - `bondry_store_check_v1`
 - `bondry_store_close_v1`
 
+It also exposes administrative operations without adding transport or application policy:
+
+- Create, enumerate, enable, and disable authentication clients
+- Issue, enumerate, rotate, and revoke independent client tokens
+- Authenticate a bearer token into a non-secret application principal
+- Query recent or per-principal audit metadata with a limit from 1 through 1,000
+
 The store is an opaque handle. Foreign callers never allocate it, inspect its layout, or receive a Rust reference. Opening transfers one ownership unit to the caller, and closing consumes it. A non-null handle must be closed exactly once and must not be closed concurrently with another operation.
 
 Paths cross the ABI as explicit-length UTF-8 bytes. Database keys must contain exactly 32 bytes. The open call copies the key into zeroizing Rust storage, initializes SQLCipher, and drops the temporary Rust key before returning.
 
+Other strings also cross as explicit-length UTF-8 input. Result records have fixed capacities derived from the validated core limits, contain zero-terminated UTF-8 fields, and are written into caller-owned memory. Optional values use explicit presence fields instead of sentinel timestamps.
+
+List calls use a two-call pattern. A null output with zero capacity reports the complete result count. Insufficient capacity returns `BONDRY_STATUS_BUFFER_TOO_SMALL`, writes no partial records, and reports the required count so the caller can retry. Audit queries remain bounded even during the count call.
+
+Token issuance and rotation return the complete bearer token only once. The caller must call `bondry_issued_token_clear_v1` after deliberately copying or presenting it and must also clear any additional copies it creates. Authentication never retains the presented credential and maps all syntactically valid credential rejections to `BONDRY_STATUS_AUTHENTICATION_REJECTED`.
+
 ## Errors and Panics
 
-Every function returns a stable integer status except the version query. Status values reveal error categories but never Rust error text, SQL, paths, or key material.
+Every function returns a stable integer status except the version query. Status values reveal safe administrative or storage categories but never Rust error text, SQL, paths, key material, or credential lookup details.
 
 Rust unwinding is caught at each fallible ABI entry point and maps to `BONDRY_STATUS_INTERNAL_FAILURE`. Memory violations caused by dangling, undersized, or otherwise invalid foreign pointers cannot be recovered; pointer validity remains part of the C caller contract.
 

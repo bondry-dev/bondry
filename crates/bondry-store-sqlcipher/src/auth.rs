@@ -53,6 +53,34 @@ impl AuthStore for SqlCipherStore {
         .transpose()
     }
 
+    fn clients(&self) -> Result<Vec<Client>, StoreError> {
+        let connection = self.connection().map_err(map_store_error)?;
+        let mut statement = connection
+            .prepare("SELECT id, name, enabled, created_at FROM clients ORDER BY id ASC")
+            .map_err(map_database_error)?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, i64>(3)?,
+                ))
+            })
+            .map_err(map_database_error)?;
+        let mut clients = Vec::new();
+        for row in rows {
+            let (id, name, enabled, created_at) = row.map_err(map_database_error)?;
+            clients.push(Client::from_stored_parts(
+                PrincipalId::new(id).map_err(|_| StoreError::Unavailable)?,
+                ClientName::new(name).map_err(|_| StoreError::Unavailable)?,
+                enabled != 0,
+                created_at,
+            ));
+        }
+        Ok(clients)
+    }
+
     fn set_client_enabled(&self, id: &PrincipalId, enabled: bool) -> Result<bool, StoreError> {
         self.connection()
             .map_err(map_store_error)?

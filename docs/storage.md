@@ -8,6 +8,7 @@ Bondry's core is storage-neutral. `AuthStore` defines transactional client and t
 
 - Full-database SQLCipher encryption, including schema and indexes
 - Atomic token rotation and crash-safe transactions
+- Stable client and per-client token enumeration for administrative interfaces
 - Indexed recent and per-principal audit lookup
 - Foreign-key and schema constraints
 - A busy timeout for independent local connections
@@ -16,7 +17,7 @@ Bondry's core is storage-neutral. `AuthStore` defines transactional client and t
 
 The store has no plaintext open function. Opening it requires a 256-bit `DatabaseKey`. The key must be persisted separately in a platform-secure secret store. Apple hosts can use the `BondryApple` Keychain provider; other platforms should use their native credential facilities or a host-provided equivalent.
 
-Foreign-language hosts open the reference store through the opaque handle in C ABI v1. Swift hosts use the `BondrySQLCipher` wrapper, which accepts `DatabaseKeyMaterial` from `BondryApple` without persisting an intermediate copy.
+Foreign-language hosts open and administer the reference store through the opaque handle in C ABI v1. Swift hosts use the `BondrySQLCipher` wrapper to open the store with `DatabaseKeyMaterial` from `BondryApple` without persisting an intermediate copy. Swift authentication and audit administration wrappers remain a separate binding step.
 
 Losing the database key makes the database unrecoverable. Copying the key next to the database defeats the encryption boundary.
 

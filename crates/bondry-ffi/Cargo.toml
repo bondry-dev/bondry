@@ -10,6 +10,8 @@ repository.workspace = true
 crate-type = ["rlib", "staticlib"]
 
 [dependencies]
+bondry-auth = { path = "../bondry-auth" }
+bondry-core = { path = "../bondry-core" }
 bondry-store-sqlcipher = { path = "../bondry-store-sqlcipher" }
 
 [dev-dependencies]

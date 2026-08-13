@@ -4,9 +4,26 @@ use std::{
     panic::{AssertUnwindSafe, catch_unwind},
     path::Path,
     ptr, slice,
+    sync::Arc,
 };
 
+use bondry_auth::{AuthManager, AuthStore, ClientManagementError, TokenLifecycleError};
 use bondry_store_sqlcipher::{DatabaseKey, SqlCipherStore, SqlCipherStoreError};
+
+mod audit;
+mod auth;
+mod records;
+
+pub use audit::{bondry_audit_for_principal_v1, bondry_audit_recent_v1};
+pub use auth::{
+    bondry_client_create_v1, bondry_client_set_enabled_v1, bondry_clients_list_v1,
+    bondry_issued_token_clear_v1, bondry_token_authenticate_v1, bondry_token_issue_v1,
+    bondry_token_revoke_v1, bondry_token_rotate_v1, bondry_tokens_list_v1,
+};
+pub use records::{
+    BondryAuditEventV1, BondryClientV1, BondryIssuedTokenV1, BondryPrincipalV1,
+    BondryTokenMetadataV1,
+};
 
 /// The first Bondry C ABI version.
 pub const BONDRY_ABI_VERSION_V1: u32 = 1;
@@ -21,6 +38,10 @@ pub const BONDRY_STATUS_INVALID_LENGTH: i32 = 2;
 pub const BONDRY_STATUS_INVALID_UTF8: i32 = 3;
 /// A database path was empty or contained a null byte.
 pub const BONDRY_STATUS_INVALID_PATH: i32 = 4;
+/// A typed input value was malformed or outside its supported range.
+pub const BONDRY_STATUS_INVALID_ARGUMENT: i32 = 5;
+/// A caller-owned output array cannot hold the complete result.
+pub const BONDRY_STATUS_BUFFER_TOO_SMALL: i32 = 6;
 /// A database file could not be created or protected.
 pub const BONDRY_STATUS_FILE_SYSTEM: i32 = 10;
 /// SQLCipher could not complete an operation.
@@ -33,6 +54,22 @@ pub const BONDRY_STATUS_INVALID_DATABASE_KEY: i32 = 13;
 pub const BONDRY_STATUS_INVALID_DATA: i32 = 14;
 /// The database connection is unavailable.
 pub const BONDRY_STATUS_UNAVAILABLE: i32 = 15;
+/// An administrative target does not exist.
+pub const BONDRY_STATUS_NOT_FOUND: i32 = 20;
+/// An operation requires an enabled client.
+pub const BONDRY_STATUS_CLIENT_DISABLED: i32 = 21;
+/// A token is revoked or expired.
+pub const BONDRY_STATUS_TOKEN_INACTIVE: i32 = 22;
+/// Authentication was rejected without disclosing why.
+pub const BONDRY_STATUS_AUTHENTICATION_REJECTED: i32 = 23;
+/// A token lifetime cannot be represented safely.
+pub const BONDRY_STATUS_INVALID_TOKEN_LIFETIME: i32 = 24;
+/// Secure random generation is unavailable.
+pub const BONDRY_STATUS_ENTROPY_UNAVAILABLE: i32 = 25;
+/// System time is unavailable.
+pub const BONDRY_STATUS_TIME_UNAVAILABLE: i32 = 26;
+/// Repeated random identifier generation conflicted with stored state.
+pub const BONDRY_STATUS_GENERATION_EXHAUSTED: i32 = 27;
 /// Bondry stopped an internal failure at the ABI boundary.
 pub const BONDRY_STATUS_INTERNAL_FAILURE: i32 = 255;
 
@@ -43,7 +80,8 @@ pub struct BondryStoreHandle {
 }
 
 struct StoreHandle {
-    store: SqlCipherStore,
+    store: Arc<SqlCipherStore>,
+    auth: AuthManager,
 }
 
 /// Returns the ABI version implemented by the linked library.
@@ -79,7 +117,7 @@ pub unsafe extern "C" fn bondry_store_open_v1(
         if path.is_null() || key.is_null() {
             return BONDRY_STATUS_NULL_POINTER;
         }
-        if key_length != 32 {
+        if path_length > isize::MAX as usize || key_length != 32 {
             return BONDRY_STATUS_INVALID_LENGTH;
         }
 
@@ -99,10 +137,14 @@ pub unsafe extern "C" fn bondry_store_open_v1(
             return BONDRY_STATUS_INVALID_LENGTH;
         };
         let store = match SqlCipherStore::open(Path::new(path_string), &database_key) {
-            Ok(store) => store,
+            Ok(store) => Arc::new(store),
             Err(error) => return store_error_status(&error),
         };
-        let handle = Box::new(StoreHandle { store });
+        let auth_store: Arc<dyn AuthStore> = store.clone();
+        let handle = Box::new(StoreHandle {
+            store,
+            auth: AuthManager::from_shared(auth_store),
+        });
 
         // SAFETY: out_store was validated above and receives ownership of this allocation.
         unsafe {
@@ -168,6 +210,78 @@ fn store_error_status(error: &SqlCipherStoreError) -> i32 {
         SqlCipherStoreError::InvalidData => BONDRY_STATUS_INVALID_DATA,
         SqlCipherStoreError::Unavailable => BONDRY_STATUS_UNAVAILABLE,
     }
+}
+
+fn client_error_status(error: ClientManagementError) -> i32 {
+    match error {
+        ClientManagementError::NotFound => BONDRY_STATUS_NOT_FOUND,
+        ClientManagementError::EntropyUnavailable => BONDRY_STATUS_ENTROPY_UNAVAILABLE,
+        ClientManagementError::GenerationExhausted => BONDRY_STATUS_GENERATION_EXHAUSTED,
+        ClientManagementError::TimeUnavailable => BONDRY_STATUS_TIME_UNAVAILABLE,
+        ClientManagementError::StorageUnavailable => BONDRY_STATUS_UNAVAILABLE,
+    }
+}
+
+fn token_error_status(error: TokenLifecycleError) -> i32 {
+    match error {
+        TokenLifecycleError::ClientNotFound | TokenLifecycleError::NotFound => {
+            BONDRY_STATUS_NOT_FOUND
+        }
+        TokenLifecycleError::ClientDisabled => BONDRY_STATUS_CLIENT_DISABLED,
+        TokenLifecycleError::Inactive => BONDRY_STATUS_TOKEN_INACTIVE,
+        TokenLifecycleError::InvalidLifetime => BONDRY_STATUS_INVALID_TOKEN_LIFETIME,
+        TokenLifecycleError::EntropyUnavailable => BONDRY_STATUS_ENTROPY_UNAVAILABLE,
+        TokenLifecycleError::GenerationExhausted => BONDRY_STATUS_GENERATION_EXHAUSTED,
+        TokenLifecycleError::TimeUnavailable => BONDRY_STATUS_TIME_UNAVAILABLE,
+        TokenLifecycleError::StorageUnavailable => BONDRY_STATUS_UNAVAILABLE,
+    }
+}
+
+unsafe fn required_utf8<'a>(bytes: *const u8, length: usize) -> Result<&'a str, i32> {
+    if bytes.is_null() {
+        return Err(BONDRY_STATUS_NULL_POINTER);
+    }
+    if length > isize::MAX as usize {
+        return Err(BONDRY_STATUS_INVALID_LENGTH);
+    }
+    // SAFETY: Callers guarantee that non-null input buffers are readable for their length.
+    let bytes = unsafe { slice::from_raw_parts(bytes, length) };
+    std::str::from_utf8(bytes).map_err(|_| BONDRY_STATUS_INVALID_UTF8)
+}
+
+unsafe fn optional_utf8<'a>(bytes: *const u8, length: usize) -> Result<Option<&'a str>, i32> {
+    if bytes.is_null() && length == 0 {
+        return Ok(None);
+    }
+    // SAFETY: The caller provides the same readable-buffer guarantee.
+    unsafe { required_utf8(bytes, length) }.map(Some)
+}
+
+fn write_records<T: Copy>(
+    records: &[T],
+    output: *mut T,
+    capacity: usize,
+    out_count: *mut usize,
+) -> i32 {
+    if out_count.is_null() {
+        return BONDRY_STATUS_NULL_POINTER;
+    }
+    // SAFETY: The caller guarantees that out_count points to writable memory.
+    unsafe { out_count.write(records.len()) };
+    if output.is_null() {
+        return if capacity == 0 {
+            BONDRY_STATUS_OK
+        } else {
+            BONDRY_STATUS_NULL_POINTER
+        };
+    }
+    if capacity < records.len() {
+        return BONDRY_STATUS_BUFFER_TOO_SMALL;
+    }
+    // SAFETY: The caller guarantees output is writable for capacity elements, which is
+    // at least records.len(), and foreign output cannot overlap Rust-owned records.
+    unsafe { ptr::copy_nonoverlapping(records.as_ptr(), output, records.len()) };
+    BONDRY_STATUS_OK
 }
 
 #[cfg(test)]

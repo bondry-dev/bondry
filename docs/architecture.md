@@ -62,4 +62,4 @@ The host application defines capabilities and decides which principals and adapt
 
 The core targets platforms supported by Rust's standard library. Platform behavior belongs in adapters. Persistent local servers are not assumed on platforms that suspend background applications.
 
-Language bindings build on the versioned C ABI. ABI v1 currently covers encrypted-store open, health check, and close; later bindings will extend it with authentication and audit operations without changing existing symbols.
+Language bindings build on the versioned C ABI. ABI v1 covers encrypted-store ownership, client and token administration, bearer-token authentication, and bounded audit queries. Capability registration and dispatch remain Rust-native until their callback and asynchronous ownership contracts are defined.

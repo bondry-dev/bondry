@@ -32,8 +32,10 @@ Capability handlers are host-application code. They are trusted to enforce domai
 - The encrypted store requires a caller-supplied 256-bit key and restricts its primary database file to the current operating-system user on Unix platforms.
 - The Apple provider stores the database key in Data Protection Keychain as a non-synchronizing, device-only item that is available only while the device is unlocked.
 - The Apple provider generates keys with Security.framework cryptographic randomness, rejects malformed stored keys, and resolves concurrent first-use creation without overwriting the winning key.
-- The C ABI validates pointer presence, lengths, UTF-8 paths, ABI versions, and opaque-handle results before use.
+- The C ABI validates pointer presence, lengths, UTF-8 input, typed values, bounded query limits, ABI versions, and opaque-handle results before use.
 - Rust layouts and error objects never cross the ABI, and unwinding is stopped before control returns to foreign code.
+- C authentication failures do not distinguish malformed, unknown, mismatched, expired, revoked, or disabled-client bearer tokens.
+- C results use caller-owned fixed-capacity records. One-time token records have an explicit clearing operation, and audit records exclude credentials and payloads.
 
 ## Known Gaps
 

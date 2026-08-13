@@ -126,6 +126,9 @@ pub trait AuthStore: Send + Sync {
     /// Loads a client by principal identifier.
     fn client(&self, id: &PrincipalId) -> Result<Option<Client>, StoreError>;
 
+    /// Lists registered clients in a stable administrative order.
+    fn clients(&self) -> Result<Vec<Client>, StoreError>;
+
     /// Changes client authentication state and reports whether it exists.
     fn set_client_enabled(&self, id: &PrincipalId, enabled: bool) -> Result<bool, StoreError>;
 

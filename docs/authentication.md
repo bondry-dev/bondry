@@ -16,4 +16,6 @@ Malformed, unknown, mismatched, expired, revoked, and disabled-client tokens all
 
 Each client has a random principal identifier and can own multiple independently revocable tokens. Disabling a client immediately rejects all of its tokens. Rotation atomically revokes the selected token and stores its replacement.
 
+Hosts should register a separate named client for each external application or integration. Audit events identify the client principal rather than a bearer credential, so sharing one client across unrelated integrations loses useful attribution.
+
 Authentication returns a `PrincipalKind::Application` principal. The dispatch policy must still contain an explicit grant for that principal, adapter, and capability.

@@ -109,6 +109,13 @@ impl AuthManager {
         }
     }
 
+    /// Lists registered clients for an administrative interface.
+    pub fn clients(&self) -> Result<Vec<Client>, ClientManagementError> {
+        self.store
+            .clients()
+            .map_err(|_| ClientManagementError::StorageUnavailable)
+    }
+
     /// Issues a random token for an enabled client.
     pub fn issue_token(
         &self,

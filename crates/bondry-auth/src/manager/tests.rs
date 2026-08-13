@@ -55,6 +55,12 @@ impl AuthStore for MemoryStore {
         Ok(self.state()?.clients.get(id).cloned())
     }
 
+    fn clients(&self) -> Result<Vec<Client>, StoreError> {
+        let mut clients = self.state()?.clients.values().cloned().collect::<Vec<_>>();
+        clients.sort_unstable_by(|left, right| left.id().cmp(right.id()));
+        Ok(clients)
+    }
+
     fn set_client_enabled(&self, id: &PrincipalId, enabled: bool) -> Result<bool, StoreError> {
         let mut state = self.state()?;
         let Some(client) = state.clients.get_mut(id) else {
@@ -299,6 +305,18 @@ fn client_disable_takes_effect_immediately() -> Result<(), Box<dyn std::error::E
     );
     manager.set_client_enabled(client.id(), true)?;
     assert!(manager.authenticate(issued.secret().expose()).is_ok());
+    Ok(())
+}
+
+#[test]
+fn lists_clients_in_stable_identifier_order() -> Result<(), Box<dyn std::error::Error>> {
+    let (manager, _, _) = setup(25);
+    let first = manager.create_client(ClientName::new("First")?)?;
+    let second = manager.create_client(ClientName::new("Second")?)?;
+    let mut expected = vec![first, second];
+    expected.sort_unstable_by(|left, right| left.id().cmp(right.id()));
+
+    assert_eq!(manager.clients()?, expected);
     Ok(())
 }
 
