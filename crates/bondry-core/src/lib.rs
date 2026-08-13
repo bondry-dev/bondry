@@ -9,7 +9,7 @@ mod invocation;
 mod policy;
 mod registry;
 
-pub use audit::{AuditEvent, AuditOutcome, AuditSink, NoopAuditSink};
+pub use audit::{AuditError, AuditEvent, AuditOutcome, AuditSink, NoopAuditSink};
 pub use capability::{
     CapabilityDescriptor, CapabilityEffect, CapabilityHandler, HandlerError, HandlerFuture,
 };

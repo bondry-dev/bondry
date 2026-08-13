@@ -6,10 +6,10 @@ use std::sync::{
 };
 
 use bondry_core::{
-    AdapterId, AuditEvent, AuditOutcome, AuditSink, CapabilityDescriptor, CapabilityEffect,
-    CapabilityId, CapabilityRegistry, DenialReason, DenyAllPolicy, DispatchError, Dispatcher,
-    GrantPolicy, HandlerError, HandlerErrorCode, Invocation, InvocationContext, InvocationId,
-    Principal, PrincipalId, PrincipalKind, RegistrationError,
+    AdapterId, AuditError, AuditEvent, AuditOutcome, AuditSink, CapabilityDescriptor,
+    CapabilityEffect, CapabilityId, CapabilityRegistry, DenialReason, DenyAllPolicy, DispatchError,
+    Dispatcher, GrantPolicy, HandlerError, HandlerErrorCode, Invocation, InvocationContext,
+    InvocationId, Principal, PrincipalId, PrincipalKind, RegistrationError,
 };
 use futures::executor::block_on;
 use serde_json::{Value, json};
@@ -29,12 +29,21 @@ impl CollectingAuditSink {
 }
 
 impl AuditSink for CollectingAuditSink {
-    fn record(&self, event: AuditEvent) {
+    fn record(&self, event: AuditEvent) -> Result<(), AuditError> {
         let mut events = match self.events.lock() {
             Ok(events) => events,
             Err(poisoned) => poisoned.into_inner(),
         };
         events.push(event);
+        Ok(())
+    }
+}
+
+struct FailingAuditSink;
+
+impl AuditSink for FailingAuditSink {
+    fn record(&self, _event: AuditEvent) -> Result<(), AuditError> {
+        Err(AuditError::Unavailable)
     }
 }
 
@@ -139,7 +148,14 @@ fn executes_only_an_exact_grant() -> Result<(), Box<dyn std::error::Error>> {
         output,
         json!({ "adapter": "mcp", "input": { "includeHealth": true } })
     );
-    assert_eq!(audit.events()[0].outcome(), &AuditOutcome::Succeeded);
+    assert_eq!(
+        audit
+            .events()
+            .iter()
+            .map(AuditEvent::outcome)
+            .collect::<Vec<_>>(),
+        vec![&AuditOutcome::Started, &AuditOutcome::Succeeded]
+    );
     Ok(())
 }
 
@@ -182,6 +198,31 @@ fn rejects_a_grant_from_another_adapter() -> Result<(), Box<dyn std::error::Erro
 }
 
 #[test]
+fn prevents_execution_when_required_audit_is_unavailable() -> Result<(), Box<dyn std::error::Error>>
+{
+    let executions = Arc::new(AtomicUsize::new(0));
+    let handler_executions = Arc::clone(&executions);
+    let mut registry = CapabilityRegistry::new();
+    registry.register(descriptor()?, move |_, _| {
+        let executions = Arc::clone(&handler_executions);
+        async move {
+            executions.fetch_add(1, Ordering::Relaxed);
+            Ok(Value::Null)
+        }
+    })?;
+    let policy = GrantPolicy::new();
+    assert!(policy.grant(principal_id()?, adapter_id()?, capability_id()?)?);
+    let dispatcher = Dispatcher::new(registry, policy, FailingAuditSink);
+
+    assert_eq!(
+        block_on(dispatcher.dispatch(invocation(Value::Null)?)),
+        Err(DispatchError::Audit(AuditError::Unavailable))
+    );
+    assert_eq!(executions.load(Ordering::Relaxed), 0);
+    Ok(())
+}
+
+#[test]
 fn audits_handler_error_codes_without_payloads() -> Result<(), Box<dyn std::error::Error>> {
     let mut registry = CapabilityRegistry::new();
     let error_code = HandlerErrorCode::new("battery.unavailable")?;
@@ -204,7 +245,7 @@ fn audits_handler_error_codes_without_payloads() -> Result<(), Box<dyn std::erro
         )))
     );
     assert_eq!(
-        audit.events()[0].outcome(),
+        audit.events()[1].outcome(),
         &AuditOutcome::HandlerFailed(error_code)
     );
     Ok(())

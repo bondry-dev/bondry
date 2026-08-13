@@ -26,10 +26,11 @@ Capability handlers are host-application code. They are trusted to enforce domai
 - Duplicate capability registration is rejected.
 - Credentials are excluded from principals and invocation context, and principals cannot be deserialized directly from external input.
 - Audit events exclude request and response payloads.
+- Authorized handler execution fails closed if its pre-execution audit event cannot be recorded.
 - Handler failures expose a stable code instead of an internal error message.
 
 ## Known Gaps
 
 The core does not yet provide input-schema validation, payload-size limits, invocation deadlines, cancellation, idempotency, durable audit storage, credential storage, authentication protocols, transport security, or rate limiting. Protocol adapters must not be considered production-ready until the relevant controls are implemented and tested.
 
-Audit sinks currently observe completed outcomes and do not provide a durable pre-execution guarantee. Mutating capabilities require an idempotency and durable-audit design before production use.
+An audit completion can still fail after a handler has changed state. Mutating capabilities require an idempotency design before production use so that an adapter can safely handle this ambiguous outcome.

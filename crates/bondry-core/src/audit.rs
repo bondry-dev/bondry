@@ -1,5 +1,7 @@
 use std::time::SystemTime;
 
+use thiserror::Error;
+
 use crate::{
     AdapterId, CapabilityId, DenialReason, HandlerErrorCode, InvocationContext, InvocationId,
     PrincipalId,
@@ -12,6 +14,8 @@ pub enum AuditOutcome {
     CapabilityNotFound,
     /// Authorization policy rejected the invocation.
     Denied(DenialReason),
+    /// Authorization succeeded and handler execution is about to begin.
+    Started,
     /// The capability handler completed successfully.
     Succeeded,
     /// The capability handler returned a safe error code.
@@ -31,12 +35,32 @@ pub struct AuditEvent {
 
 impl AuditEvent {
     pub(crate) fn new(context: &InvocationContext, outcome: AuditOutcome) -> Self {
+        Self::from_parts(
+            SystemTime::now(),
+            context.id().clone(),
+            context.principal().id().clone(),
+            context.adapter().clone(),
+            context.capability().clone(),
+            outcome,
+        )
+    }
+
+    /// Reconstructs an event read from a trusted audit store.
+    #[must_use]
+    pub const fn from_parts(
+        occurred_at: SystemTime,
+        invocation: InvocationId,
+        principal: PrincipalId,
+        adapter: AdapterId,
+        capability: CapabilityId,
+        outcome: AuditOutcome,
+    ) -> Self {
         Self {
-            occurred_at: SystemTime::now(),
-            invocation: context.id().clone(),
-            principal: context.principal().id().clone(),
-            adapter: context.adapter().clone(),
-            capability: context.capability().clone(),
+            occurred_at,
+            invocation,
+            principal,
+            adapter,
+            capability,
             outcome,
         }
     }
@@ -80,8 +104,16 @@ impl AuditEvent {
 
 /// Receives audit events produced by the dispatcher.
 pub trait AuditSink: Send + Sync {
-    /// Records a completed invocation outcome.
-    fn record(&self, event: AuditEvent);
+    /// Records an invocation event or reports that auditing is unavailable.
+    fn record(&self, event: AuditEvent) -> Result<(), AuditError>;
+}
+
+/// An error produced when an audit event cannot be recorded.
+#[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
+pub enum AuditError {
+    /// The audit sink cannot durably accept the event.
+    #[error("audit recording is unavailable")]
+    Unavailable,
 }
 
 /// An explicit audit sink for hosts that do not retain audit events.
@@ -89,5 +121,7 @@ pub trait AuditSink: Send + Sync {
 pub struct NoopAuditSink;
 
 impl AuditSink for NoopAuditSink {
-    fn record(&self, _event: AuditEvent) {}
+    fn record(&self, _event: AuditEvent) -> Result<(), AuditError> {
+        Ok(())
+    }
 }

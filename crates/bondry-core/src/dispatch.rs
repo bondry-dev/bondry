@@ -4,7 +4,7 @@ use serde_json::Value;
 use thiserror::Error;
 
 use crate::{
-    AuditEvent, AuditOutcome, AuditSink, AuthorizationDecision, AuthorizationPolicy,
+    AuditError, AuditEvent, AuditOutcome, AuditSink, AuthorizationDecision, AuthorizationPolicy,
     AuthorizationRequest, CapabilityId, CapabilityRegistry, DenialReason, HandlerError, Invocation,
     InvocationContext,
 };
@@ -46,7 +46,7 @@ impl Dispatcher {
         let context = InvocationContext::from_invocation(&invocation);
         let Some((descriptor, handler)) = self.registry.resolve(invocation.capability()) else {
             self.audit
-                .record(AuditEvent::new(&context, AuditOutcome::CapabilityNotFound));
+                .record(AuditEvent::new(&context, AuditOutcome::CapabilityNotFound))?;
             return Err(DispatchError::CapabilityNotFound(
                 invocation.capability().clone(),
             ));
@@ -59,21 +59,23 @@ impl Dispatcher {
         ));
         if let AuthorizationDecision::Deny(reason) = authorization {
             self.audit
-                .record(AuditEvent::new(&context, AuditOutcome::Denied(reason)));
+                .record(AuditEvent::new(&context, AuditOutcome::Denied(reason)))?;
             return Err(DispatchError::AccessDenied(reason));
         }
 
+        self.audit
+            .record(AuditEvent::new(&context, AuditOutcome::Started))?;
         match handler.invoke(context.clone(), invocation.input).await {
             Ok(output) => {
                 self.audit
-                    .record(AuditEvent::new(&context, AuditOutcome::Succeeded));
+                    .record(AuditEvent::new(&context, AuditOutcome::Succeeded))?;
                 Ok(output)
             }
             Err(error) => {
                 self.audit.record(AuditEvent::new(
                     &context,
                     AuditOutcome::HandlerFailed(error.code().clone()),
-                ));
+                ))?;
                 Err(DispatchError::Handler(error))
             }
         }
@@ -83,6 +85,9 @@ impl Dispatcher {
 /// An invocation failure safe to map into an adapter-specific response.
 #[derive(Clone, Debug, Eq, Error, PartialEq)]
 pub enum DispatchError {
+    /// Required audit recording failed.
+    #[error(transparent)]
+    Audit(#[from] AuditError),
     /// The requested capability is not registered.
     #[error("capability {0} was not found")]
     CapabilityNotFound(CapabilityId),
