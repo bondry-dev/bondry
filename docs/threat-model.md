@@ -12,7 +12,7 @@ This document describes the current pre-alpha core. Every adapter and binding wi
 
 ## Trust Boundaries
 
-External requests, credentials, and payloads are untrusted. An adapter must validate its transport and authenticate the requester before constructing a `Principal`.
+External requests, credentials, and payloads are untrusted. A network adapter must validate its transport and authenticate the requester before constructing a `Principal`. A platform adapter may construct a principal only when the operating system controls the invocation path and the host explicitly accepts that trust boundary.
 
 The core trusts that an adapter-created principal has been authenticated correctly. It does not trust the principal to invoke any capability until authorization policy explicitly grants the exact principal, adapter, and capability combination.
 
@@ -49,12 +49,17 @@ Capability handlers are host-application code. They are trusted to enforce domai
 - MCP rejects duplicated or mismatched routing headers, requires modern per-request protocol metadata, and uses the same response for missing and unauthorized tools.
 - MCP strips optional custom-header schema annotations because the adapter does not accept capability-defined transport headers.
 - MCP tool results expose generated invocation identifiers and stable handler failure codes without exposing credentials or internal error messages.
+- Trusted-platform dispatch requires a host-supplied principal and still enforces the exact principal-adapter-capability grant, input schema, handler lifecycle, and audit path used by token dispatch.
+- The Shortcuts adapter discovers only registered capabilities granted to its configured principal under the `shortcuts` adapter identifier, and authorization is evaluated again for every invocation.
+- The generic Shortcuts action requires authentication and returns only stable, non-sensitive error descriptions.
 - Swift server handles are single-owner, stop idempotently, and perform bounded shutdown during explicit stop or deinitialization.
 
 ## Known Gaps
 
-The core does not yet provide invocation cancellation or idempotency. Payload-size limits currently exist at the C ABI and local HTTP boundaries rather than in every native Rust entry point. The HTTP runtime does not provide TLS; network listening is an explicitly acknowledged advanced mode and must be protected by a trusted local network or host-supplied secure transport. The REST and MCP adapters are pre-alpha and their public contracts may change. The MCP adapter does not yet implement OAuth discovery, SSE response streams, multi-round-trip responses, or subscriptions. Other protocol adapters must not be considered production-ready until their own controls are implemented and tested.
+The core does not yet provide invocation cancellation or idempotency. Payload-size limits currently exist at the C ABI and local HTTP boundaries rather than in every native Rust entry point. The HTTP runtime does not provide TLS; network listening is an explicitly acknowledged advanced mode and must be protected by a trusted local network or host-supplied secure transport. The REST, MCP, and Shortcuts adapters are pre-alpha and their public contracts may change. The MCP adapter does not yet implement OAuth discovery, SSE response streams, multi-round-trip responses, or subscriptions. Other protocol adapters must not be considered production-ready until their own controls are implemented and tested.
 
 An audit completion can still fail after a handler has changed state. Mutating capabilities require an idempotency design before production use so that an adapter can safely handle this ambiguous outcome.
 
 The encrypted reference store does not yet implement database-key rotation or backup APIs. Only Apple Keychain is implemented as a platform-secure key provider; other platforms still require host implementations. C callers remain responsible for supplying valid memory, completing each accepted handler invocation exactly once, keeping callback contexts live for their documented duration, and closing each handle exactly once without racing an ABI entry point. File encryption and Keychain do not protect data after a valid key is loaded into a compromised host process. Host applications must place database files inside an access-controlled app container and store the key separately.
+
+Shortcuts authorization identifies the host-selected local user context, not each individual shortcut or caller application. Apple does not provide a Bondry bearer credential at the App Intent boundary. A host that needs per-client credentials or independently attributable clients must expose REST or MCP instead.

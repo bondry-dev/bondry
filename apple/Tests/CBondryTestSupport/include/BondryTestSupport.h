@@ -12,6 +12,7 @@ void bondry_test_set_null_handle(int enabled);
 void bondry_test_set_administration_status(int32_t status);
 void bondry_test_set_client_list_growth(int enabled);
 void bondry_test_set_dispatch_outcome(uint32_t outcome);
+void bondry_test_set_shortcuts_grant(int enabled);
 void bondry_test_set_server_start_status(int32_t status);
 void bondry_test_set_server_stop_status(int32_t status);
 void bondry_test_set_null_server_handle(int enabled);

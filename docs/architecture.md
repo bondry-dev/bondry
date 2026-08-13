@@ -40,9 +40,9 @@ Bondry depends on storage contracts, not a particular database. Host application
 
 Adapters translate external protocols into core invocations. Each adapter is responsible for input and output translation and protocol-specific error mapping. Its transport authenticates the caller and supplies only the resulting principal.
 
-An adapter passes only an authenticated principal identifier into the core. Raw bearer tokens, cookies, passkeys, security-key responses, and other credentials must not cross this boundary.
+An adapter passes only a trusted principal into the core. Network adapters authenticate credentials before this boundary. Platform adapters may instead rely on an operating-system-owned invocation path and a principal selected by the host. Raw bearer tokens, cookies, passkeys, security-key responses, and other credentials must not cross this boundary.
 
-REST and MCP share `bondry-http` without sharing protocol translation or authorization grants. The runtime authenticates and rate-limits before removing credentials and handing a bounded request to an adapter. Apple Shortcuts uses App Intents in a Swift adapter and can represent the operating system as an authenticated local principal.
+REST and MCP share `bondry-http` without sharing protocol translation or authorization grants. The runtime authenticates and rate-limits before removing credentials and handing a bounded request to an adapter. `BondryAppIntents` exposes Apple Shortcuts through a host-selected local system principal and the dedicated `shortcuts` adapter identifier.
 
 `bondry-rest` exposes authorized descriptors and generic capability invocation under `/api/v1`. It relies on the shared dispatcher for exact grants, input validation, handler execution, and audit outcomes.
 
@@ -54,7 +54,7 @@ The host application defines capabilities and decides which principals and adapt
 
 ## Request Flow
 
-1. An adapter validates the transport and authenticates a client.
+1. An adapter validates its transport and establishes a trusted principal.
 2. The adapter constructs a principal and a protocol-neutral invocation.
 3. The dispatcher resolves the capability and evaluates policy.
 4. The dispatcher validates authorized input against the capability schema.
@@ -67,4 +67,4 @@ The host application defines capabilities and decides which principals and adapt
 
 The core targets platforms supported by Rust's standard library. Platform behavior belongs in adapters. Persistent local servers are not assumed on platforms that suspend background applications.
 
-Language bindings build on the versioned C ABI. ABI v1 covers encrypted-store ownership, client and token administration, bearer-token authentication, exact authorization grants, bounded audit queries, capability registration, asynchronous dispatch, and local HTTP server ownership. Foreign handlers receive protocol-neutral JSON and trusted invocation metadata only after authentication and exact-grant authorization.
+Language bindings build on the versioned C ABI. ABI v1 covers encrypted-store ownership, client and token administration, bearer-token authentication, exact authorization grants, bounded audit queries, capability registration, token-authenticated and trusted-platform asynchronous dispatch, and local HTTP server ownership. Foreign handlers receive protocol-neutral JSON and trusted invocation metadata only after exact-grant authorization.

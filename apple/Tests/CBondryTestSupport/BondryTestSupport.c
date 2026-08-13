@@ -56,6 +56,7 @@ static size_t captured_input_length = 0;
 static uint8_t captured_input[1024];
 static uint32_t captured_principal_kind = 0;
 static uint32_t dispatch_outcome = 0;
+static int shortcuts_grant_mode = 0;
 static BondryStatus server_start_status = BONDRY_STATUS_OK;
 static BondryStatus server_stop_status = BONDRY_STATUS_OK;
 static int return_null_server_handle = 0;
@@ -67,6 +68,7 @@ static uint8_t captured_server_configuration[65536];
 static void *capability_context = NULL;
 static BondryCapabilityInvokeV1 capability_invoke = NULL;
 static BondryCapabilityReleaseV1 capability_release = NULL;
+static const BondryStoreHandle *capability_store = NULL;
 static int capability_registered = 0;
 
 static void clear_capability(void) {
@@ -77,6 +79,7 @@ static void clear_capability(void) {
     capability_context = NULL;
     capability_invoke = NULL;
     capability_release = NULL;
+    capability_store = NULL;
     capability_registered = 0;
 }
 
@@ -201,6 +204,7 @@ void bondry_test_reset(void) {
     memset(captured_input, 0, sizeof(captured_input));
     captured_principal_kind = 0;
     dispatch_outcome = 0;
+    shortcuts_grant_mode = 0;
     server_start_status = BONDRY_STATUS_OK;
     server_stop_status = BONDRY_STATUS_OK;
     return_null_server_handle = 0;
@@ -237,6 +241,10 @@ void bondry_test_set_client_list_growth(int enabled) {
 
 void bondry_test_set_dispatch_outcome(uint32_t outcome) {
     dispatch_outcome = outcome;
+}
+
+void bondry_test_set_shortcuts_grant(int enabled) {
+    shortcuts_grant_mode = enabled;
 }
 
 void bondry_test_set_server_start_status(int32_t status) {
@@ -463,7 +471,9 @@ BondryStatus bondry_store_check_v1(const BondryStoreHandle *store) {
 
 BondryStatus bondry_store_close_v1(BondryStoreHandle *store) {
     if (store != NULL) {
-        clear_capability();
+        if (store == capability_store) {
+            clear_capability();
+        }
         close_count += 1;
         free(store);
     }
@@ -951,20 +961,30 @@ BondryStatus bondry_grants_list_v1(
     if (store == NULL || out_count == NULL) {
         return BONDRY_STATUS_NULL_POINTER;
     }
-    *out_count = 2;
+    size_t count = shortcuts_grant_mode ? 3 : 2;
+    *out_count = count;
     if (output == NULL && capacity == 0) {
         return BONDRY_STATUS_OK;
     }
-    if (output == NULL || capacity < 2) {
+    if (output == NULL || capacity < count) {
         return BONDRY_STATUS_BUFFER_TOO_SMALL;
     }
-    memset(output, 0, sizeof(*output) * 2);
+    memset(output, 0, sizeof(*output) * count);
     write_string(output[0].principal_id, sizeof(output[0].principal_id), "client_test");
     write_string(output[0].adapter_id, sizeof(output[0].adapter_id), "mcp");
     write_string(output[0].capability_id, sizeof(output[0].capability_id), "battery.health");
     write_string(output[1].principal_id, sizeof(output[1].principal_id), "client_test");
     write_string(output[1].adapter_id, sizeof(output[1].adapter_id), "rest");
     write_string(output[1].capability_id, sizeof(output[1].capability_id), "battery.status");
+    if (shortcuts_grant_mode) {
+        write_string(
+            output[2].principal_id,
+            sizeof(output[2].principal_id),
+            shortcuts_grant_mode == 1 ? "shortcuts.local-user" : "shortcuts.other-user"
+        );
+        write_string(output[2].adapter_id, sizeof(output[2].adapter_id), "shortcuts");
+        write_string(output[2].capability_id, sizeof(output[2].capability_id), "battery.read");
+    }
     return BONDRY_STATUS_OK;
 }
 
@@ -1007,6 +1027,7 @@ BondryStatus bondry_capability_register_v1(
     capability_context = handler_context;
     capability_invoke = invoke;
     capability_release = release;
+    capability_store = store;
     capability_registered = 1;
     return BONDRY_STATUS_OK;
 }

@@ -20,6 +20,7 @@ It also exposes administrative operations without adding transport or applicatio
 - Query recent or per-principal audit metadata with a limit from 1 through 1,000
 - Register, enumerate, and unregister host-owned capability handlers
 - Authenticate and asynchronously dispatch protocol-neutral JSON invocations
+- Dispatch trusted operating-system invocations with an explicit platform principal
 - Start and stop a shared local HTTP server with independently enabled REST and MCP adapters
 
 The store is an opaque handle. Foreign callers never allocate it, inspect its layout, or receive a Rust reference. Opening transfers one ownership unit to the caller, and closing consumes it. A non-null handle must be closed exactly once and must not be closed concurrently with another operation.
@@ -43,6 +44,8 @@ Foreign handler completion can be synchronous or asynchronous and can occur on a
 ## Dispatch
 
 `bondry_dispatch_token_v1` validates identifiers and payload bounds, authenticates the bearer token, parses JSON, resolves the capability, checks the exact principal-adapter-capability grant, validates the input schema, records required audit events, and invokes the handler. JSON input and handler output are each limited to 1 MiB. Credentials and payloads are not retained or written to audit storage.
+
+`bondry_dispatch_principal_v1` accepts a validated principal directly for trusted platform integrations such as Apple App Intents. It bypasses credential authentication only. Capability resolution, exact authorization, schema validation, handler execution, result mapping, and auditing are identical to token dispatch. Callers must never populate the principal from untrusted external input.
 
 An `OK` return accepts the dispatch and guarantees exactly one result callback, which may occur before the entry point returns. An immediate validation, authentication, or storage error never calls the result callback and leaves its context caller-owned. Accepted results distinguish success, missing capability, access denial, invalid capability input, audit unavailability, and handler failure. Result pointers remain valid only for the callback duration.
 

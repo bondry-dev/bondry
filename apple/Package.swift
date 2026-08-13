@@ -10,6 +10,7 @@ let package = Package(
   ],
   products: [
     .library(name: "BondryApple", targets: ["BondryApple"]),
+    .library(name: "BondryAppIntents", targets: ["BondryAppIntents"]),
     .library(name: "BondrySQLCipher", targets: ["BondrySQLCipher"]),
   ],
   targets: [
@@ -26,6 +27,11 @@ let package = Package(
       dependencies: ["BondryApple", "CBondry"]
     ),
     .target(
+      name: "BondryAppIntents",
+      dependencies: ["BondrySQLCipher"],
+      linkerSettings: [.linkedFramework("AppIntents")]
+    ),
+    .target(
       name: "CBondryTestSupport",
       dependencies: ["CBondry"],
       path: "Tests/CBondryTestSupport",
@@ -38,6 +44,10 @@ let package = Package(
     .testTarget(
       name: "BondrySQLCipherTests",
       dependencies: ["BondrySQLCipher", "CBondryTestSupport"]
+    ),
+    .testTarget(
+      name: "BondryAppIntentsTests",
+      dependencies: ["BondryAppIntents", "BondrySQLCipher", "CBondryTestSupport"]
     ),
   ]
 )
