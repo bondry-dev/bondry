@@ -34,7 +34,7 @@ apple/scripts/build-xcframework.sh
 Prepare a local release manifest with both generated checksums:
 
 ```sh
-apple/scripts/prepare-release.sh 0.1.0
+apple/scripts/prepare-release.sh 0.1.1
 ```
 
 Excluded outputs are written below `target/apple/distribution`. Set `BONDRY_APPLE_ARTIFACT_DIR` to choose another destination and `CARGO_TARGET_DIR` to reuse another Cargo cache. Archive timestamps default to the source commit time and can be fixed with `SOURCE_DATE_EPOCH`.
