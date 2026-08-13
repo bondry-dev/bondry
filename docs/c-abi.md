@@ -113,13 +113,19 @@ Swift hosts register `@Sendable async throws` capability handlers and dispatch J
 
 New token secrets remain in a private C record owned by shared Swift storage. The record is cleared when its last `BondryIssuedToken` value is released. Byte-oriented consumers can avoid a `String` copy with `withUnsafeSecretBytes`; `copySecret()` exists for callers that deliberately need one.
 
-The source package does not commit a prebuilt Rust binary. Build the macOS static library with:
+The source package does not commit prebuilt Rust binaries. Build the macOS development library with:
 
 ```sh
 apple/scripts/build-rust-macos.sh
 ```
 
-The same Rust crate has been compile-checked for `aarch64-apple-ios` and `aarch64-apple-ios-sim`. Packaging signed release artifacts as an XCFramework remains a separate distribution step.
+Build and verify the distributable XCFramework with:
+
+```sh
+apple/scripts/build-xcframework.sh
+```
+
+The artifact contains universal macOS, iOS device, and universal iOS Simulator slices. See [Apple distribution](apple-distribution.md) for the release and SwiftPM integration contract.
 
 ## C Verification
 

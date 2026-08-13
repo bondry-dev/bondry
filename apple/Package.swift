@@ -24,7 +24,12 @@ let package = Package(
     ),
     .target(
       name: "BondrySQLCipher",
-      dependencies: ["BondryApple", "CBondry"]
+      dependencies: ["BondryApple", "CBondry"],
+      linkerSettings: [
+        .linkedFramework("CoreFoundation"),
+        .linkedFramework("Security"),
+        .linkedLibrary("iconv"),
+      ]
     ),
     .target(
       name: "BondryAppIntents",

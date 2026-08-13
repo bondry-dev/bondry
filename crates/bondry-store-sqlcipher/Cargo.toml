@@ -11,9 +11,14 @@ base64.workspace = true
 bondry-auth = { path = "../bondry-auth" }
 bondry-core = { path = "../bondry-core" }
 getrandom.workspace = true
-rusqlite.workspace = true
 thiserror.workspace = true
 zeroize.workspace = true
+
+[target.'cfg(target_vendor = "apple")'.dependencies]
+rusqlite = { workspace = true, features = ["bundled-sqlcipher"] }
+
+[target.'cfg(not(target_vendor = "apple"))'.dependencies]
+rusqlite = { workspace = true, features = ["bundled-sqlcipher-vendored-openssl"] }
 
 [dev-dependencies]
 futures = "0.3"

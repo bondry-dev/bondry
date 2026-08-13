@@ -1,0 +1,4 @@
+module CBondry {
+  header "bondry.h"
+  export *
+}
