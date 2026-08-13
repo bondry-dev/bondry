@@ -1,0 +1,16 @@
+.DS_Store
+.env
+.env.*
+!.env.example
+.idea/
+.vscode/
+*.log
+*.pem
+*.key
+*.p12
+*.pfx
+*.mobileprovision
+*.xcuserstate
+xcuserdata/
+target/
+coverage/
