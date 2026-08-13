@@ -1095,10 +1095,67 @@ fn keeps_deferred_handlers_alive_after_unregister_and_close()
     Ok(())
 }
 
+#[test]
+fn completes_many_dispatches_from_competing_threads() -> Result<(), Box<dyn std::error::Error>> {
+    let (_directory, store) = open_test_store(0x5B)?;
+    let (client_id, token) = create_test_credential(store)?;
+    let mut changed = 0;
+    assert_eq!(
+        unsafe {
+            bondry_grant_add_v1(
+                store,
+                client_id.as_ptr(),
+                client_id.len(),
+                b"rest".as_ptr(),
+                4,
+                b"battery.status".as_ptr(),
+                14,
+                &mut changed,
+            )
+        },
+        BONDRY_STATUS_OK
+    );
+    let releases = Arc::new(AtomicUsize::new(0));
+    let control = Arc::new(TestHandlerControl::default());
+    control.mode.store(TEST_HANDLER_THREADED, Ordering::SeqCst);
+    let context = test_handler_context_with_control(releases.clone(), control.clone());
+    assert_eq!(
+        unsafe {
+            bondry_capability_register_v1(
+                store,
+                b"battery.status".as_ptr(),
+                14,
+                b"Read battery status".as_ptr(),
+                19,
+                BONDRY_CAPABILITY_EFFECT_READ_ONLY_V1,
+                context,
+                Some(test_handler),
+                Some(release_test_handler),
+            )
+        },
+        BONDRY_STATUS_OK
+    );
+
+    let receivers = (0..128)
+        .map(|_| start_test_dispatch(store, &token, b"battery.status", b"{}"))
+        .collect::<Result<Vec<_>, _>>()?;
+    for receiver in receivers {
+        assert_eq!(
+            receiver.recv_timeout(Duration::from_secs(2))?.outcome,
+            BONDRY_DISPATCH_OUTCOME_SUCCEEDED_V1
+        );
+    }
+    assert_eq!(control.calls.load(Ordering::SeqCst), 128);
+    close_test_store(store);
+    assert_eq!(releases.load(Ordering::SeqCst), 1);
+    Ok(())
+}
+
 const TEST_HANDLER_SUCCESS: u8 = 1;
 const TEST_HANDLER_FAILURE: u8 = 2;
 const TEST_HANDLER_DEFERRED: u8 = 3;
 const TEST_HANDLER_INVALID: u8 = 4;
+const TEST_HANDLER_THREADED: u8 = 5;
 
 #[derive(Clone, Default)]
 struct ObservedInvocation {
@@ -1223,6 +1280,13 @@ unsafe extern "C" fn test_handler(
                     8,
                 );
             }
+        }
+        TEST_HANDLER_THREADED => {
+            let pending = PendingHandlerCompletion {
+                completion,
+                context: completion_context,
+            };
+            drop(std::thread::spawn(move || pending.succeed()));
         }
         _ => {
             // SAFETY: This consumes the provided completion context exactly once.
