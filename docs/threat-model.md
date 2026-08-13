@@ -44,10 +44,14 @@ Capability handlers are host-application code. They are trusted to enforce domai
 - Non-loopback cleartext listening and non-loopback disabled authentication require separate explicit acknowledgements.
 - REST discovery returns only capabilities authorized for the authenticated principal and the REST adapter.
 - REST uses the same response for missing and unauthorized capabilities, validates JSON media types and payloads before dispatch, and exposes only stable handler failure codes.
+- MCP discovery returns only tools authorized for the authenticated principal and MCP adapter.
+- MCP rejects duplicated or mismatched routing headers, requires modern per-request protocol metadata, and uses the same response for missing and unauthorized tools.
+- MCP strips optional custom-header schema annotations because the adapter does not accept capability-defined transport headers.
+- MCP tool results expose generated invocation identifiers and stable handler failure codes without exposing credentials or internal error messages.
 
 ## Known Gaps
 
-The core does not yet provide invocation cancellation or idempotency. Payload-size limits currently exist at the C ABI and local HTTP boundaries rather than in every native Rust entry point. The HTTP runtime does not provide TLS; network listening is an explicitly acknowledged advanced mode and must be protected by a trusted local network or host-supplied secure transport. The REST adapter is pre-alpha and its public contract may change. Other protocol adapters must not be considered production-ready until their own controls are implemented and tested.
+The core does not yet provide invocation cancellation or idempotency. Payload-size limits currently exist at the C ABI and local HTTP boundaries rather than in every native Rust entry point. The HTTP runtime does not provide TLS; network listening is an explicitly acknowledged advanced mode and must be protected by a trusted local network or host-supplied secure transport. The REST and MCP adapters are pre-alpha and their public contracts may change. The MCP adapter does not yet implement OAuth discovery, SSE response streams, multi-round-trip responses, or subscriptions. Other protocol adapters must not be considered production-ready until their own controls are implemented and tested.
 
 An audit completion can still fail after a handler has changed state. Mutating capabilities require an idempotency design before production use so that an adapter can safely handle this ambiguous outcome.
 

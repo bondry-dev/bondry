@@ -133,6 +133,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "bondry-mcp"
+version = "0.0.1"
+dependencies = [
+ "base64",
+ "bondry-core",
+ "bondry-http",
+ "bytes",
+ "http",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
 name = "bondry-rest"
 version = "0.0.1"
 dependencies = [

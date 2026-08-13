@@ -46,6 +46,8 @@ REST and MCP share `bondry-http` without sharing protocol translation or authori
 
 `bondry-rest` exposes authorized descriptors and generic capability invocation under `/api/v1`. It relies on the shared dispatcher for exact grants, input validation, handler execution, and audit outcomes.
 
+`bondry-mcp` exposes the same capability model as MCP tools under `/mcp`. MCP `2026-07-28` is the primary stateless protocol, while `2025-11-25` initialization remains available for legacy clients. The adapter owns protocol negotiation, routing metadata, discovery, tool translation, and JSON-RPC error mapping without changing the core capability contract.
+
 ## Host Applications
 
 The host application defines capabilities and decides which principals and adapters can invoke them. Domain logic stays in the host or a host-owned service and is reached through capability handlers.

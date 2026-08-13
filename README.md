@@ -14,9 +14,9 @@ The project is in private, pre-alpha development. Its APIs are not stable yet.
 
 ## Architecture
 
-The workspace currently contains the protocol-neutral dispatch core with JSON Schema 2020-12 input validation, client authentication lifecycle, exact authorization grants, a shared local HTTP runtime, a generic versioned REST adapter, an optional encrypted SQLCipher reference store, a versioned asynchronous C embedding ABI, an Apple Keychain provider, and native Swift administration and capability APIs. MCP and Apple App Intents remain separate adapters.
+The workspace currently contains the protocol-neutral dispatch core with JSON Schema 2020-12 input validation, client authentication lifecycle, exact authorization grants, a shared local HTTP runtime, generic REST and MCP adapters, an optional encrypted SQLCipher reference store, a versioned asynchronous C embedding ABI, an Apple Keychain provider, and native Swift administration and capability APIs. Apple App Intents remains a separate adapter.
 
-See [Architecture](docs/architecture.md), [Authentication](docs/authentication.md), [Authorization](docs/authorization.md), [Local HTTP](docs/http.md), [REST](docs/rest.md), [Storage](docs/storage.md), [C ABI](docs/c-abi.md), [Apple Keychain](docs/apple-keychain.md), [Threat model](docs/threat-model.md), and [Repository safety](docs/repository-safety.md) for the current design constraints.
+See [Architecture](docs/architecture.md), [Authentication](docs/authentication.md), [Authorization](docs/authorization.md), [Local HTTP](docs/http.md), [REST](docs/rest.md), [MCP](docs/mcp.md), [Storage](docs/storage.md), [C ABI](docs/c-abi.md), [Apple Keychain](docs/apple-keychain.md), [Threat model](docs/threat-model.md), and [Repository safety](docs/repository-safety.md) for the current design constraints.
 
 ## Development
 
