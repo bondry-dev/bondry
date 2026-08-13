@@ -34,6 +34,8 @@ Bondry depends on storage contracts, not a particular database. Host application
 
 `BondryApple` is a separate Swift package that stores the SQLCipher database key in Apple Data Protection Keychain. The Rust core remains independent of Security.framework and Apple platform behavior.
 
+`bondry-ffi` exposes encrypted-store ownership through a versioned C ABI. `BondrySQLCipher` wraps that ABI for Swift without exposing Rust layouts or pointers to application code.
+
 ## Adapters
 
 Adapters translate external protocols into core invocations. Each adapter is responsible for authentication, input and output translation, protocol-specific error mapping, and transport security.
@@ -60,4 +62,4 @@ The host application defines capabilities and decides which principals and adapt
 
 The core targets platforms supported by Rust's standard library. Platform behavior belongs in adapters. Persistent local servers are not assumed on platforms that suspend background applications.
 
-Language bindings will be built over a versioned C ABI after the native Rust API and ownership model have stabilized.
+Language bindings build on the versioned C ABI. ABI v1 currently covers encrypted-store open, health check, and close; later bindings will extend it with authentication and audit operations without changing existing symbols.

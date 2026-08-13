@@ -16,6 +16,8 @@ Bondry's core is storage-neutral. `AuthStore` defines transactional client and t
 
 The store has no plaintext open function. Opening it requires a 256-bit `DatabaseKey`. The key must be persisted separately in a platform-secure secret store. Apple hosts can use the `BondryApple` Keychain provider; other platforms should use their native credential facilities or a host-provided equivalent.
 
+Foreign-language hosts open the reference store through the opaque handle in C ABI v1. Swift hosts use the `BondrySQLCipher` wrapper, which accepts `DatabaseKeyMaterial` from `BondryApple` without persisting an intermediate copy.
+
 Losing the database key makes the database unrecoverable. Copying the key next to the database defeats the encryption boundary.
 
 ## File-System Defense

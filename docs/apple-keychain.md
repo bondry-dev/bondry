@@ -28,7 +28,16 @@ let configuration = try KeychainDatabaseKeyConfiguration(
 let key = try KeychainDatabaseKeyProvider(configuration: configuration).loadOrCreate()
 ```
 
-The host must pass `key.rawRepresentation` across the future Swift binding to construct the Rust `DatabaseKey`. It must not write those bytes to defaults, logs, crash metadata, environment variables, or a file next to the database.
+Use the separate `BondrySQLCipher` product to pass the key directly into the Rust encrypted store:
+
+```swift
+import BondrySQLCipher
+
+let store = try BondryEncryptedStore.open(at: databaseURL, key: key)
+try store.checkHealth()
+```
+
+The wrapper passes the bytes only for the duration of the open call. The host must not write them to defaults, logs, crash metadata, environment variables, or a file next to the database.
 
 `DatabaseKeyMaterial` redacts its normal and debug descriptions. Swift's value semantics can still leave transient copies in process memory, so the provider does not claim memory protection after a successful read.
 
@@ -44,9 +53,10 @@ The regular test suite uses an in-memory Keychain boundary and never touches the
 swift test --package-path apple
 ```
 
-The signed integration probe requires XcodeGen, a valid Apple development signing identity, and the caller's team identifier:
+The signed integration probe requires XcodeGen, a valid Apple development signing identity, the Rust static library, and the caller's team identifier:
 
 ```sh
+apple/scripts/build-rust-macos.sh
 cd apple/IntegrationTests/KeychainProbe
 DEVELOPMENT_TEAM=YOUR_TEAM_ID xcodegen generate
 xcodebuild -quiet -project KeychainProbe.xcodeproj \
@@ -55,4 +65,4 @@ xcodebuild -quiet -project KeychainProbe.xcodeproj \
 DerivedData/Build/Products/Debug/KeychainProbe.app/Contents/MacOS/KeychainProbe
 ```
 
-The probe uses a random service name, confirms repeated reads, and removes its temporary item before exiting. Generated projects and build products are ignored by Git.
+The probe uses a random service name, opens a real encrypted Rust store through `BondrySQLCipher`, verifies that its file has no plaintext SQLite header, and removes both the Keychain item and database before exiting. Generated projects and build products are ignored by Git.
