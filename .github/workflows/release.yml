@@ -70,6 +70,8 @@ jobs:
         run: |
           sudo xcode-select --switch /Applications/Xcode_26.2.app/Contents/Developer
           xcodebuild -version
+      - name: Install ShellCheck
+        run: .github/scripts/install-shellcheck.sh
       - name: Install Rust
         run: |
           rustup toolchain install 1.90.0 --profile minimal --component clippy,rustfmt
@@ -87,7 +89,7 @@ jobs:
           cargo test --workspace --all-features --locked
           swift format lint --recursive --strict Package.swift apple/Package.swift apple/Distribution/Package.release.swift apple/Sources apple/Tests apple/IntegrationTests/KeychainProbe/Sources
           swift test --package-path apple
-          shellcheck apple/scripts/*.sh
+          shellcheck .github/scripts/*.sh apple/scripts/*.sh
       - name: Build release artifact
         run: SOURCE_DATE_EPOCH=946684800 apple/scripts/build-xcframework.sh
       - name: Verify release package

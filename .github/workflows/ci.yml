@@ -61,6 +61,8 @@ jobs:
         run: |
           sudo xcode-select --switch /Applications/Xcode_26.2.app/Contents/Developer
           xcodebuild -version
+      - name: Install ShellCheck
+        run: .github/scripts/install-shellcheck.sh
       - name: Install Rust
         run: |
           rustup toolchain install 1.90.0 --profile minimal --component clippy,rustfmt
@@ -72,7 +74,7 @@ jobs:
             x86_64-apple-ios
           cargo install --locked --version 0.9.1 --features cli cargo-about
       - name: Check shell scripts
-        run: shellcheck apple/scripts/*.sh
+        run: shellcheck .github/scripts/*.sh apple/scripts/*.sh
       - name: Check Swift formatting
         run: swift format lint --recursive --strict Package.swift apple/Package.swift apple/Distribution/Package.release.swift apple/Sources apple/Tests apple/IntegrationTests/KeychainProbe/Sources
       - name: Test Rust on Apple
