@@ -10,7 +10,7 @@ use thiserror::Error;
 
 use crate::DatabaseKey;
 
-const SCHEMA_VERSION: i64 = 1;
+const SCHEMA_VERSION: i64 = 2;
 
 /// SQLCipher-backed authentication and audit persistence.
 pub struct SqlCipherStore {
@@ -92,6 +92,7 @@ fn migrate(connection: &mut Connection) -> Result<(), SqlCipherStoreError> {
     let version: i64 = connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
     match version {
         SCHEMA_VERSION => Ok(()),
+        1 => migrate_from_version_one(connection),
         0 => migrate_from_empty(connection),
         unsupported => Err(SqlCipherStoreError::UnsupportedSchema(unsupported)),
     }
@@ -145,7 +146,29 @@ fn migrate_from_empty(connection: &mut Connection) -> Result<(), SqlCipherStoreE
          CREATE INDEX audit_by_principal ON audit_events(principal_id, sequence DESC);
          CREATE INDEX audit_by_invocation ON audit_events(invocation_id, sequence);
 
-         PRAGMA user_version = 1;",
+         CREATE TABLE grants (
+             principal_id TEXT NOT NULL,
+             adapter_id TEXT NOT NULL,
+             capability_id TEXT NOT NULL,
+             PRIMARY KEY (principal_id, adapter_id, capability_id)
+         );
+
+         PRAGMA user_version = 2;",
+    )?;
+    transaction.commit()?;
+    Ok(())
+}
+
+fn migrate_from_version_one(connection: &mut Connection) -> Result<(), SqlCipherStoreError> {
+    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    transaction.execute_batch(
+        "CREATE TABLE grants (
+             principal_id TEXT NOT NULL,
+             adapter_id TEXT NOT NULL,
+             capability_id TEXT NOT NULL,
+             PRIMARY KEY (principal_id, adapter_id, capability_id)
+         );
+         PRAGMA user_version = 2;",
     )?;
     transaction.commit()?;
     Ok(())

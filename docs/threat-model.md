@@ -22,6 +22,7 @@ Capability handlers are host-application code. They are trusted to enforce domai
 
 - Empty and unavailable policies fail closed.
 - Grants are scoped to one principal, adapter, and capability.
+- Durable grant lookup failures deny access as `PolicyUnavailable`.
 - Capability identifiers are validated and bounded before entering policy state.
 - Duplicate capability registration is rejected.
 - Credentials are excluded from principals and invocation context, and principals cannot be deserialized directly from external input.

@@ -1,6 +1,6 @@
 # Storage
 
-Bondry's core is storage-neutral. `AuthStore` defines transactional client and token lifecycle operations, while `AuditSink` defines invocation audit recording. A host application can implement either contract using its existing persistence layer.
+Bondry's core is storage-neutral. `AuthStore` defines transactional client and token lifecycle operations, `GrantStore` defines exact authorization state, and `AuditSink` defines invocation audit recording. A host application can implement these contracts using its existing persistence layer.
 
 ## Encrypted Reference Store
 
@@ -9,6 +9,7 @@ Bondry's core is storage-neutral. `AuthStore` defines transactional client and t
 - Full-database SQLCipher encryption, including schema and indexes
 - Atomic token rotation and crash-safe transactions
 - Stable client and per-client token enumeration for administrative interfaces
+- Idempotent exact grants scoped by principal, adapter, and capability
 - Indexed recent and per-principal audit lookup
 - Foreign-key and schema constraints
 - A busy timeout for independent local connections
@@ -29,4 +30,4 @@ The current API does not provide backup, restore, database-key rotation, or mult
 
 ## Data Minimization
 
-Access-token secrets and invocation payloads are never persisted. The database contains token digests, client and token labels, lifecycle timestamps, authorization identities, capability identifiers, adapters, and audit outcomes. These fields remain sensitive metadata and are therefore encrypted at rest.
+Access-token secrets and invocation payloads are never persisted. The database contains token digests, client and token labels, lifecycle timestamps, exact authorization grants, capability identifiers, adapters, and audit outcomes. These fields remain sensitive metadata and are therefore encrypted at rest.

@@ -1,6 +1,6 @@
 use std::{
     collections::{HashMap, HashSet},
-    sync::RwLock,
+    sync::{Arc, RwLock},
 };
 
 use thiserror::Error;
@@ -69,6 +69,109 @@ impl<'a> AuthorizationRequest<'a> {
 pub trait AuthorizationPolicy: Send + Sync {
     /// Returns an explicit authorization decision.
     fn evaluate(&self, request: AuthorizationRequest<'_>) -> AuthorizationDecision;
+}
+
+/// One exact principal, adapter, and capability authorization grant.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct CapabilityGrant {
+    principal: PrincipalId,
+    adapter: AdapterId,
+    capability: CapabilityId,
+}
+
+impl CapabilityGrant {
+    /// Creates an exact authorization grant.
+    #[must_use]
+    pub const fn new(principal: PrincipalId, adapter: AdapterId, capability: CapabilityId) -> Self {
+        Self {
+            principal,
+            adapter,
+            capability,
+        }
+    }
+
+    /// Returns the granted principal identifier.
+    #[must_use]
+    pub const fn principal(&self) -> &PrincipalId {
+        &self.principal
+    }
+
+    /// Returns the granted adapter identifier.
+    #[must_use]
+    pub const fn adapter(&self) -> &AdapterId {
+        &self.adapter
+    }
+
+    /// Returns the granted capability identifier.
+    #[must_use]
+    pub const fn capability(&self) -> &CapabilityId {
+        &self.capability
+    }
+}
+
+/// Persistent operations required by a stored authorization policy.
+pub trait GrantStore: Send + Sync {
+    /// Adds an exact grant and reports whether state changed.
+    fn add_grant(&self, grant: CapabilityGrant) -> Result<bool, GrantStoreError>;
+
+    /// Removes an exact grant and reports whether state changed.
+    fn remove_grant(&self, grant: &CapabilityGrant) -> Result<bool, GrantStoreError>;
+
+    /// Checks whether an exact grant exists.
+    fn contains_grant(&self, grant: &CapabilityGrant) -> Result<bool, GrantStoreError>;
+
+    /// Lists grants for one principal in stable adapter and capability order.
+    fn grants_for_principal(
+        &self,
+        principal: &PrincipalId,
+    ) -> Result<Vec<CapabilityGrant>, GrantStoreError>;
+}
+
+/// A safe authorization-storage failure.
+#[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
+pub enum GrantStoreError {
+    /// Authorization state cannot be read or changed safely.
+    #[error("authorization storage is unavailable")]
+    Unavailable,
+}
+
+/// A deny-by-default policy backed directly by durable grant state.
+pub struct StoredGrantPolicy {
+    store: Arc<dyn GrantStore>,
+}
+
+impl StoredGrantPolicy {
+    /// Creates a policy from owned grant storage.
+    #[must_use]
+    pub fn new<S>(store: S) -> Self
+    where
+        S: GrantStore + 'static,
+    {
+        Self::from_shared(Arc::new(store))
+    }
+
+    /// Creates a policy from shared grant storage.
+    #[must_use]
+    pub const fn from_shared(store: Arc<dyn GrantStore>) -> Self {
+        Self { store }
+    }
+}
+
+impl AuthorizationPolicy for StoredGrantPolicy {
+    fn evaluate(&self, request: AuthorizationRequest<'_>) -> AuthorizationDecision {
+        let grant = CapabilityGrant::new(
+            request.principal().id().clone(),
+            request.adapter().clone(),
+            request.capability().id().clone(),
+        );
+        match self.store.contains_grant(&grant) {
+            Ok(true) => AuthorizationDecision::Allow,
+            Ok(false) => AuthorizationDecision::Deny(DenialReason::NotGranted),
+            Err(GrantStoreError::Unavailable) => {
+                AuthorizationDecision::Deny(DenialReason::PolicyUnavailable)
+            }
+        }
+    }
 }
 
 /// A policy that rejects every invocation.

@@ -1,15 +1,19 @@
 #![allow(missing_docs)]
 
-use std::sync::{
-    Arc, Mutex,
-    atomic::{AtomicUsize, Ordering},
+use std::{
+    collections::HashSet,
+    sync::{
+        Arc, Mutex, RwLock,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+    },
 };
 
 use bondry_core::{
     AdapterId, AuditError, AuditEvent, AuditOutcome, AuditSink, CapabilityDescriptor,
-    CapabilityEffect, CapabilityId, CapabilityRegistry, DenialReason, DenyAllPolicy, DispatchError,
-    Dispatcher, GrantPolicy, HandlerError, HandlerErrorCode, Invocation, InvocationContext,
-    InvocationId, Principal, PrincipalId, PrincipalKind, RegistrationError,
+    CapabilityEffect, CapabilityGrant, CapabilityId, CapabilityRegistry, DenialReason,
+    DenyAllPolicy, DispatchError, Dispatcher, GrantPolicy, GrantStore, GrantStoreError,
+    HandlerError, HandlerErrorCode, Invocation, InvocationContext, InvocationId, Principal,
+    PrincipalId, PrincipalKind, RegistrationError, StoredGrantPolicy,
 };
 use futures::executor::block_on;
 use serde_json::{Value, json};
@@ -44,6 +48,58 @@ struct FailingAuditSink;
 impl AuditSink for FailingAuditSink {
     fn record(&self, _event: AuditEvent) -> Result<(), AuditError> {
         Err(AuditError::Unavailable)
+    }
+}
+
+#[derive(Default)]
+struct MemoryGrantStore {
+    grants: RwLock<HashSet<CapabilityGrant>>,
+    unavailable: AtomicBool,
+}
+
+impl GrantStore for MemoryGrantStore {
+    fn add_grant(&self, grant: CapabilityGrant) -> Result<bool, GrantStoreError> {
+        self.grants
+            .write()
+            .map_err(|_| GrantStoreError::Unavailable)
+            .map(|mut grants| grants.insert(grant))
+    }
+
+    fn remove_grant(&self, grant: &CapabilityGrant) -> Result<bool, GrantStoreError> {
+        self.grants
+            .write()
+            .map_err(|_| GrantStoreError::Unavailable)
+            .map(|mut grants| grants.remove(grant))
+    }
+
+    fn contains_grant(&self, grant: &CapabilityGrant) -> Result<bool, GrantStoreError> {
+        if self.unavailable.load(Ordering::SeqCst) {
+            return Err(GrantStoreError::Unavailable);
+        }
+        self.grants
+            .read()
+            .map_err(|_| GrantStoreError::Unavailable)
+            .map(|grants| grants.contains(grant))
+    }
+
+    fn grants_for_principal(
+        &self,
+        principal: &PrincipalId,
+    ) -> Result<Vec<CapabilityGrant>, GrantStoreError> {
+        let mut grants = self
+            .grants
+            .read()
+            .map_err(|_| GrantStoreError::Unavailable)?
+            .iter()
+            .filter(|grant| grant.principal() == principal)
+            .cloned()
+            .collect::<Vec<_>>();
+        grants.sort_unstable_by(|left, right| {
+            left.adapter()
+                .cmp(right.adapter())
+                .then_with(|| left.capability().cmp(right.capability()))
+        });
+        Ok(grants)
     }
 }
 
@@ -176,6 +232,35 @@ fn applies_policy_revocation_immediately() -> Result<(), Box<dyn std::error::Err
     assert_eq!(
         block_on(dispatcher.dispatch(invocation(Value::Null)?)),
         Err(DispatchError::AccessDenied(DenialReason::NotGranted))
+    );
+    Ok(())
+}
+
+#[test]
+fn stored_policy_tracks_durable_grants_and_fails_closed() -> Result<(), Box<dyn std::error::Error>>
+{
+    let mut registry = CapabilityRegistry::new();
+    registry.register(descriptor()?, |_, _| async { Ok(Value::Null) })?;
+    let store = Arc::new(MemoryGrantStore::default());
+    let grant = CapabilityGrant::new(principal_id()?, adapter_id()?, capability_id()?);
+    assert!(store.add_grant(grant.clone())?);
+    let policy_store: Arc<dyn GrantStore> = store.clone();
+    let dispatcher = Dispatcher::from_shared(
+        registry,
+        Arc::new(StoredGrantPolicy::from_shared(policy_store)),
+        Arc::new(CollectingAuditSink::default()),
+    );
+
+    assert!(block_on(dispatcher.dispatch(invocation(Value::Null)?)).is_ok());
+    assert!(store.remove_grant(&grant)?);
+    assert_eq!(
+        block_on(dispatcher.dispatch(invocation(Value::Null)?)),
+        Err(DispatchError::AccessDenied(DenialReason::NotGranted))
+    );
+    store.unavailable.store(true, Ordering::SeqCst);
+    assert_eq!(
+        block_on(dispatcher.dispatch(invocation(Value::Null)?)),
+        Err(DispatchError::AccessDenied(DenialReason::PolicyUnavailable))
     );
     Ok(())
 }

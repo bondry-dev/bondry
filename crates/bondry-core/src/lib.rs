@@ -20,7 +20,8 @@ pub use identifier::{
 pub use identity::{Principal, PrincipalKind};
 pub use invocation::{Invocation, InvocationContext};
 pub use policy::{
-    AuthorizationDecision, AuthorizationPolicy, AuthorizationRequest, DenialReason, DenyAllPolicy,
-    GrantPolicy, PolicyUpdateError,
+    AuthorizationDecision, AuthorizationPolicy, AuthorizationRequest, CapabilityGrant,
+    DenialReason, DenyAllPolicy, GrantPolicy, GrantStore, GrantStoreError, PolicyUpdateError,
+    StoredGrantPolicy,
 };
 pub use registry::{CapabilityRegistry, RegistrationError};

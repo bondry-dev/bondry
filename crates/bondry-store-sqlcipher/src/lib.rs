@@ -3,6 +3,7 @@
 mod audit;
 mod auth;
 mod database;
+mod grants;
 mod key;
 
 pub use audit::{AuditQueryLimit, AuditQueryLimitError, StoredAuditEvent};

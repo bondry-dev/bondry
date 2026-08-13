@@ -11,8 +11,8 @@ use bondry_auth::{
 };
 use bondry_core::{
     AdapterId, AuditEvent, AuditOutcome, AuditSink, CapabilityDescriptor, CapabilityEffect,
-    CapabilityId, CapabilityRegistry, Dispatcher, GrantPolicy, Invocation, InvocationId, Principal,
-    PrincipalId, PrincipalKind,
+    CapabilityGrant, CapabilityId, CapabilityRegistry, Dispatcher, GrantStore, Invocation,
+    InvocationId, Principal, PrincipalId, PrincipalKind, StoredGrantPolicy,
 };
 use futures::executor::block_on;
 use serde_json::json;
@@ -41,6 +41,11 @@ fn encrypts_the_database_and_rejects_the_wrong_key() -> Result<(), Box<dyn std::
         Some(TokenLabel::new("Private Token Marker")?),
         None,
     )?;
+    assert!(store.add_grant(CapabilityGrant::new(
+        client.id().clone(),
+        AdapterId::new("private_adapter")?,
+        CapabilityId::new("private.capability")?,
+    ))?);
     assert!(manager.authenticate(issued.secret().expose()).is_ok());
     drop(manager);
     drop(store);
@@ -60,6 +65,8 @@ fn encrypts_the_database_and_rejects_the_wrong_key() -> Result<(), Box<dyn std::
         b"CREATE TABLE clients".as_slice(),
         b"Private Client Marker".as_slice(),
         b"Private Token Marker".as_slice(),
+        b"private_adapter".as_slice(),
+        b"private.capability".as_slice(),
         issued.secret().expose().as_bytes(),
     ] {
         assert!(!contains_bytes(&persisted, marker));
@@ -207,8 +214,10 @@ fn persists_and_filters_protocol_neutral_audit_events() -> Result<(), Box<dyn st
         ),
         |_, _| async { Ok(json!({ "level": 80 })) },
     )?;
-    let policy = GrantPolicy::new();
-    assert!(policy.grant(client.id().clone(), adapter.clone(), capability.clone())?);
+    let grant = CapabilityGrant::new(client.id().clone(), adapter.clone(), capability.clone());
+    assert!(store.add_grant(grant)?);
+    let policy_store: Arc<dyn GrantStore> = store.clone();
+    let policy = StoredGrantPolicy::from_shared(policy_store);
     let audit: Arc<dyn AuditSink> = store.clone();
     let dispatcher = Dispatcher::from_shared(registry, Arc::new(policy), audit);
 
@@ -234,6 +243,11 @@ fn persists_and_filters_protocol_neutral_audit_events() -> Result<(), Box<dyn st
     drop(store);
 
     let store = SqlCipherStore::open(&path, &key)?;
+    assert!(store.contains_grant(&CapabilityGrant::new(
+        client.id().clone(),
+        AdapterId::new("mcp")?,
+        CapabilityId::new("battery.snapshot")?,
+    ))?);
     let events = store.audit_events_for_principal(client.id(), AuditQueryLimit::new(10)?)?;
     assert_eq!(events.len(), 2);
     assert_eq!(events[0].event().outcome(), &AuditOutcome::Succeeded);
@@ -255,7 +269,7 @@ fn persists_and_filters_protocol_neutral_audit_events() -> Result<(), Box<dyn st
 fn schema_contains_no_credential_or_payload_columns() -> Result<(), Box<dyn std::error::Error>> {
     let store = SqlCipherStore::open_in_memory(&fixed_key(14))?;
     let connection = store.connection()?;
-    for table in ["clients", "tokens", "audit_events"] {
+    for table in ["clients", "tokens", "audit_events", "grants"] {
         let mut statement = connection.prepare(&format!("PRAGMA table_info({table})"))?;
         let names = statement
             .query_map([], |row| row.get::<_, String>(1))?
@@ -271,6 +285,72 @@ fn schema_contains_no_credential_or_payload_columns() -> Result<(), Box<dyn std:
             assert!(!names.iter().any(|name| name == forbidden));
         }
     }
+    Ok(())
+}
+
+#[test]
+fn persists_lists_and_removes_exact_grants() -> Result<(), Box<dyn std::error::Error>> {
+    let directory = TempDir::new()?;
+    let path = database_path(&directory);
+    let key = fixed_key(22);
+    let store = SqlCipherStore::open(&path, &key)?;
+    let principal = PrincipalId::new("client_policy")?;
+    let first = CapabilityGrant::new(
+        principal.clone(),
+        AdapterId::new("rest")?,
+        CapabilityId::new("battery.status")?,
+    );
+    let second = CapabilityGrant::new(
+        principal.clone(),
+        AdapterId::new("mcp")?,
+        CapabilityId::new("battery.health")?,
+    );
+
+    assert!(store.add_grant(first.clone())?);
+    assert!(!store.add_grant(first.clone())?);
+    assert!(store.add_grant(second.clone())?);
+    assert_eq!(
+        store.grants_for_principal(&principal)?,
+        vec![second.clone(), first.clone()]
+    );
+    drop(store);
+
+    let store = SqlCipherStore::open(&path, &key)?;
+    assert!(store.contains_grant(&first)?);
+    assert!(store.remove_grant(&first)?);
+    assert!(!store.remove_grant(&first)?);
+    assert!(!store.contains_grant(&first)?);
+    assert_eq!(store.grants_for_principal(&principal)?, vec![second]);
+    Ok(())
+}
+
+#[test]
+fn migrates_version_one_without_losing_authentication_state()
+-> Result<(), Box<dyn std::error::Error>> {
+    let directory = TempDir::new()?;
+    let path = database_path(&directory);
+    let key = fixed_key(23);
+    let store = Arc::new(SqlCipherStore::open(&path, &key)?);
+    let manager = AuthManager::from_shared(store.clone());
+    let client = manager.create_client(ClientName::new("Migrated Client")?)?;
+    let issued = manager.issue_token(client.id(), None, None)?;
+    store.connection()?.execute_batch(
+        "DROP TABLE grants;
+         PRAGMA user_version = 1;",
+    )?;
+    drop(manager);
+    drop(store);
+
+    let store = Arc::new(SqlCipherStore::open(&path, &key)?);
+    let manager = AuthManager::from_shared(store.clone());
+    assert!(manager.authenticate(issued.secret().expose()).is_ok());
+    let grant = CapabilityGrant::new(
+        client.id().clone(),
+        AdapterId::new("rest")?,
+        CapabilityId::new("battery.read")?,
+    );
+    assert!(store.add_grant(grant.clone())?);
+    assert!(store.contains_grant(&grant)?);
     Ok(())
 }
 
