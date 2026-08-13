@@ -3,6 +3,7 @@ members = [
     "crates/bondry-auth",
     "crates/bondry-core",
     "crates/bondry-ffi",
+    "crates/bondry-http",
     "crates/bondry-store-sqlcipher",
 ]
 resolver = "3"
@@ -15,7 +16,12 @@ repository = "https://github.com/bondry-dev/bondry"
 
 [workspace.dependencies]
 base64 = "0.23"
+bytes = "1.10"
 getrandom = "0.4"
+http = "1.3"
+http-body-util = "0.1.5"
+hyper = { version = "1.11", features = ["http1", "server"] }
+hyper-util = { version = "0.1.18", features = ["tokio"] }
 jsonschema = { version = "=0.49.9", default-features = false }
 rusqlite = { version = "0.40", default-features = false, features = ["bundled-sqlcipher-vendored-openssl"] }
 serde = { version = "1.0", features = ["derive"] }
@@ -24,6 +30,7 @@ sha2 = "0.11"
 subtle = "2.6"
 tempfile = "3.27"
 thiserror = "2.0"
+tokio = { version = "1.53", features = ["macros", "net", "rt-multi-thread", "sync", "time"] }
 zeroize = "1.9"
 
 [workspace.lints.rust]

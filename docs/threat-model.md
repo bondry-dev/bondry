@@ -39,10 +39,13 @@ Capability handlers are host-application code. They are trusted to enforce domai
 - C authentication failures do not distinguish malformed, unknown, mismatched, expired, revoked, or disabled-client bearer tokens.
 - C results use caller-owned fixed-capacity records. One-time token records have an explicit clearing operation, and audit records exclude credentials and payloads.
 - Swift keeps each newly issued token in a private C record, redacts its debug representation, and clears it when the last shared owner is released. Deliberate `String` copies remain the host's responsibility.
+- The local HTTP runtime defaults to loopback, an operating-system-selected port, rejected browser origins, bounded headers, a 1 MiB body limit, connection and request limits, finite timeouts, and no keep-alive.
+- HTTP authenticators receive request metadata but adapters receive only the resulting principal after credential-bearing headers are removed.
+- Non-loopback cleartext listening and non-loopback disabled authentication require separate explicit acknowledgements.
 
 ## Known Gaps
 
-The core does not yet provide invocation deadlines, cancellation, idempotency, authentication protocols, transport security, or rate limiting. Payload-size limits currently exist at the C ABI rather than in every native Rust entry point. Protocol adapters must not be considered production-ready until the relevant controls are implemented and tested.
+The core does not yet provide invocation cancellation or idempotency. Payload-size limits currently exist at the C ABI and local HTTP boundaries rather than in every native Rust entry point. The HTTP runtime does not provide TLS; network listening is an explicitly acknowledged advanced mode and must be protected by a trusted local network or host-supplied secure transport. Protocol adapters must not be considered production-ready until their own controls are implemented and tested.
 
 An audit completion can still fail after a handler has changed state. Mutating capabilities require an idempotency design before production use so that an adapter can safely handle this ambiguous outcome.
 

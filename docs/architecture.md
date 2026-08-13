@@ -42,7 +42,7 @@ Adapters translate external protocols into core invocations. Each adapter is res
 
 An adapter passes only an authenticated principal identifier into the core. Raw bearer tokens, cookies, passkeys, security-key responses, and other credentials must not cross this boundary.
 
-REST and MCP can share an HTTP transport without sharing authorization policy. Apple Shortcuts uses App Intents in a Swift adapter and can represent the operating system as an authenticated local principal.
+REST and MCP share `bondry-http` without sharing protocol translation or authorization grants. The runtime authenticates and rate-limits before removing credentials and handing a bounded request to an adapter. Apple Shortcuts uses App Intents in a Swift adapter and can represent the operating system as an authenticated local principal.
 
 ## Host Applications
 
