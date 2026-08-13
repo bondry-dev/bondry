@@ -14,9 +14,9 @@ The project is in private, pre-alpha development. Its APIs are not stable yet.
 
 ## Architecture
 
-The workspace currently contains the protocol-neutral dispatch core and client authentication lifecycle. Network servers, protocol adapters, platform credential storage, Apple platform integration, and language bindings remain separate layers.
+The workspace currently contains the protocol-neutral dispatch core, client authentication lifecycle, and an optional encrypted SQLCipher reference store. Network servers, protocol adapters, platform credential storage, Apple platform integration, and language bindings remain separate layers.
 
-See [Architecture](docs/architecture.md), [Authentication](docs/authentication.md), [Threat model](docs/threat-model.md), and [Repository safety](docs/repository-safety.md) for the current design constraints.
+See [Architecture](docs/architecture.md), [Authentication](docs/authentication.md), [Storage](docs/storage.md), [Threat model](docs/threat-model.md), and [Repository safety](docs/repository-safety.md) for the current design constraints.
 
 ## Development
 

@@ -26,6 +26,12 @@ The portable Rust core owns protocol-neutral concepts:
 
 The core does not open sockets, parse authentication credentials, persist secrets, or depend on an operating-system credential store.
 
+## Persistence
+
+Bondry depends on storage contracts, not a particular database. Host applications can implement `AuthStore` and `AuditSink` using an existing persistence layer.
+
+`bondry-store-sqlcipher` is an optional encrypted reference implementation for local transactional storage. It is not a core dependency and has no plaintext fallback. Its database key must come from a platform-secure secret provider such as Keychain on Apple platforms.
+
 ## Adapters
 
 Adapters translate external protocols into core invocations. Each adapter is responsible for authentication, input and output translation, protocol-specific error mapping, and transport security.
@@ -43,9 +49,10 @@ The host application defines capabilities and decides which principals and adapt
 1. An adapter validates the transport and authenticates a client.
 2. The adapter constructs a principal and a protocol-neutral invocation.
 3. The dispatcher resolves the capability and evaluates policy.
-4. An authorized handler executes.
-5. An audit outcome is emitted regardless of success or failure.
-6. The adapter maps the result into its external protocol.
+4. An authorized invocation records a pre-execution audit event or fails closed.
+5. The authorized handler executes.
+6. A completion audit outcome is recorded.
+7. The adapter maps the result into its external protocol.
 
 ## Portability
 

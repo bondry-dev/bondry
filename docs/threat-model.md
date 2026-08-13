@@ -28,9 +28,13 @@ Capability handlers are host-application code. They are trusted to enforce domai
 - Audit events exclude request and response payloads.
 - Authorized handler execution fails closed if its pre-execution audit event cannot be recorded.
 - Handler failures expose a stable code instead of an internal error message.
+- The optional local reference store encrypts the entire database with SQLCipher and has no plaintext open path.
+- The encrypted store requires a caller-supplied 256-bit key and restricts its primary database file to the current operating-system user on Unix platforms.
 
 ## Known Gaps
 
-The core does not yet provide input-schema validation, payload-size limits, invocation deadlines, cancellation, idempotency, durable audit storage, credential storage, authentication protocols, transport security, or rate limiting. Protocol adapters must not be considered production-ready until the relevant controls are implemented and tested.
+The core does not yet provide input-schema validation, payload-size limits, invocation deadlines, cancellation, idempotency, authentication protocols, transport security, or rate limiting. Protocol adapters must not be considered production-ready until the relevant controls are implemented and tested.
 
 An audit completion can still fail after a handler has changed state. Mutating capabilities require an idempotency design before production use so that an adapter can safely handle this ambiguous outcome.
+
+The encrypted reference store does not yet implement database-key rotation, backup APIs, or a platform-secure key provider. File encryption does not protect data after a valid key is loaded into a compromised host process. Host applications must place database files inside an access-controlled app container and store the key separately.
