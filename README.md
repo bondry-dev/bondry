@@ -14,9 +14,9 @@ The project is in private, pre-alpha development. Its APIs are not stable yet.
 
 ## Architecture
 
-The workspace currently contains the protocol-neutral dispatch core, client authentication lifecycle, and an optional encrypted SQLCipher reference store. Network servers, protocol adapters, platform credential storage, Apple platform integration, and language bindings remain separate layers.
+The workspace currently contains the protocol-neutral dispatch core, client authentication lifecycle, an optional encrypted SQLCipher reference store, and an Apple Keychain provider for its database key. Network servers, protocol adapters, Apple App Intents, and language bindings remain separate layers.
 
-See [Architecture](docs/architecture.md), [Authentication](docs/authentication.md), [Storage](docs/storage.md), [Threat model](docs/threat-model.md), and [Repository safety](docs/repository-safety.md) for the current design constraints.
+See [Architecture](docs/architecture.md), [Authentication](docs/authentication.md), [Storage](docs/storage.md), [Apple Keychain](docs/apple-keychain.md), [Threat model](docs/threat-model.md), and [Repository safety](docs/repository-safety.md) for the current design constraints.
 
 ## Development
 
@@ -26,6 +26,8 @@ The workspace requires Rust 1.85 or newer.
 cargo fmt --all --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-features
+swift format lint --recursive --strict apple/Package.swift apple/Sources apple/Tests apple/IntegrationTests/KeychainProbe/Sources
+swift test --package-path apple
 ```
 
 ## License

@@ -30,7 +30,9 @@ The core does not open sockets, parse authentication credentials, persist secret
 
 Bondry depends on storage contracts, not a particular database. Host applications can implement `AuthStore` and `AuditSink` using an existing persistence layer.
 
-`bondry-store-sqlcipher` is an optional encrypted reference implementation for local transactional storage. It is not a core dependency and has no plaintext fallback. Its database key must come from a platform-secure secret provider such as Keychain on Apple platforms.
+`bondry-store-sqlcipher` is an optional encrypted reference implementation for local transactional storage. It is not a core dependency and has no plaintext fallback. Its database key must come from a platform-secure secret provider.
+
+`BondryApple` is a separate Swift package that stores the SQLCipher database key in Apple Data Protection Keychain. The Rust core remains independent of Security.framework and Apple platform behavior.
 
 ## Adapters
 

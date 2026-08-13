@@ -14,7 +14,7 @@ Bondry's core is storage-neutral. `AuthStore` defines transactional client and t
 - WAL with full synchronous durability
 - A bounded audit query API
 
-The store has no plaintext open function. Opening it requires a 256-bit `DatabaseKey`. The key must be persisted separately in a platform-secure secret store. Apple hosts should use Keychain; other platforms should use their native credential facilities or a host-provided equivalent.
+The store has no plaintext open function. Opening it requires a 256-bit `DatabaseKey`. The key must be persisted separately in a platform-secure secret store. Apple hosts can use the `BondryApple` Keychain provider; other platforms should use their native credential facilities or a host-provided equivalent.
 
 Losing the database key makes the database unrecoverable. Copying the key next to the database defeats the encryption boundary.
 
@@ -22,7 +22,7 @@ Losing the database key makes the database unrecoverable. Copying the key next t
 
 Encryption complements rather than replaces operating-system access control. Hosts should place the database in an app sandbox or protected app-group container and restrict its parent directory to the application. On Unix platforms the reference store creates and resets the main database file to mode `0600`.
 
-The current API does not provide backup, restore, key rotation, or multi-process lifecycle coordination. Those controls must be designed before the backend is considered production-ready.
+The current API does not provide backup, restore, database-key rotation, or multi-process lifecycle coordination. Those controls must be designed before the backend is considered production-ready. The Apple provider intentionally has no public delete or regeneration operation because replacing a key without rekeying the database causes permanent data loss.
 
 ## Data Minimization
 

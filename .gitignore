@@ -13,4 +13,8 @@
 *.xcuserstate
 xcuserdata/
 target/
+.build/
+.swiftpm/
+DerivedData/
+apple/IntegrationTests/KeychainProbe/KeychainProbe.xcodeproj/
 coverage/

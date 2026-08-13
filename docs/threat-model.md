@@ -30,6 +30,8 @@ Capability handlers are host-application code. They are trusted to enforce domai
 - Handler failures expose a stable code instead of an internal error message.
 - The optional local reference store encrypts the entire database with SQLCipher and has no plaintext open path.
 - The encrypted store requires a caller-supplied 256-bit key and restricts its primary database file to the current operating-system user on Unix platforms.
+- The Apple provider stores the database key in Data Protection Keychain as a non-synchronizing, device-only item that is available only while the device is unlocked.
+- The Apple provider generates keys with Security.framework cryptographic randomness, rejects malformed stored keys, and resolves concurrent first-use creation without overwriting the winning key.
 
 ## Known Gaps
 
@@ -37,4 +39,4 @@ The core does not yet provide input-schema validation, payload-size limits, invo
 
 An audit completion can still fail after a handler has changed state. Mutating capabilities require an idempotency design before production use so that an adapter can safely handle this ambiguous outcome.
 
-The encrypted reference store does not yet implement database-key rotation, backup APIs, or a platform-secure key provider. File encryption does not protect data after a valid key is loaded into a compromised host process. Host applications must place database files inside an access-controlled app container and store the key separately.
+The encrypted reference store does not yet implement database-key rotation or backup APIs. Only Apple Keychain is implemented as a platform-secure key provider; other platforms still require host implementations. File encryption and Keychain do not protect data after a valid key is loaded into a compromised host process. Host applications must place database files inside an access-controlled app container and store the key separately.

@@ -1,0 +1,26 @@
+name: KeychainProbe
+options:
+  minimumXcodeGenVersion: 2.45.0
+packages:
+  BondryApple:
+    path: ../..
+targets:
+  KeychainProbe:
+    type: application
+    platform: macOS
+    deploymentTarget: "13.0"
+    sources:
+      - Sources
+    dependencies:
+      - package: BondryApple
+        product: BondryApple
+    settings:
+      base:
+        CODE_SIGN_ENTITLEMENTS: KeychainProbe.entitlements
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: "${DEVELOPMENT_TEAM}"
+        ENABLE_HARDENED_RUNTIME: true
+        GENERATE_INFOPLIST_FILE: true
+        INFOPLIST_KEY_LSUIElement: true
+        PRODUCT_BUNDLE_IDENTIFIER: dev.bondry.keychain-probe
+        SWIFT_VERSION: "6.0"
