@@ -63,7 +63,7 @@ jobs:
           xcodebuild -version
       - name: Install Apple build tools
         run: |
-          sh .github/scripts/install-homebrew-tools.sh actionlint ripgrep
+          sh .github/scripts/install-homebrew-tools.sh actionlint
           .github/scripts/install-shellcheck.sh
       - name: Install Rust
         run: |
@@ -84,7 +84,6 @@ jobs:
             cargo \
             cargo-about \
             lipo \
-            rg \
             rustc \
             shellcheck \
             swift \
@@ -107,6 +106,9 @@ jobs:
       - name: Test Rust on Apple
         run: cargo test --workspace --all-features --locked
       - name: Test Swift
-        run: swift test --package-path apple
+        run: |
+          swift package dump-package > /dev/null
+          swift build
+          swift test --package-path apple
       - name: Build and verify XCFramework
         run: apple/scripts/build-xcframework.sh

@@ -26,22 +26,22 @@ chmod +x "$temporary_directory/brew"
 BREW_CALLS="$temporary_directory/with-tap.calls" \
 BREW_TAPS='aws/tap' \
 PATH="$temporary_directory:$PATH" \
-    sh "$script_directory/install-homebrew-tools.sh" actionlint ripgrep
+    sh "$script_directory/install-homebrew-tools.sh" actionlint
 
 cat > "$temporary_directory/with-tap.expected" <<'EOF'
 tap
 untap aws/tap
-install actionlint ripgrep
+install actionlint
 EOF
 cmp "$temporary_directory/with-tap.expected" "$temporary_directory/with-tap.calls"
 
 BREW_CALLS="$temporary_directory/without-tap.calls" \
 BREW_TAPS='' \
 PATH="$temporary_directory:$PATH" \
-    sh "$script_directory/install-homebrew-tools.sh" gh jq ripgrep
+    sh "$script_directory/install-homebrew-tools.sh" gh jq
 
 cat > "$temporary_directory/without-tap.expected" <<'EOF'
 tap
-install gh jq ripgrep
+install gh jq
 EOF
 cmp "$temporary_directory/without-tap.expected" "$temporary_directory/without-tap.calls"
