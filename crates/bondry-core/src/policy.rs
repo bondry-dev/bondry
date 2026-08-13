@@ -118,7 +118,12 @@ pub trait GrantStore: Send + Sync {
     fn remove_grant(&self, grant: &CapabilityGrant) -> Result<bool, GrantStoreError>;
 
     /// Checks whether an exact grant exists.
-    fn contains_grant(&self, grant: &CapabilityGrant) -> Result<bool, GrantStoreError>;
+    fn contains_grant(
+        &self,
+        principal: &PrincipalId,
+        adapter: &AdapterId,
+        capability: &CapabilityId,
+    ) -> Result<bool, GrantStoreError>;
 
     /// Lists grants for one principal in stable adapter and capability order.
     fn grants_for_principal(
@@ -159,12 +164,11 @@ impl StoredGrantPolicy {
 
 impl AuthorizationPolicy for StoredGrantPolicy {
     fn evaluate(&self, request: AuthorizationRequest<'_>) -> AuthorizationDecision {
-        let grant = CapabilityGrant::new(
-            request.principal().id().clone(),
-            request.adapter().clone(),
-            request.capability().id().clone(),
-        );
-        match self.store.contains_grant(&grant) {
+        match self.store.contains_grant(
+            request.principal().id(),
+            request.adapter(),
+            request.capability().id(),
+        ) {
             Ok(true) => AuthorizationDecision::Allow,
             Ok(false) => AuthorizationDecision::Deny(DenialReason::NotGranted),
             Err(GrantStoreError::Unavailable) => {

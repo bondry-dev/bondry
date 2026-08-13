@@ -56,7 +56,7 @@ impl AuthStore for SqlCipherStore {
     fn clients(&self) -> Result<Vec<Client>, StoreError> {
         let connection = self.connection().map_err(map_store_error)?;
         let mut statement = connection
-            .prepare("SELECT id, name, enabled, created_at FROM clients ORDER BY id ASC")
+            .prepare_cached("SELECT id, name, enabled, created_at FROM clients ORDER BY id ASC")
             .map_err(map_database_error)?;
         let rows = statement
             .query_map([], |row| {
@@ -103,19 +103,21 @@ impl AuthStore for SqlCipherStore {
         &self,
         id: &TokenId,
     ) -> Result<Option<AuthenticationRecord>, StoreError> {
-        let raw = self
-            .connection()
-            .map_err(map_store_error)?
-            .query_row(
+        let connection = self.connection().map_err(map_store_error)?;
+        let mut statement = connection
+            .prepare_cached(
                 "SELECT
                      t.id, t.client_id, t.label, t.digest, t.created_at, t.expires_at, t.revoked_at,
                      c.enabled
                  FROM tokens t
                  JOIN clients c ON c.id = t.client_id
                  WHERE t.id = ?1",
-                [id.as_str()],
-                |row| Ok((RawToken::read(row)?, row.get::<_, i64>(7)?)),
             )
+            .map_err(map_database_error)?;
+        let raw = statement
+            .query_row([id.as_str()], |row| {
+                Ok((RawToken::read(row)?, row.get::<_, i64>(7)?))
+            })
             .optional()
             .map_err(map_database_error)?;
         raw.map(|(token, enabled)| {
@@ -194,7 +196,7 @@ impl AuthStore for SqlCipherStore {
     fn tokens_for_client(&self, id: &PrincipalId) -> Result<Vec<TokenRecord>, StoreError> {
         let connection = self.connection().map_err(map_store_error)?;
         let mut statement = connection
-            .prepare(
+            .prepare_cached(
                 "SELECT id, client_id, label, digest, created_at, expires_at, revoked_at
                  FROM tokens
                  WHERE client_id = ?1

@@ -1,4 +1,9 @@
-use std::{fmt, future::Future, pin::Pin, sync::Arc};
+use std::{
+    fmt,
+    future::Future,
+    pin::Pin,
+    sync::{Arc, LazyLock},
+};
 
 use serde::{Serialize, Serializer};
 use serde_json::{Map, Value};
@@ -11,6 +16,7 @@ pub const MAX_CAPABILITY_SUMMARY_LENGTH: usize = 256;
 
 /// The maximum encoded length of a capability input schema.
 pub const MAX_CAPABILITY_SCHEMA_LENGTH: usize = 65_536;
+static PERMISSIVE_INPUT_SCHEMA: LazyLock<Value> = LazyLock::new(|| Value::Object(Map::new()));
 
 /// Describes whether a capability may change observable state.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -35,7 +41,7 @@ impl CapabilityDescriptor {
     /// Creates a capability descriptor.
     pub fn new(
         id: CapabilityId,
-        summary: impl Into<String>,
+        summary: impl Into<Arc<str>>,
         effect: CapabilityEffect,
     ) -> Result<Self, CapabilitySummaryError> {
         Ok(Self {
@@ -72,7 +78,7 @@ impl CapabilityDescriptor {
 
     /// Returns the JSON Schema 2020-12 document describing accepted input.
     #[must_use]
-    pub const fn input_schema(&self) -> &Value {
+    pub fn input_schema(&self) -> &Value {
         self.input_schema.document()
     }
 
@@ -81,9 +87,9 @@ impl CapabilityDescriptor {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 struct CapabilityInputSchema {
-    document: Value,
+    document: Option<Arc<Value>>,
     validator: Option<Arc<jsonschema::Validator>>,
 }
 
@@ -103,13 +109,13 @@ impl CapabilityInputSchema {
         let validator =
             jsonschema::draft202012::new(&document).map_err(|_| CapabilitySchemaError::Invalid)?;
         Ok(Self {
-            document,
+            document: Some(Arc::new(document)),
             validator: Some(Arc::new(validator)),
         })
     }
 
-    const fn document(&self) -> &Value {
-        &self.document
+    fn document(&self) -> &Value {
+        self.document.as_deref().unwrap_or(&PERMISSIVE_INPUT_SCHEMA)
     }
 
     fn accepts(&self, input: &Value) -> bool {
@@ -119,24 +125,15 @@ impl CapabilityInputSchema {
     }
 }
 
-impl Default for CapabilityInputSchema {
-    fn default() -> Self {
-        Self {
-            document: Value::Object(Map::new()),
-            validator: None,
-        }
-    }
-}
-
 impl fmt::Debug for CapabilityInputSchema {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.document.fmt(formatter)
+        self.document().fmt(formatter)
     }
 }
 
 impl PartialEq for CapabilityInputSchema {
     fn eq(&self, other: &Self) -> bool {
-        self.document == other.document
+        self.document() == other.document()
     }
 }
 
@@ -147,17 +144,16 @@ impl Serialize for CapabilityInputSchema {
     where
         S: Serializer,
     {
-        self.document.serialize(serializer)
+        self.document().serialize(serializer)
     }
 }
 
 /// A validated human-readable capability summary.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-#[serde(transparent)]
-struct CapabilitySummary(String);
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct CapabilitySummary(Arc<str>);
 
 impl CapabilitySummary {
-    fn new(value: impl Into<String>) -> Result<Self, CapabilitySummaryError> {
+    fn new(value: impl Into<Arc<str>>) -> Result<Self, CapabilitySummaryError> {
         let value = value.into();
         if value.trim().is_empty() {
             return Err(CapabilitySummaryError::Empty);
@@ -173,6 +169,15 @@ impl CapabilitySummary {
 
     fn as_str(&self) -> &str {
         &self.0
+    }
+}
+
+impl Serialize for CapabilitySummary {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(self.as_str())
     }
 }
 

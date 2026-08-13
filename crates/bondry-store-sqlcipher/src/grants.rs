@@ -38,19 +38,26 @@ impl GrantStore for SqlCipherStore {
             .map_err(|_| GrantStoreError::Unavailable)
     }
 
-    fn contains_grant(&self, grant: &CapabilityGrant) -> Result<bool, GrantStoreError> {
-        self.connection()
-            .map_err(|_| GrantStoreError::Unavailable)?
-            .query_row(
+    fn contains_grant(
+        &self,
+        principal: &PrincipalId,
+        adapter: &AdapterId,
+        capability: &CapabilityId,
+    ) -> Result<bool, GrantStoreError> {
+        let connection = self
+            .connection()
+            .map_err(|_| GrantStoreError::Unavailable)?;
+        let mut statement = connection
+            .prepare_cached(
                 "SELECT EXISTS(
                      SELECT 1 FROM grants
                      WHERE principal_id = ?1 AND adapter_id = ?2 AND capability_id = ?3
                  )",
-                params![
-                    grant.principal().as_str(),
-                    grant.adapter().as_str(),
-                    grant.capability().as_str(),
-                ],
+            )
+            .map_err(|_| GrantStoreError::Unavailable)?;
+        statement
+            .query_row(
+                params![principal.as_str(), adapter.as_str(), capability.as_str()],
                 |row| row.get::<_, bool>(0),
             )
             .map_err(|_| GrantStoreError::Unavailable)
@@ -64,7 +71,7 @@ impl GrantStore for SqlCipherStore {
             .connection()
             .map_err(|_| GrantStoreError::Unavailable)?;
         let mut statement = connection
-            .prepare(
+            .prepare_cached(
                 "SELECT adapter_id, capability_id
                  FROM grants
                  WHERE principal_id = ?1
