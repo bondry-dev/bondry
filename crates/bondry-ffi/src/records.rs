@@ -101,12 +101,17 @@ pub struct BondryAuditEventV1 {
 
 impl BondryClientV1 {
     pub(crate) fn from_client(client: &Client) -> Self {
-        Self {
-            id: terminated(client.id().as_str()),
-            name: terminated(client.name().as_str()),
-            enabled: u8::from(client.is_enabled()),
-            created_at_unix_seconds: client.created_at_unix_seconds(),
-        }
+        let mut record = Self::zeroed();
+        record.id = terminated(client.id().as_str());
+        record.name = terminated(client.name().as_str());
+        record.enabled = u8::from(client.is_enabled());
+        record.created_at_unix_seconds = client.created_at_unix_seconds();
+        record
+    }
+
+    fn zeroed() -> Self {
+        // SAFETY: Every field accepts an all-zero bit pattern.
+        unsafe { std::mem::zeroed() }
     }
 }
 
@@ -117,39 +122,54 @@ impl BondryTokenMetadataV1 {
             optional_i64(metadata.expires_at_unix_seconds());
         let (revoked_at_unix_seconds, has_revocation) =
             optional_i64(metadata.revoked_at_unix_seconds());
-        Self {
-            id: terminated(metadata.id().as_str()),
-            client_id: terminated(metadata.client().as_str()),
-            label,
-            has_label,
-            created_at_unix_seconds: metadata.created_at_unix_seconds(),
-            expires_at_unix_seconds,
-            has_expiration,
-            revoked_at_unix_seconds,
-            has_revocation,
-        }
+        let mut record = Self::zeroed();
+        record.id = terminated(metadata.id().as_str());
+        record.client_id = terminated(metadata.client().as_str());
+        record.label = label;
+        record.has_label = has_label;
+        record.created_at_unix_seconds = metadata.created_at_unix_seconds();
+        record.expires_at_unix_seconds = expires_at_unix_seconds;
+        record.has_expiration = has_expiration;
+        record.revoked_at_unix_seconds = revoked_at_unix_seconds;
+        record.has_revocation = has_revocation;
+        record
+    }
+
+    fn zeroed() -> Self {
+        // SAFETY: Every field accepts an all-zero bit pattern.
+        unsafe { std::mem::zeroed() }
     }
 }
 
 impl BondryIssuedTokenV1 {
     pub(crate) fn from_issued(issued: &IssuedToken) -> Self {
-        Self {
-            metadata: BondryTokenMetadataV1::from_metadata(issued.metadata()),
-            secret: terminated(issued.secret().expose()),
-        }
+        let mut record = Self::zeroed();
+        record.metadata = BondryTokenMetadataV1::from_metadata(issued.metadata());
+        record.secret = terminated(issued.secret().expose());
+        record
+    }
+
+    fn zeroed() -> Self {
+        // SAFETY: Every field accepts an all-zero bit pattern.
+        unsafe { std::mem::zeroed() }
     }
 }
 
 impl BondryPrincipalV1 {
     pub(crate) fn from_principal(principal: &Principal) -> Self {
-        Self {
-            id: terminated(principal.id().as_str()),
-            kind: match principal.kind() {
-                bondry_core::PrincipalKind::User => 1,
-                bondry_core::PrincipalKind::Application => 2,
-                bondry_core::PrincipalKind::System => 3,
-            },
-        }
+        let mut record = Self::zeroed();
+        record.id = terminated(principal.id().as_str());
+        record.kind = match principal.kind() {
+            bondry_core::PrincipalKind::User => 1,
+            bondry_core::PrincipalKind::Application => 2,
+            bondry_core::PrincipalKind::System => 3,
+        };
+        record
+    }
+
+    fn zeroed() -> Self {
+        // SAFETY: Every field accepts an all-zero bit pattern.
+        unsafe { std::mem::zeroed() }
     }
 }
 
@@ -178,17 +198,22 @@ impl BondryAuditEventV1 {
             }
         };
         let (detail_code, has_detail_code) = optional_terminated(detail);
-        Some(Self {
-            sequence: event.sequence(),
-            occurred_at_unix_milliseconds: milliseconds,
-            invocation_id: terminated(event.event().invocation().as_str()),
-            principal_id: terminated(event.event().principal().as_str()),
-            adapter_id: terminated(event.event().adapter().as_str()),
-            capability_id: terminated(event.event().capability().as_str()),
-            outcome,
-            detail_code,
-            has_detail_code,
-        })
+        let mut record = Self::zeroed();
+        record.sequence = event.sequence();
+        record.occurred_at_unix_milliseconds = milliseconds;
+        record.invocation_id = terminated(event.event().invocation().as_str());
+        record.principal_id = terminated(event.event().principal().as_str());
+        record.adapter_id = terminated(event.event().adapter().as_str());
+        record.capability_id = terminated(event.event().capability().as_str());
+        record.outcome = outcome;
+        record.detail_code = detail_code;
+        record.has_detail_code = has_detail_code;
+        Some(record)
+    }
+
+    fn zeroed() -> Self {
+        // SAFETY: Every field accepts an all-zero bit pattern.
+        unsafe { std::mem::zeroed() }
     }
 }
 
