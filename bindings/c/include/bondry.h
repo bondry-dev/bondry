@@ -19,6 +19,8 @@ typedef int32_t BondryStatus;
 #define BONDRY_STATUS_INVALID_PATH ((BondryStatus)4)
 #define BONDRY_STATUS_INVALID_ARGUMENT ((BondryStatus)5)
 #define BONDRY_STATUS_BUFFER_TOO_SMALL ((BondryStatus)6)
+#define BONDRY_STATUS_INVALID_JSON ((BondryStatus)7)
+#define BONDRY_STATUS_PAYLOAD_TOO_LARGE ((BondryStatus)8)
 #define BONDRY_STATUS_FILE_SYSTEM ((BondryStatus)10)
 #define BONDRY_STATUS_DATABASE ((BondryStatus)11)
 #define BONDRY_STATUS_UNSUPPORTED_SCHEMA ((BondryStatus)12)
@@ -33,12 +35,15 @@ typedef int32_t BondryStatus;
 #define BONDRY_STATUS_ENTROPY_UNAVAILABLE ((BondryStatus)25)
 #define BONDRY_STATUS_TIME_UNAVAILABLE ((BondryStatus)26)
 #define BONDRY_STATUS_GENERATION_EXHAUSTED ((BondryStatus)27)
+#define BONDRY_STATUS_ALREADY_EXISTS ((BondryStatus)28)
 #define BONDRY_STATUS_INTERNAL_FAILURE ((BondryStatus)255)
 
 #define BONDRY_IDENTIFIER_CAPACITY_V1 ((size_t)129)
 #define BONDRY_LABEL_CAPACITY_V1 ((size_t)129)
 #define BONDRY_TOKEN_CAPACITY_V1 ((size_t)100)
 #define BONDRY_AUDIT_DETAIL_CAPACITY_V1 ((size_t)129)
+#define BONDRY_CAPABILITY_SUMMARY_CAPACITY_V1 ((size_t)257)
+#define BONDRY_MAX_JSON_PAYLOAD_LENGTH_V1 ((size_t)1048576)
 
 #define BONDRY_PRINCIPAL_KIND_USER_V1 ((uint32_t)1)
 #define BONDRY_PRINCIPAL_KIND_APPLICATION_V1 ((uint32_t)2)
@@ -49,6 +54,18 @@ typedef int32_t BondryStatus;
 #define BONDRY_AUDIT_OUTCOME_STARTED_V1 ((uint32_t)3)
 #define BONDRY_AUDIT_OUTCOME_SUCCEEDED_V1 ((uint32_t)4)
 #define BONDRY_AUDIT_OUTCOME_HANDLER_FAILED_V1 ((uint32_t)5)
+
+#define BONDRY_CAPABILITY_EFFECT_READ_ONLY_V1 ((uint32_t)1)
+#define BONDRY_CAPABILITY_EFFECT_MUTATING_V1 ((uint32_t)2)
+
+#define BONDRY_HANDLER_RESULT_SUCCEEDED_V1 ((uint32_t)1)
+#define BONDRY_HANDLER_RESULT_FAILED_V1 ((uint32_t)2)
+
+#define BONDRY_DISPATCH_OUTCOME_SUCCEEDED_V1 ((uint32_t)1)
+#define BONDRY_DISPATCH_OUTCOME_CAPABILITY_NOT_FOUND_V1 ((uint32_t)2)
+#define BONDRY_DISPATCH_OUTCOME_ACCESS_DENIED_V1 ((uint32_t)3)
+#define BONDRY_DISPATCH_OUTCOME_AUDIT_UNAVAILABLE_V1 ((uint32_t)4)
+#define BONDRY_DISPATCH_OUTCOME_HANDLER_FAILED_V1 ((uint32_t)5)
 
 typedef struct BondryStoreHandle BondryStoreHandle;
 
@@ -98,6 +115,51 @@ typedef struct BondryAuditEventV1 {
     uint8_t detail_code[BONDRY_AUDIT_DETAIL_CAPACITY_V1];
     uint8_t has_detail_code;
 } BondryAuditEventV1;
+
+typedef struct BondryCapabilityV1 {
+    uint8_t id[BONDRY_IDENTIFIER_CAPACITY_V1];
+    uint8_t summary[BONDRY_CAPABILITY_SUMMARY_CAPACITY_V1];
+    uint32_t effect;
+} BondryCapabilityV1;
+
+typedef struct BondryInvocationV1 {
+    uint8_t invocation_id[BONDRY_IDENTIFIER_CAPACITY_V1];
+    uint8_t principal_id[BONDRY_IDENTIFIER_CAPACITY_V1];
+    uint32_t principal_kind;
+    uint8_t adapter_id[BONDRY_IDENTIFIER_CAPACITY_V1];
+    uint8_t capability_id[BONDRY_IDENTIFIER_CAPACITY_V1];
+    const uint8_t *input_json;
+    size_t input_json_length;
+} BondryInvocationV1;
+
+typedef struct BondryDispatchResultV1 {
+    uint32_t outcome;
+    const uint8_t *output_json;
+    size_t output_json_length;
+    uint8_t detail_code[BONDRY_AUDIT_DETAIL_CAPACITY_V1];
+    uint8_t has_detail_code;
+} BondryDispatchResultV1;
+
+typedef void (*BondryCapabilityCompletionV1)(
+    void *completion_context,
+    uint32_t outcome,
+    const uint8_t *payload,
+    size_t payload_length
+);
+
+typedef void (*BondryCapabilityInvokeV1)(
+    void *handler_context,
+    const BondryInvocationV1 *invocation,
+    BondryCapabilityCompletionV1 completion,
+    void *completion_context
+);
+
+typedef void (*BondryCapabilityReleaseV1)(void *handler_context);
+
+typedef void (*BondryDispatchCompletionV1)(
+    void *completion_context,
+    const BondryDispatchResultV1 *result
+);
 
 /* Caller-owned output records and count pointers must not overlap one another. */
 
@@ -243,6 +305,62 @@ BondryStatus bondry_grants_list_v1(
     BondryGrantV1 *output,
     size_t capacity,
     size_t *out_count
+);
+
+/* Registration transfers handler_context ownership only on success. Invoke and
+ * release may run on any thread and must not unwind across the ABI. Invocation
+ * fields and input_json are borrowed only until invoke returns. The handler must
+ * copy anything needed asynchronously and call completion exactly once. A
+ * successful result payload is JSON; a failed result payload is a stable,
+ * non-sensitive error code. Handler completion payloads are borrowed for that
+ * completion call and must not exceed BONDRY_MAX_JSON_PAYLOAD_LENGTH_V1 bytes. */
+BondryStatus bondry_capability_register_v1(
+    const BondryStoreHandle *store,
+    const uint8_t *capability_id,
+    size_t capability_id_length,
+    const uint8_t *summary,
+    size_t summary_length,
+    uint32_t effect,
+    void *handler_context,
+    BondryCapabilityInvokeV1 invoke,
+    BondryCapabilityReleaseV1 release
+);
+
+/* In-flight invocations keep the handler context alive after unregistration. */
+BondryStatus bondry_capability_unregister_v1(
+    const BondryStoreHandle *store,
+    const uint8_t *capability_id,
+    size_t capability_id_length,
+    uint8_t *out_changed
+);
+
+/* Passing a null output with zero capacity returns the required count. */
+BondryStatus bondry_capabilities_list_v1(
+    const BondryStoreHandle *store,
+    BondryCapabilityV1 *output,
+    size_t capacity,
+    size_t *out_count
+);
+
+/* On BONDRY_STATUS_OK, completion is called exactly once and may run before
+ * this function returns or later on any thread. Result pointers are borrowed
+ * only for that callback. Immediate errors never call completion and leave its
+ * context caller-owned. Credentials and JSON payloads are never retained or
+ * written to the audit log. */
+BondryStatus bondry_dispatch_token_v1(
+    const BondryStoreHandle *store,
+    const uint8_t *invocation_id,
+    size_t invocation_id_length,
+    const uint8_t *adapter_id,
+    size_t adapter_id_length,
+    const uint8_t *token,
+    size_t token_length,
+    const uint8_t *capability_id,
+    size_t capability_id_length,
+    const uint8_t *input_json,
+    size_t input_json_length,
+    BondryDispatchCompletionV1 completion,
+    void *completion_context
 );
 
 #ifdef __cplusplus

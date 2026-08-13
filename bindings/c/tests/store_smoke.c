@@ -3,6 +3,56 @@
 #include <stdio.h>
 #include <string.h>
 
+typedef struct HandlerState {
+    int invocations;
+    int releases;
+    int valid_invocation;
+} HandlerState;
+
+typedef struct DispatchCapture {
+    int called;
+    uint32_t outcome;
+    uint8_t output[64];
+} DispatchCapture;
+
+static void capability_handler(
+    void *handler_context,
+    const BondryInvocationV1 *invocation,
+    BondryCapabilityCompletionV1 completion,
+    void *completion_context
+) {
+    HandlerState *state = (HandlerState *)handler_context;
+    state->invocations += 1;
+    const uint8_t expected_input[] = "{\"detail\":true}";
+    state->valid_invocation =
+        strcmp((const char *)invocation->adapter_id, "rest") == 0 &&
+        strcmp((const char *)invocation->capability_id, "battery.read") == 0 &&
+        invocation->input_json_length == sizeof(expected_input) - 1 &&
+        memcmp(invocation->input_json, expected_input, sizeof(expected_input) - 1) == 0;
+    const uint8_t output[] = "{\"level\":85}";
+    completion(
+        completion_context,
+        BONDRY_HANDLER_RESULT_SUCCEEDED_V1,
+        output,
+        sizeof(output) - 1
+    );
+}
+
+static void release_handler(void *handler_context) {
+    HandlerState *state = (HandlerState *)handler_context;
+    state->releases += 1;
+}
+
+static void receive_dispatch(void *completion_context, const BondryDispatchResultV1 *result) {
+    DispatchCapture *capture = (DispatchCapture *)completion_context;
+    capture->called += 1;
+    capture->outcome = result->outcome;
+    if (result->output_json != NULL && result->output_json_length < sizeof(capture->output)) {
+        memcpy(capture->output, result->output_json, result->output_json_length);
+        capture->output[result->output_json_length] = 0;
+    }
+}
+
 int main(int argc, char **argv) {
     if (argc != 2 || bondry_abi_version_v1() != BONDRY_ABI_VERSION_V1) {
         return 1;
@@ -247,6 +297,72 @@ int main(int argc, char **argv) {
         return 17;
     }
 
+    HandlerState handler_state = {0, 0, 0};
+    if (bondry_capability_register_v1(
+            store,
+            (const uint8_t *)"battery.read",
+            strlen("battery.read"),
+            (const uint8_t *)"Read battery state",
+            strlen("Read battery state"),
+            BONDRY_CAPABILITY_EFFECT_READ_ONLY_V1,
+            &handler_state,
+            capability_handler,
+            release_handler
+        ) != BONDRY_STATUS_OK) {
+        return 34;
+    }
+    size_t capability_count = 0;
+    BondryCapabilityV1 capability;
+    if (bondry_capabilities_list_v1(store, NULL, 0, &capability_count) != BONDRY_STATUS_OK ||
+        capability_count != 1 ||
+        bondry_capabilities_list_v1(store, &capability, 1, &capability_count) != BONDRY_STATUS_OK ||
+        strcmp((const char *)capability.id, "battery.read") != 0) {
+        return 35;
+    }
+    if (bondry_grant_add_v1(
+            store,
+            client.id,
+            strlen((const char *)client.id),
+            (const uint8_t *)"rest",
+            strlen("rest"),
+            (const uint8_t *)"battery.read",
+            strlen("battery.read"),
+            &grant_changed
+        ) != BONDRY_STATUS_OK || grant_changed != 1) {
+        return 36;
+    }
+    DispatchCapture dispatch_capture = {0, 0, {0}};
+    const uint8_t input[] = "{\"detail\":true}";
+    if (bondry_dispatch_token_v1(
+            store,
+            (const uint8_t *)"smoke-request",
+            strlen("smoke-request"),
+            (const uint8_t *)"rest",
+            strlen("rest"),
+            replacement.secret,
+            strlen((const char *)replacement.secret),
+            (const uint8_t *)"battery.read",
+            strlen("battery.read"),
+            input,
+            sizeof(input) - 1,
+            receive_dispatch,
+            &dispatch_capture
+        ) != BONDRY_STATUS_OK ||
+        dispatch_capture.called != 1 ||
+        dispatch_capture.outcome != BONDRY_DISPATCH_OUTCOME_SUCCEEDED_V1 ||
+        strcmp((const char *)dispatch_capture.output, "{\"level\":85}") != 0 ||
+        handler_state.invocations != 1 || handler_state.valid_invocation != 1) {
+        return 37;
+    }
+    if (bondry_capability_unregister_v1(
+            store,
+            (const uint8_t *)"battery.read",
+            strlen("battery.read"),
+            &grant_changed
+        ) != BONDRY_STATUS_OK || grant_changed != 1 || handler_state.releases != 1) {
+        return 38;
+    }
+
     uint8_t changed = 0;
     if (bondry_token_revoke_v1(
             store,
@@ -263,7 +379,7 @@ int main(int argc, char **argv) {
 
     size_t audit_count = 99;
     if (bondry_audit_recent_v1(store, 10, NULL, 0, &audit_count) != BONDRY_STATUS_OK ||
-        audit_count != 0) {
+        audit_count != 2) {
         return 20;
     }
     if (bondry_store_close_v1(store) != BONDRY_STATUS_OK) {

@@ -53,6 +53,7 @@ dependencies = [
  "bondry-auth",
  "bondry-core",
  "bondry-store-sqlcipher",
+ "serde_json",
  "tempfile",
 ]
 

@@ -4,19 +4,35 @@ use std::{
 };
 
 use bondry_auth::{Client, IssuedToken, TokenMetadata};
-use bondry_core::{AuditOutcome, CapabilityGrant, Principal};
+use bondry_core::{
+    AuditOutcome, CapabilityDescriptor, CapabilityEffect, CapabilityGrant, InvocationContext,
+    Principal,
+};
 use bondry_store_sqlcipher::StoredAuditEvent;
 
 pub const BONDRY_IDENTIFIER_CAPACITY_V1: usize = 129;
 pub const BONDRY_LABEL_CAPACITY_V1: usize = 129;
 pub const BONDRY_TOKEN_CAPACITY_V1: usize = 100;
 pub const BONDRY_AUDIT_DETAIL_CAPACITY_V1: usize = 129;
+pub const BONDRY_CAPABILITY_SUMMARY_CAPACITY_V1: usize = 257;
 
 pub const BONDRY_AUDIT_OUTCOME_CAPABILITY_NOT_FOUND_V1: u32 = 1;
 pub const BONDRY_AUDIT_OUTCOME_DENIED_V1: u32 = 2;
 pub const BONDRY_AUDIT_OUTCOME_STARTED_V1: u32 = 3;
 pub const BONDRY_AUDIT_OUTCOME_SUCCEEDED_V1: u32 = 4;
 pub const BONDRY_AUDIT_OUTCOME_HANDLER_FAILED_V1: u32 = 5;
+
+pub const BONDRY_CAPABILITY_EFFECT_READ_ONLY_V1: u32 = 1;
+pub const BONDRY_CAPABILITY_EFFECT_MUTATING_V1: u32 = 2;
+
+pub const BONDRY_HANDLER_RESULT_SUCCEEDED_V1: u32 = 1;
+pub const BONDRY_HANDLER_RESULT_FAILED_V1: u32 = 2;
+
+pub const BONDRY_DISPATCH_OUTCOME_SUCCEEDED_V1: u32 = 1;
+pub const BONDRY_DISPATCH_OUTCOME_CAPABILITY_NOT_FOUND_V1: u32 = 2;
+pub const BONDRY_DISPATCH_OUTCOME_ACCESS_DENIED_V1: u32 = 3;
+pub const BONDRY_DISPATCH_OUTCOME_AUDIT_UNAVAILABLE_V1: u32 = 4;
+pub const BONDRY_DISPATCH_OUTCOME_HANDLER_FAILED_V1: u32 = 5;
 
 /// A fixed-capacity client record written into caller-owned memory.
 #[derive(Clone, Copy)]
@@ -105,6 +121,52 @@ pub struct BondryAuditEventV1 {
     pub capability_id: [u8; BONDRY_IDENTIFIER_CAPACITY_V1],
     /// Stable audit-outcome value.
     pub outcome: u32,
+    /// Optional UTF-8 denial or handler error code, terminated with zero.
+    pub detail_code: [u8; BONDRY_AUDIT_DETAIL_CAPACITY_V1],
+    /// One when a detail code is present; otherwise zero.
+    pub has_detail_code: u8,
+}
+
+/// Protocol-neutral capability metadata written into caller-owned memory.
+#[derive(Clone, Copy)]
+#[repr(C)]
+pub struct BondryCapabilityV1 {
+    /// UTF-8 capability identifier, terminated with zero.
+    pub id: [u8; BONDRY_IDENTIFIER_CAPACITY_V1],
+    /// UTF-8 human-readable summary, terminated with zero.
+    pub summary: [u8; BONDRY_CAPABILITY_SUMMARY_CAPACITY_V1],
+    /// Stable capability-effect value.
+    pub effect: u32,
+}
+
+/// Invocation data borrowed by a registered foreign handler.
+#[repr(C)]
+pub struct BondryInvocationV1 {
+    /// UTF-8 invocation identifier, terminated with zero.
+    pub invocation_id: [u8; BONDRY_IDENTIFIER_CAPACITY_V1],
+    /// UTF-8 authenticated principal identifier, terminated with zero.
+    pub principal_id: [u8; BONDRY_IDENTIFIER_CAPACITY_V1],
+    /// Stable principal-kind value.
+    pub principal_kind: u32,
+    /// UTF-8 adapter identifier, terminated with zero.
+    pub adapter_id: [u8; BONDRY_IDENTIFIER_CAPACITY_V1],
+    /// UTF-8 capability identifier, terminated with zero.
+    pub capability_id: [u8; BONDRY_IDENTIFIER_CAPACITY_V1],
+    /// Serialized JSON input borrowed for the handler callback duration.
+    pub input_json: *const u8,
+    /// Length of the serialized JSON input.
+    pub input_json_length: usize,
+}
+
+/// The result borrowed by a dispatch completion callback.
+#[repr(C)]
+pub struct BondryDispatchResultV1 {
+    /// Stable dispatch-outcome value.
+    pub outcome: u32,
+    /// Serialized JSON output for a successful dispatch.
+    pub output_json: *const u8,
+    /// Length of the serialized JSON output.
+    pub output_json_length: usize,
     /// Optional UTF-8 denial or handler error code, terminated with zero.
     pub detail_code: [u8; BONDRY_AUDIT_DETAIL_CAPACITY_V1],
     /// One when a detail code is present; otherwise zero.
@@ -239,6 +301,54 @@ impl BondryAuditEventV1 {
     }
 }
 
+impl BondryCapabilityV1 {
+    pub(crate) fn from_descriptor(descriptor: &CapabilityDescriptor) -> Self {
+        let mut record = Self::zeroed();
+        record.id = terminated(descriptor.id().as_str());
+        record.summary = terminated(descriptor.summary());
+        record.effect = match descriptor.effect() {
+            CapabilityEffect::ReadOnly => BONDRY_CAPABILITY_EFFECT_READ_ONLY_V1,
+            CapabilityEffect::Mutating => BONDRY_CAPABILITY_EFFECT_MUTATING_V1,
+        };
+        record
+    }
+
+    fn zeroed() -> Self {
+        // SAFETY: Every field accepts an all-zero bit pattern.
+        unsafe { std::mem::zeroed() }
+    }
+}
+
+impl BondryInvocationV1 {
+    pub(crate) fn new(context: &InvocationContext, input_json: &[u8]) -> Self {
+        let mut record = Self::zeroed();
+        record.invocation_id = terminated(context.id().as_str());
+        record.principal_id = terminated(context.principal().id().as_str());
+        record.principal_kind = match context.principal().kind() {
+            bondry_core::PrincipalKind::User => 1,
+            bondry_core::PrincipalKind::Application => 2,
+            bondry_core::PrincipalKind::System => 3,
+        };
+        record.adapter_id = terminated(context.adapter().as_str());
+        record.capability_id = terminated(context.capability().as_str());
+        record.input_json = input_json.as_ptr();
+        record.input_json_length = input_json.len();
+        record
+    }
+
+    fn zeroed() -> Self {
+        // SAFETY: Every field accepts an all-zero bit pattern.
+        unsafe { std::mem::zeroed() }
+    }
+}
+
+impl BondryDispatchResultV1 {
+    pub(crate) fn zeroed() -> Self {
+        // SAFETY: Every field accepts an all-zero bit pattern.
+        unsafe { std::mem::zeroed() }
+    }
+}
+
 pub(crate) unsafe fn clear_issued_token(token: *mut BondryIssuedTokenV1) {
     // SAFETY: The caller guarantees the complete record is writable.
     let bytes = unsafe {
@@ -254,7 +364,7 @@ pub(crate) unsafe fn clear_issued_token(token: *mut BondryIssuedTokenV1) {
     compiler_fence(Ordering::SeqCst);
 }
 
-fn terminated<const N: usize>(value: &str) -> [u8; N] {
+pub(crate) fn terminated<const N: usize>(value: &str) -> [u8; N] {
     let bytes = value.as_bytes();
     debug_assert!(bytes.len() < N);
     let mut destination = [0_u8; N];
@@ -262,7 +372,7 @@ fn terminated<const N: usize>(value: &str) -> [u8; N] {
     destination
 }
 
-fn optional_terminated<const N: usize>(value: Option<&str>) -> ([u8; N], u8) {
+pub(crate) fn optional_terminated<const N: usize>(value: Option<&str>) -> ([u8; N], u8) {
     value.map_or(([0_u8; N], 0), |value| (terminated(value), 1))
 }
 

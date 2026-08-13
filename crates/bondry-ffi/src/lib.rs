@@ -1,10 +1,11 @@
 #![doc = "Versioned C ABI for embedding Bondry in other languages."]
 
 use std::{
+    collections::HashMap,
     panic::{AssertUnwindSafe, catch_unwind},
     path::Path,
     ptr, slice,
-    sync::Arc,
+    sync::{Arc, RwLock},
 };
 
 use bondry_auth::{AuthManager, AuthStore, ClientManagementError, TokenLifecycleError};
@@ -12,6 +13,7 @@ use bondry_store_sqlcipher::{DatabaseKey, SqlCipherStore, SqlCipherStoreError};
 
 mod audit;
 mod auth;
+mod capabilities;
 mod grants;
 mod records;
 
@@ -21,10 +23,15 @@ pub use auth::{
     bondry_issued_token_clear_v1, bondry_token_authenticate_v1, bondry_token_issue_v1,
     bondry_token_revoke_v1, bondry_token_rotate_v1, bondry_tokens_list_v1,
 };
+pub use capabilities::{
+    BondryCapabilityCompletionV1, BondryCapabilityInvokeV1, BondryCapabilityReleaseV1,
+    BondryDispatchCompletionV1, bondry_capabilities_list_v1, bondry_capability_register_v1,
+    bondry_capability_unregister_v1, bondry_dispatch_token_v1,
+};
 pub use grants::{bondry_grant_add_v1, bondry_grant_remove_v1, bondry_grants_list_v1};
 pub use records::{
-    BondryAuditEventV1, BondryClientV1, BondryGrantV1, BondryIssuedTokenV1, BondryPrincipalV1,
-    BondryTokenMetadataV1,
+    BondryAuditEventV1, BondryCapabilityV1, BondryClientV1, BondryDispatchResultV1, BondryGrantV1,
+    BondryInvocationV1, BondryIssuedTokenV1, BondryPrincipalV1, BondryTokenMetadataV1,
 };
 
 /// The first Bondry C ABI version.
@@ -44,6 +51,10 @@ pub const BONDRY_STATUS_INVALID_PATH: i32 = 4;
 pub const BONDRY_STATUS_INVALID_ARGUMENT: i32 = 5;
 /// A caller-owned output array cannot hold the complete result.
 pub const BONDRY_STATUS_BUFFER_TOO_SMALL: i32 = 6;
+/// A JSON payload was malformed.
+pub const BONDRY_STATUS_INVALID_JSON: i32 = 7;
+/// A JSON payload exceeded the ABI limit.
+pub const BONDRY_STATUS_PAYLOAD_TOO_LARGE: i32 = 8;
 /// A database file could not be created or protected.
 pub const BONDRY_STATUS_FILE_SYSTEM: i32 = 10;
 /// SQLCipher could not complete an operation.
@@ -72,6 +83,8 @@ pub const BONDRY_STATUS_ENTROPY_UNAVAILABLE: i32 = 25;
 pub const BONDRY_STATUS_TIME_UNAVAILABLE: i32 = 26;
 /// Repeated random identifier generation conflicted with stored state.
 pub const BONDRY_STATUS_GENERATION_EXHAUSTED: i32 = 27;
+/// A capability with the same identifier is already registered.
+pub const BONDRY_STATUS_ALREADY_EXISTS: i32 = 28;
 /// Bondry stopped an internal failure at the ABI boundary.
 pub const BONDRY_STATUS_INTERNAL_FAILURE: i32 = 255;
 
@@ -84,6 +97,7 @@ pub struct BondryStoreHandle {
 struct StoreHandle {
     store: Arc<SqlCipherStore>,
     auth: AuthManager,
+    capabilities: RwLock<HashMap<bondry_core::CapabilityId, capabilities::RegisteredCapability>>,
 }
 
 /// Returns the ABI version implemented by the linked library.
@@ -146,6 +160,7 @@ pub unsafe extern "C" fn bondry_store_open_v1(
         let handle = Box::new(StoreHandle {
             store,
             auth: AuthManager::from_shared(auth_store),
+            capabilities: RwLock::new(HashMap::new()),
         });
 
         // SAFETY: out_store was validated above and receives ownership of this allocation.

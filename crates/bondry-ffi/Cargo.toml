@@ -13,6 +13,7 @@ crate-type = ["rlib", "staticlib"]
 bondry-auth = { path = "../bondry-auth" }
 bondry-core = { path = "../bondry-core" }
 bondry-store-sqlcipher = { path = "../bondry-store-sqlcipher" }
+serde_json.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
