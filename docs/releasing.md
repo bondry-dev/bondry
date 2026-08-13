@@ -1,6 +1,6 @@
 # Releasing
 
-Bondry uses GitHub Actions for validation and release publication. No personal access token or signing secret is required; the release job uses the repository-scoped `GITHUB_TOKEN` and GitHub's short-lived OIDC identity.
+Bondry uses GitHub Actions for release preparation and publication. No personal access token or signing secret is required; the workflows use the repository-scoped `GITHUB_TOKEN` and GitHub's short-lived OIDC identity.
 
 ## Repository Setup
 
@@ -12,30 +12,30 @@ Before the first release:
 4. Make the repository public so the release can receive a public Sigstore provenance attestation.
 5. Enable immutable releases before publishing the first release.
 
-The release workflow deliberately refuses to publish while the repository is private. Pull-request workflows have read-only repository permissions. Only the manually dispatched release job requests write and OIDC permissions, and its protected environment provides the human approval boundary.
+Release preparation deliberately refuses to run while the repository is private. The build job and pull-request workflows have read-only repository permissions. A separate protected publication deployment receives the write and OIDC permissions required to attest and publish the prepared artifact.
 
 ## Preparing a Version
 
-Update every workspace package to the same numeric semantic version, then run:
+Update every workspace package to the same numeric semantic version, commit the source changes, push them to `main`, and wait for CI to pass. From the Actions tab, run `Prepare Release` from `main` and enter the version without a `v` prefix.
 
-```sh
-apple/scripts/prepare-release.sh 0.0.1
-```
-
-The command performs a verified XCFramework build with the release timestamp, computes its SwiftPM checksum, and renders the root `Package.swift`. Review and commit the manifest with the rest of the version change. The archive remains below the ignored `target` directory.
-
-Push the release commit to `main` and wait for CI to pass. From the Actions tab, run the `Release` workflow from `main`, enter the version without a `v` prefix, and approve the `release` environment deployment.
+Preparation builds and verifies the binary once, computes the SwiftPM checksum from that exact archive, renders `Package.swift`, and creates the release commit and annotated tag as Cocoa. It stores the archive, checksum, and preparation metadata together as a workflow artifact, then queues `Publish Release` from the new tag. Approve the `release` environment deployment after preparation succeeds.
 
 ## Publication Contract
 
-The release job:
+The preparation workflow:
 
 1. Verifies repository visibility, branch, version consistency, and tag availability.
 2. Runs the Rust, Swift, formatting, lint, and shell checks.
-3. Rebuilds and verifies every XCFramework slice with pinned Rust and Xcode versions.
-4. Requires the rebuilt checksum and generated release manifest to match the committed `Package.swift` exactly.
-5. Creates a public provenance attestation for the archive.
-6. Creates an annotated `v<version>` tag at the reviewed `main` commit.
-7. Publishes the archive and checksum as a GitHub prerelease protected by the repository's immutable-release policy.
+3. Builds and verifies every XCFramework slice with pinned Rust and Xcode versions.
+4. Computes the archive checksum and writes it into the release manifest.
+5. Stores the exact archive with its checksum and release metadata.
+6. Creates the release commit and annotated `v<version>` tag.
 
-No tag is created when validation, compilation, artifact verification, checksum comparison, or attestation fails. Published versions and their assets must never be replaced.
+The publication deployment:
+
+1. Downloads the exact archive produced by the successful preparation run.
+2. Verifies the workflow run, tag, release commit, metadata, archive, checksum file, and `Package.swift` agree.
+3. Creates a public provenance attestation for that archive.
+4. Publishes the same archive and checksum as a GitHub prerelease protected by the repository's immutable-release policy.
+
+Publication never rebuilds the binary. A failed publication can retry the prepared artifact without changing its checksum. Published versions and their assets must never be replaced.

@@ -27,13 +27,11 @@ Build a distributable artifact from a clean checkout:
 apple/scripts/build-xcframework.sh
 ```
 
-Prepare the root Swift package manifest and its release checksum with:
+For a local or manually managed release, prepare the root Swift package manifest and its release checksum with:
 
 ```sh
 apple/scripts/prepare-release.sh 0.0.1
 ```
-
-Release preparation uses a fixed archive timestamp so rebuilding unchanged native inputs produces the checksum recorded in `Package.swift` even after the manifest is committed.
 
 The command writes excluded build outputs below `target/apple/distribution`:
 
@@ -41,7 +39,7 @@ The command writes excluded build outputs below `target/apple/distribution`:
 - `BondryFFI.xcframework.zip`
 - `BondryFFI.xcframework.zip.sha256`
 
-Set `BONDRY_APPLE_ARTIFACT_DIR` to place the final outputs elsewhere. Set `CARGO_TARGET_DIR` to reuse another Cargo build cache. Archive timestamps default to the source commit time; reproducible build environments can supply `SOURCE_DATE_EPOCH` explicitly.
+Set `BONDRY_APPLE_ARTIFACT_DIR` to place the final outputs elsewhere. Set `CARGO_TARGET_DIR` to reuse another Cargo build cache. Archive timestamps default to the source commit time; controlled build environments can supply `SOURCE_DATE_EPOCH` explicitly.
 
 ## Verification
 
@@ -58,7 +56,7 @@ The build fails unless all of these checks pass:
 - The macOS C smoke test opens and checks an encrypted store.
 - A temporary SwiftPM consumer compiles all Swift products against the binary target and opens a real encrypted store.
 - The release archive is structurally valid and has a SwiftPM checksum.
-- Repeated archives from identical inputs have stable ordering, metadata, and checksums.
+- Archive entries have stable ordering and normalized file timestamps.
 
 An existing artifact can be checked independently:
 
@@ -80,6 +78,6 @@ Attach `BondryFFI.xcframework.zip` to the matching GitHub release. The Swift pac
 
 `BondrySQLCipher` depends on the binary target and imports its `CBondry` module. `BondryApple` remains independent of the Rust binary, while `BondryAppIntents` depends on `BondrySQLCipher`.
 
-The release workflow verifies the committed manifest against a fresh pinned-toolchain build before it creates the tag and publishes the binary. Do not create release tags manually or reuse an existing tag for a different archive or checksum. A source change to the C ABI, its transitive native dependencies, or the canonical header requires a newly prepared artifact and manifest.
+The GitHub release preparation workflow builds the archive once, records that archive's checksum in the tagged manifest, and stores the exact archive for the protected publication workflow. Publication verifies and promotes the stored artifact without rebuilding it. Do not create release tags manually or reuse an existing tag for a different archive or checksum. A source change to the C ABI, its transitive native dependencies, or the canonical header requires a newly prepared artifact and manifest.
 
 During private development, consumers should use a locally generated artifact. Public applications should move to the immutable release URL so a clean clone and CI build never depend on an adjacent checkout or machine-specific library path.

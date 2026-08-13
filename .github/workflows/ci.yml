@@ -63,12 +63,13 @@ jobs:
           xcodebuild -version
       - name: Install Apple build tools
         run: |
-          brew install ripgrep
+          brew install actionlint ripgrep
           .github/scripts/install-shellcheck.sh
       - name: Install Rust
         run: |
           rustup toolchain install 1.90.0 --profile minimal --component clippy,rustfmt
-          rustup target add --toolchain 1.90.0 \
+          rustup default 1.90.0
+          rustup target add \
             aarch64-apple-darwin \
             x86_64-apple-darwin \
             aarch64-apple-ios \
@@ -79,6 +80,7 @@ jobs:
         run: |
           set -eu
           for command in \
+            actionlint \
             cargo \
             cargo-about \
             lipo \
@@ -94,6 +96,8 @@ jobs:
               exit 1
             }
           done
+      - name: Check workflows
+        run: actionlint .github/workflows/*.yml
       - name: Check shell scripts
         run: shellcheck .github/scripts/*.sh apple/scripts/*.sh
       - name: Check Swift formatting

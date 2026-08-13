@@ -1,0 +1,175 @@
+name: Publish Release
+run-name: Publish v${{ inputs.version }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Numeric semantic version without a v prefix
+        required: true
+        type: string
+      preparation_run_id:
+        description: Prepare Release workflow run ID
+        required: true
+        type: string
+      checksum:
+        description: SwiftPM checksum of the prepared artifact
+        required: true
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish prepared artifact
+    runs-on: macos-26
+    timeout-minutes: 15
+    environment: release
+    permissions:
+      actions: read
+      artifact-metadata: write
+      attestations: write
+      contents: write
+      id-token: write
+    steps:
+      - name: Check out release tag
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+      - name: Select Xcode
+        run: |
+          sudo xcode-select --switch /Applications/Xcode_26.2.app/Contents/Developer
+          xcodebuild -version
+      - name: Install publication tools
+        run: brew install gh jq ripgrep
+      - name: Verify publication tools
+        run: |
+          set -eu
+          for command in awk cmp gh git jq rg sed shasum swift unzip; do
+            command -v "$command" > /dev/null || {
+              printf 'Required publication tool is unavailable: %s\n' "$command" >&2
+              exit 1
+            }
+          done
+      - name: Validate publication request
+        env:
+          CHECKSUM: ${{ inputs.checksum }}
+          PREPARATION_RUN_ID: ${{ inputs.preparation_run_id }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -eu
+          if ! printf '%s\n' "$VERSION" | awk -F. '
+            function component(value) { return value == "0" || value ~ /^[1-9][0-9]*$/ }
+            NF == 3 && component($1) && component($2) && component($3) { valid = 1 }
+            END { exit !valid }
+          '; then
+            printf 'Version must be a numeric semantic version without a prefix.\n' >&2
+            exit 1
+          fi
+          if ! printf '%s\n' "$PREPARATION_RUN_ID" | awk '/^[1-9][0-9]*$/ { valid = 1 } END { exit !valid }'; then
+            printf 'Preparation run ID must be a positive integer.\n' >&2
+            exit 1
+          fi
+          if ! printf '%s\n' "$CHECKSUM" | awk 'length == 64 && /^[0-9a-f]+$/ { valid = 1 } END { exit !valid }'; then
+            printf 'Checksum must contain 64 lowercase hexadecimal characters.\n' >&2
+            exit 1
+          fi
+          if [ "$GITHUB_REF" != "refs/tags/v$VERSION" ]; then
+            printf 'Publication must run from tag v%s.\n' "$VERSION" >&2
+            exit 1
+          fi
+          if [ "$(git rev-parse HEAD)" != "$GITHUB_SHA" ]; then
+            printf 'The checked-out release commit does not match the workflow commit.\n' >&2
+            exit 1
+          fi
+          if [ "$(git cat-file -t "refs/tags/v$VERSION")" != tag ]; then
+            printf 'Release tag v%s must be annotated.\n' "$VERSION" >&2
+            exit 1
+          fi
+          git fetch origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            printf 'The release commit is not on the main branch.\n' >&2
+            exit 1
+          fi
+      - name: Download release artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: bondry-release-${{ inputs.version }}
+          path: ${{ runner.temp }}/release
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.preparation_run_id }}
+      - name: Verify prepared release
+        env:
+          CHECKSUM: ${{ inputs.checksum }}
+          GH_TOKEN: ${{ github.token }}
+          PREPARATION_RUN_ID: ${{ inputs.preparation_run_id }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -eu
+          archive="$RUNNER_TEMP/release/BondryFFI.xcframework.zip"
+          checksum_file="$archive.sha256"
+          metadata="$RUNNER_TEMP/release/release-metadata.json"
+          run_data=$(gh run view "$PREPARATION_RUN_ID" \
+            --json conclusion,event,headBranch,headSha,workflowName)
+          if ! printf '%s\n' "$run_data" | jq -e '
+            .conclusion == "success" and
+            .event == "workflow_dispatch" and
+            .headBranch == "main" and
+            .workflowName == "Prepare Release"
+          ' > /dev/null; then
+            printf 'The preparation workflow run is not a successful main-branch preparation.\n' >&2
+            exit 1
+          fi
+          source_commit=$(printf '%s\n' "$run_data" | jq -r .headSha)
+          if ! jq -e \
+            --arg version "$VERSION" \
+            --arg checksum "$CHECKSUM" \
+            --arg source_commit "$source_commit" \
+            --arg release_commit "$GITHUB_SHA" \
+            --arg preparation_run_id "$PREPARATION_RUN_ID" \
+            '.version == $version and
+             .checksum == $checksum and
+             .source_commit == $source_commit and
+             .release_commit == $release_commit and
+             .preparation_run_id == $preparation_run_id' \
+            "$metadata" > /dev/null; then
+            printf 'Release metadata does not match the publication request.\n' >&2
+            exit 1
+          fi
+          recorded_checksum=$(sed -n '1p' "$checksum_file")
+          actual_checksum=$(swift package compute-checksum "$archive")
+          sha256_checksum=$(shasum -a 256 "$archive" | awk '{ print $1 }')
+          if [ "$recorded_checksum" != "$CHECKSUM" ] || \
+             [ "$actual_checksum" != "$CHECKSUM" ] || \
+             [ "$sha256_checksum" != "$CHECKSUM" ]; then
+            printf 'The prepared release artifact checksum does not match the manifest.\n' >&2
+            exit 1
+          fi
+          apple/scripts/render-release-package.sh "$VERSION" "$CHECKSUM" "$RUNNER_TEMP/Package.swift"
+          cmp Package.swift "$RUNNER_TEMP/Package.swift"
+          swift package dump-package > /dev/null
+          unzip -tq "$archive"
+          if gh release view "v$VERSION" > /dev/null 2>&1; then
+            printf 'Release v%s already exists.\n' "$VERSION" >&2
+            exit 1
+          fi
+      - name: Attest release artifact
+        uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
+        with:
+          subject-path: ${{ runner.temp }}/release/BondryFFI.xcframework.zip
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          gh release create "v$VERSION" \
+            "$RUNNER_TEMP/release/BondryFFI.xcframework.zip" \
+            "$RUNNER_TEMP/release/BondryFFI.xcframework.zip.sha256" \
+            --generate-notes \
+            --prerelease \
+            --title "Bondry v$VERSION" \
+            --verify-tag
