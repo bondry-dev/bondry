@@ -22,6 +22,9 @@ runtime_simulator_library="$runtime_simulator_slice/libbondry_runtime.a"
 server_macos_library="$server_macos_slice/libbondry_local_server.a"
 server_ios_library="$server_ios_slice/libbondry_local_server.a"
 server_simulator_library="$server_simulator_slice/libbondry_local_server.a"
+runtime_macos_headers="$runtime_macos_slice/Headers/CBondryRuntime"
+runtime_ios_headers="$runtime_ios_slice/Headers/CBondryRuntime"
+runtime_simulator_headers="$runtime_simulator_slice/Headers/CBondryRuntime"
 
 for framework in "$runtime_framework" "$server_framework"; do
     test -f "$framework/Info.plist"
@@ -38,15 +41,16 @@ lipo "$server_ios_library" -verify_arch arm64
 lipo "$server_simulator_library" -verify_arch arm64 x86_64
 
 for slice in "$runtime_macos_slice" "$runtime_ios_slice" "$runtime_simulator_slice"; do
-    cmp "$bondry_root/bindings/c/include/bondry.h" "$slice/Headers/bondry.h"
+    cmp "$bondry_root/bindings/c/include/bondry.h" \
+        "$slice/Headers/CBondryRuntime/bondry.h"
     cmp "$bondry_root/apple/Distribution/BondryRuntime.modulemap" \
-        "$slice/Headers/module.modulemap"
+        "$slice/Headers/CBondryRuntime/module.modulemap"
 done
 for slice in "$server_macos_slice" "$server_ios_slice" "$server_simulator_slice"; do
     cmp "$bondry_root/bindings/c/include/bondry_local_server.h" \
-        "$slice/Headers/bondry_local_server.h"
+        "$slice/Headers/CBondryLocalServer/bondry_local_server.h"
     cmp "$bondry_root/apple/Distribution/BondryLocalServer.modulemap" \
-        "$slice/Headers/module.modulemap"
+        "$slice/Headers/CBondryLocalServer/module.modulemap"
 done
 
 for library in \
@@ -112,7 +116,7 @@ cc \
     -mmacosx-version-min=13.0 \
     -Wl,-fatal_warnings \
     "$bondry_root/bindings/c/tests/store_smoke.c" \
-    -I "$runtime_macos_slice/Headers" \
+    -I "$runtime_macos_headers" \
     "$runtime_macos_library" \
     -framework CoreFoundation \
     -framework Security \
@@ -127,13 +131,13 @@ for platform in ios simulator; do
             target=arm64-apple-ios16.0
             sdk=$iphoneos_sdk
             runtime_library=$runtime_ios_library
-            runtime_headers=$runtime_ios_slice/Headers
+            runtime_headers=$runtime_ios_headers
             ;;
         simulator)
             target=arm64-apple-ios16.0-simulator
             sdk=$iphonesimulator_sdk
             runtime_library=$runtime_simulator_library
-            runtime_headers=$runtime_simulator_slice/Headers
+            runtime_headers=$runtime_simulator_headers
             ;;
     esac
     "$apple_clang" \
