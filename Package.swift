@@ -21,7 +21,7 @@ let package = Package(
     .binaryTarget(
       name: "BondryFFI",
       url: bondryArtifactURL,
-      checksum: "2963916fd4ed0a8d029779ead6e0b41cfdaf12e1a246425ecb826d4be662bfde"
+      checksum: "77ebd512fb657d7b221fc5c690f5c9d101d55bd0d4952132ed2f2bdae013d41e"
     ),
     .target(
       name: "BondryApple",
