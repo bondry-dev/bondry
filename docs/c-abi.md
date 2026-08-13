@@ -43,7 +43,9 @@ Rust unwinding is caught at each fallible ABI entry point and maps to `BONDRY_ST
 
 ## Apple Bindings
 
-`BondrySQLCipher` is the Swift ownership wrapper over ABI v1. It validates the linked ABI version, accepts only file URLs, maps every public status, closes its handle during deinitialization, and never exposes the opaque pointer.
+`BondrySQLCipher` is the native Swift wrapper over ABI v1. It validates the linked ABI version, accepts only file URLs, maps every public status, closes its handle during deinitialization, and never exposes the opaque pointer. It provides Swift models for clients, non-secret token metadata, principals, and audit events while transparently retrying list queries that grow between calls.
+
+New token secrets remain in a private C record owned by shared Swift storage. The record is cleared when its last `BondryIssuedToken` value is released. Byte-oriented consumers can avoid a `String` copy with `withUnsafeSecretBytes`; `copySecret()` exists for callers that deliberately need one.
 
 The source package does not commit a prebuilt Rust binary. Build the macOS static library with:
 

@@ -3,7 +3,7 @@ import CBondry
 import Foundation
 
 public final class BondryEncryptedStore: @unchecked Sendable {
-  private let handle: OpaquePointer
+  let handle: OpaquePointer
 
   deinit {
     _ = bondry_store_close_v1(handle)

@@ -7,12 +7,22 @@ public enum BondryEncryptedStoreError: Error, Equatable, Sendable {
   case invalidLength
   case invalidUTF8
   case invalidPath
+  case invalidArgument
+  case bufferTooSmall
   case fileSystem
   case database
   case unsupportedSchema
   case invalidDatabaseKey
   case invalidData
   case unavailable
+  case notFound
+  case clientDisabled
+  case tokenInactive
+  case authenticationRejected
+  case invalidTokenLifetime
+  case entropyUnavailable
+  case timeUnavailable
+  case generationExhausted
   case invalidHandle
   case internalFailure(Int32)
 
@@ -26,6 +36,10 @@ public enum BondryEncryptedStoreError: Error, Equatable, Sendable {
       self = .invalidUTF8
     case BONDRY_STATUS_INVALID_PATH:
       self = .invalidPath
+    case BONDRY_STATUS_INVALID_ARGUMENT:
+      self = .invalidArgument
+    case BONDRY_STATUS_BUFFER_TOO_SMALL:
+      self = .bufferTooSmall
     case BONDRY_STATUS_FILE_SYSTEM:
       self = .fileSystem
     case BONDRY_STATUS_DATABASE:
@@ -38,6 +52,22 @@ public enum BondryEncryptedStoreError: Error, Equatable, Sendable {
       self = .invalidData
     case BONDRY_STATUS_UNAVAILABLE:
       self = .unavailable
+    case BONDRY_STATUS_NOT_FOUND:
+      self = .notFound
+    case BONDRY_STATUS_CLIENT_DISABLED:
+      self = .clientDisabled
+    case BONDRY_STATUS_TOKEN_INACTIVE:
+      self = .tokenInactive
+    case BONDRY_STATUS_AUTHENTICATION_REJECTED:
+      self = .authenticationRejected
+    case BONDRY_STATUS_INVALID_TOKEN_LIFETIME:
+      self = .invalidTokenLifetime
+    case BONDRY_STATUS_ENTROPY_UNAVAILABLE:
+      self = .entropyUnavailable
+    case BONDRY_STATUS_TIME_UNAVAILABLE:
+      self = .timeUnavailable
+    case BONDRY_STATUS_GENERATION_EXHAUSTED:
+      self = .generationExhausted
     default:
       self = .internalFailure(status)
     }

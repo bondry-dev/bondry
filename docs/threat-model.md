@@ -36,6 +36,7 @@ Capability handlers are host-application code. They are trusted to enforce domai
 - Rust layouts and error objects never cross the ABI, and unwinding is stopped before control returns to foreign code.
 - C authentication failures do not distinguish malformed, unknown, mismatched, expired, revoked, or disabled-client bearer tokens.
 - C results use caller-owned fixed-capacity records. One-time token records have an explicit clearing operation, and audit records exclude credentials and payloads.
+- Swift keeps each newly issued token in a private C record, redacts its debug representation, and clears it when the last shared owner is released. Deliberate `String` copies remain the host's responsibility.
 
 ## Known Gaps
 

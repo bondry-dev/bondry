@@ -5,6 +5,7 @@ import Foundation
 import Security
 
 enum ProbeError: Error {
+  case administrationMismatch
   case inconsistentKeys
   case plaintextDatabase
   case cleanupFailed(OSStatus)
@@ -57,6 +58,29 @@ do {
   do {
     let store = try BondryEncryptedStore.open(at: databaseURL, key: created)
     try store.checkHealth()
+    let client = try store.createClient(named: "Keychain Probe")
+    guard try store.clients() == [client] else {
+      throw ProbeError.administrationMismatch
+    }
+    let issued = try store.issueToken(for: client.id, label: "Initial")
+    guard try store.authenticate(token: issued).id == client.id,
+      try store.tokens(for: client.id).count == 1
+    else {
+      throw ProbeError.administrationMismatch
+    }
+    let replacement = try store.rotateToken(issued.metadata.id, label: "Rotated")
+    do {
+      _ = try store.authenticate(token: issued)
+      throw ProbeError.administrationMismatch
+    } catch BondryEncryptedStoreError.authenticationRejected {
+    }
+    guard try store.authenticate(token: replacement).id == client.id,
+      try store.revokeToken(replacement.metadata.id),
+      try store.tokens(for: client.id).count == 2,
+      try store.recentAuditEvents(limit: 10).isEmpty
+    else {
+      throw ProbeError.administrationMismatch
+    }
   }
   let databaseBytes = try Data(contentsOf: databaseURL)
   guard !databaseBytes.starts(with: Data("SQLite format 3\0".utf8)) else {
@@ -71,7 +95,7 @@ do {
     throw ProbeError.cleanupFailed(deleteStatus)
   }
 
-  print("Data Protection Keychain round trip passed and the temporary item was removed.")
+  print("Keychain, SQLCipher, and authentication round trips passed; temporary data was removed.")
 } catch {
   fail("Keychain probe failed: \(error)")
 }
