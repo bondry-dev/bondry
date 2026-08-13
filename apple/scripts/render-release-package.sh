@@ -32,7 +32,7 @@ sed \
     -e "s/__BONDRY_CHECKSUM__/$checksum/g" \
     "$template" > "$output"
 
-if rg -q '__BONDRY_(VERSION|CHECKSUM)__' "$output"; then
+if grep -Eq '__BONDRY_(VERSION|CHECKSUM)__' "$output"; then
     printf 'The rendered package contains unresolved placeholders.\n' >&2
     exit 1
 fi
