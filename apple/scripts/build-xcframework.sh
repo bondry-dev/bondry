@@ -90,8 +90,10 @@ create_xcframework() {
     packaged_library_name=$3
     header=$4
     module_map=$5
+    module_name=$6
     staging_directory="$artifact_directory/staging/$framework_name"
-    headers_directory="$staging_directory/Headers"
+    headers_root="$staging_directory/Headers"
+    headers_directory="$headers_root/$module_name"
     macos_directory="$staging_directory/macos"
     ios_directory="$staging_directory/ios"
     simulator_directory="$staging_directory/ios-simulator"
@@ -119,11 +121,11 @@ create_xcframework() {
 
     xcodebuild -create-xcframework \
         -library "$macos_directory/$packaged_library_name" \
-        -headers "$headers_directory" \
+        -headers "$headers_root" \
         -library "$ios_directory/$packaged_library_name" \
-        -headers "$headers_directory" \
+        -headers "$headers_root" \
         -library "$simulator_directory/$packaged_library_name" \
-        -headers "$headers_directory" \
+        -headers "$headers_root" \
         -output "$xcframework"
 
     cp "$bondry_root/LICENSE" "$xcframework/LICENSE"
@@ -146,13 +148,15 @@ create_xcframework \
     libbondry_runtime_ffi.a \
     libbondry_runtime.a \
     bondry.h \
-    BondryRuntime.modulemap
+    BondryRuntime.modulemap \
+    CBondryRuntime
 create_xcframework \
     BondryLocalServer \
     libbondry_local_server_ffi.a \
     libbondry_local_server.a \
     bondry_local_server.h \
-    BondryLocalServer.modulemap
+    BondryLocalServer.modulemap \
+    CBondryLocalServer
 
 "$script_directory/verify-xcframework.sh" \
     "$artifact_directory/BondryRuntime.xcframework" \
