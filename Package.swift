@@ -2,7 +2,7 @@
 
 import PackageDescription
 
-let bondryVersion = "0.1.0"
+let bondryVersion = "0.1.1"
 let releaseBaseURL =
   "https://github.com/bondry-dev/bondry/releases/download/v\(bondryVersion)"
 
@@ -22,12 +22,12 @@ let package = Package(
     .binaryTarget(
       name: "CBondryRuntime",
       url: "\(releaseBaseURL)/BondryRuntime.xcframework.zip",
-      checksum: "f276fcba7bf7db076f84809f9433567db1886a5d96d5080b83bb9394ddf6f4c9"
+      checksum: "4d282634aab1bd159701db6352a7b7e6348cb47922727f9c91ab6dba351fb249"
     ),
     .binaryTarget(
       name: "CBondryLocalServer",
       url: "\(releaseBaseURL)/BondryLocalServer.xcframework.zip",
-      checksum: "79458fd84b624d65ccad7b1c9d3019f6c38701b56dd57f99f46e6a42102044c2"
+      checksum: "8e455b312edb4f673def7815a025bbc1b5b136a1bb6bdbab40118b92352e3296"
     ),
     .target(
       name: "BondryApple",
