@@ -22,6 +22,10 @@ test -f "$ios_library"
 test -f "$simulator_library"
 cmp "$bondry_root/apple/Distribution/BondryFFI.Info.plist" \
     "$xcframework/Info.plist"
+cmp "$bondry_root/LICENSE" "$xcframework/LICENSE"
+cmp "$bondry_root/THIRD_PARTY_NOTICES.md" \
+    "$xcframework/THIRD_PARTY_NOTICES.md"
+test -s "$xcframework/THIRD_PARTY_LICENSES.txt"
 
 lipo "$macos_library" -verify_arch arm64 x86_64
 lipo "$ios_library" -verify_arch arm64

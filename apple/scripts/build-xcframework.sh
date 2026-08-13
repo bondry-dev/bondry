@@ -119,6 +119,18 @@ xcodebuild -create-xcframework \
 
 cp "$bondry_root/apple/Distribution/BondryFFI.Info.plist" \
     "$xcframework/Info.plist"
+cp "$bondry_root/LICENSE" "$xcframework/LICENSE"
+cp "$bondry_root/THIRD_PARTY_NOTICES.md" \
+    "$xcframework/THIRD_PARTY_NOTICES.md"
+cargo about generate \
+    --config "$bondry_root/apple/Distribution/about.toml" \
+    --fail \
+    --locked \
+    --manifest-path "$bondry_root/Cargo.toml" \
+    --offline \
+    --output-file "$xcframework/THIRD_PARTY_LICENSES.txt" \
+    --workspace \
+    "$bondry_root/apple/Distribution/ThirdPartyLicenses.hbs"
 "$script_directory/verify-xcframework.sh" "$xcframework"
 archive_timestamp=$(date -u -r "$source_date_epoch" '+%Y%m%d%H%M.%S')
 find "$xcframework" -exec touch -h -t "$archive_timestamp" {} +

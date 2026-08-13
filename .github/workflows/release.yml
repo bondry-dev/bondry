@@ -1,0 +1,125 @@
+name: Release
+run-name: Release v${{ inputs.version }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Numeric semantic version without a v prefix
+        required: true
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: "1"
+
+jobs:
+  release:
+    name: Build and publish
+    runs-on: macos-26
+    timeout-minutes: 60
+    environment: release
+    permissions:
+      artifact-metadata: write
+      attestations: write
+      contents: write
+      id-token: write
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+      - name: Validate release request
+        env:
+          REPOSITORY_VISIBILITY: ${{ github.event.repository.visibility }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -eu
+          if [ "$REPOSITORY_VISIBILITY" != public ]; then
+            printf 'Releases require a public repository for public provenance attestations.\n' >&2
+            exit 1
+          fi
+          if [ "$GITHUB_REF" != refs/heads/main ]; then
+            printf 'Releases must run from the main branch.\n' >&2
+            exit 1
+          fi
+          if ! printf '%s\n' "$VERSION" | awk -F. '
+            function component(value) { return value == "0" || value ~ /^[1-9][0-9]*$/ }
+            NF == 3 && component($1) && component($2) && component($3) { valid = 1 }
+            END { exit !valid }
+          '; then
+            printf 'Version must be a numeric semantic version without a prefix.\n' >&2
+            exit 1
+          fi
+          if ! cargo metadata --no-deps --format-version 1 \
+            | jq -e --arg version "$VERSION" 'all(.packages[]; .version == $version)' > /dev/null; then
+            printf 'Every workspace package must match release version %s.\n' "$VERSION" >&2
+            exit 1
+          fi
+          if git ls-remote --exit-code --tags origin "refs/tags/v$VERSION" > /dev/null 2>&1; then
+            printf 'Tag v%s already exists.\n' "$VERSION" >&2
+            exit 1
+          fi
+      - name: Select Xcode
+        run: |
+          sudo xcode-select --switch /Applications/Xcode_26.2.app/Contents/Developer
+          xcodebuild -version
+      - name: Install Rust
+        run: |
+          rustup toolchain install 1.90.0 --profile minimal --component clippy,rustfmt
+          rustup target add --toolchain 1.90.0 \
+            aarch64-apple-darwin \
+            x86_64-apple-darwin \
+            aarch64-apple-ios \
+            aarch64-apple-ios-sim \
+            x86_64-apple-ios
+          cargo install --locked --version 0.9.1 --features cli cargo-about
+      - name: Run release checks
+        run: |
+          cargo fmt --all --check
+          cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+          cargo test --workspace --all-features --locked
+          swift format lint --recursive --strict Package.swift apple/Package.swift apple/Distribution/Package.release.swift apple/Sources apple/Tests apple/IntegrationTests/KeychainProbe/Sources
+          swift test --package-path apple
+          shellcheck apple/scripts/*.sh
+      - name: Build release artifact
+        run: SOURCE_DATE_EPOCH=946684800 apple/scripts/build-xcframework.sh
+      - name: Verify release package
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -eu
+          checksum=$(sed -n '1p' target/apple/distribution/BondryFFI.xcframework.zip.sha256)
+          apple/scripts/render-release-package.sh "$VERSION" "$checksum" "$RUNNER_TEMP/Package.swift"
+          cmp Package.swift "$RUNNER_TEMP/Package.swift"
+          swift package dump-package > /dev/null
+      - name: Attest release artifact
+        uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
+        with:
+          subject-path: target/apple/distribution/BondryFFI.xcframework.zip
+      - name: Create release tag
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -eu
+          git -c user.name=Cocoa -c user.email=i@uwucocoa.moe \
+            tag --annotate "v$VERSION" --message "Bondry v$VERSION"
+          git push origin "refs/tags/v$VERSION"
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          gh release create "v$VERSION" \
+            target/apple/distribution/BondryFFI.xcframework.zip \
+            target/apple/distribution/BondryFFI.xcframework.zip.sha256 \
+            --generate-notes \
+            --prerelease \
+            --title "Bondry v$VERSION" \
+            --verify-tag

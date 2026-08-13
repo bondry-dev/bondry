@@ -6,7 +6,11 @@ Apple builds use SQLCipher's CommonCrypto provider. Swift package targets that l
 
 ## Build
 
-The builder requires Xcode, Swift, Rust, Cargo, and these Rust standard-library targets:
+The builder requires Xcode, Swift, Rust, Cargo, `cargo-about` 0.9.1, and these Rust standard-library targets:
+
+```sh
+cargo install --locked --version 0.9.1 --features cli cargo-about
+```
 
 ```sh
 rustup target add \
@@ -17,11 +21,19 @@ rustup target add \
   x86_64-apple-ios
 ```
 
-Build the release artifact from a clean tag:
+Build a distributable artifact from a clean checkout:
 
 ```sh
 apple/scripts/build-xcframework.sh
 ```
+
+Prepare the root Swift package manifest and its release checksum with:
+
+```sh
+apple/scripts/prepare-release.sh 0.0.1
+```
+
+Release preparation uses a fixed archive timestamp so rebuilding unchanged native inputs produces the checksum recorded in `Package.swift` even after the manifest is committed.
 
 The command writes excluded build outputs below `target/apple/distribution`:
 
@@ -39,6 +51,7 @@ The build fails unless all of these checks pass:
 - iOS device contains `arm64`.
 - iOS Simulator contains `arm64` and `x86_64` slices.
 - Every slice contains the canonical public header and `CBondry` module map.
+- The artifact contains the Bondry license, SQLCipher notice, and generated Rust dependency licenses.
 - The public ABI version symbol is exported.
 - Rust source paths are remapped, and no private build-machine user path is embedded.
 - C consumers link at the macOS 13 and iOS 16 deployment targets.
@@ -67,6 +80,6 @@ Attach `BondryFFI.xcframework.zip` to the matching GitHub release. The Swift pac
 
 `BondrySQLCipher` depends on the binary target and imports its `CBondry` module. `BondryApple` remains independent of the Rust binary, while `BondryAppIntents` depends on `BondrySQLCipher`.
 
-Do not publish a Swift package tag before its binary artifact is reachable at the manifest URL. Do not reuse an existing tag for a different archive or checksum. A source change to the C ABI, its transitive native dependencies, or the canonical header requires a newly built artifact and release.
+The release workflow verifies the committed manifest against a fresh pinned-toolchain build before it creates the tag and publishes the binary. Do not create release tags manually or reuse an existing tag for a different archive or checksum. A source change to the C ABI, its transitive native dependencies, or the canonical header requires a newly prepared artifact and manifest.
 
 During private development, consumers should use a locally generated artifact. Public applications should move to the immutable release URL so a clean clone and CI build never depend on an adjacent checkout or machine-specific library path.
