@@ -42,10 +42,12 @@ Capability handlers are host-application code. They are trusted to enforce domai
 - The local HTTP runtime defaults to loopback, an operating-system-selected port, rejected browser origins, bounded headers, a 1 MiB body limit, connection and request limits, finite timeouts, and no keep-alive.
 - HTTP authenticators receive request metadata but adapters receive only the resulting principal after credential-bearing headers are removed.
 - Non-loopback cleartext listening and non-loopback disabled authentication require separate explicit acknowledgements.
+- REST discovery returns only capabilities authorized for the authenticated principal and the REST adapter.
+- REST uses the same response for missing and unauthorized capabilities, validates JSON media types and payloads before dispatch, and exposes only stable handler failure codes.
 
 ## Known Gaps
 
-The core does not yet provide invocation cancellation or idempotency. Payload-size limits currently exist at the C ABI and local HTTP boundaries rather than in every native Rust entry point. The HTTP runtime does not provide TLS; network listening is an explicitly acknowledged advanced mode and must be protected by a trusted local network or host-supplied secure transport. Protocol adapters must not be considered production-ready until their own controls are implemented and tested.
+The core does not yet provide invocation cancellation or idempotency. Payload-size limits currently exist at the C ABI and local HTTP boundaries rather than in every native Rust entry point. The HTTP runtime does not provide TLS; network listening is an explicitly acknowledged advanced mode and must be protected by a trusted local network or host-supplied secure transport. The REST adapter is pre-alpha and its public contract may change. Other protocol adapters must not be considered production-ready until their own controls are implemented and tested.
 
 An audit completion can still fail after a handler has changed state. Mutating capabilities require an idempotency design before production use so that an adapter can safely handle this ambiguous outcome.
 

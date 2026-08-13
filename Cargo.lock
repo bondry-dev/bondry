@@ -118,9 +118,11 @@ dependencies = [
 name = "bondry-http"
 version = "0.0.1"
 dependencies = [
+ "base64",
  "bondry-auth",
  "bondry-core",
  "bytes",
+ "getrandom 0.4.3",
  "http",
  "http-body-util",
  "hyper",
@@ -128,6 +130,18 @@ dependencies = [
  "serde_json",
  "thiserror",
  "tokio",
+]
+
+[[package]]
+name = "bondry-rest"
+version = "0.0.1"
+dependencies = [
+ "bondry-core",
+ "bondry-http",
+ "bytes",
+ "futures",
+ "http",
+ "serde_json",
 ]
 
 [[package]]

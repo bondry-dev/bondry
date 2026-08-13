@@ -3,6 +3,7 @@
 mod adapter;
 mod authentication;
 mod configuration;
+mod invocation_id;
 mod rate_limit;
 mod server;
 
@@ -13,5 +14,8 @@ pub use authentication::{
 };
 pub use configuration::{
     OriginPolicy, OriginPolicyError, RateLimits, ServerConfiguration, ServerConfigurationError,
+};
+pub use invocation_id::{
+    InvocationIdGenerationError, InvocationIdGenerator, SystemInvocationIdGenerator,
 };
 pub use server::{LocalHttpServer, ServerStartError, ServerStopError};

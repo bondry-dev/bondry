@@ -38,11 +38,13 @@ Bondry depends on storage contracts, not a particular database. Host application
 
 ## Adapters
 
-Adapters translate external protocols into core invocations. Each adapter is responsible for authentication, input and output translation, protocol-specific error mapping, and transport security.
+Adapters translate external protocols into core invocations. Each adapter is responsible for input and output translation and protocol-specific error mapping. Its transport authenticates the caller and supplies only the resulting principal.
 
 An adapter passes only an authenticated principal identifier into the core. Raw bearer tokens, cookies, passkeys, security-key responses, and other credentials must not cross this boundary.
 
 REST and MCP share `bondry-http` without sharing protocol translation or authorization grants. The runtime authenticates and rate-limits before removing credentials and handing a bounded request to an adapter. Apple Shortcuts uses App Intents in a Swift adapter and can represent the operating system as an authenticated local principal.
+
+`bondry-rest` exposes authorized descriptors and generic capability invocation under `/api/v1`. It relies on the shared dispatcher for exact grants, input validation, handler execution, and audit outcomes.
 
 ## Host Applications
 
