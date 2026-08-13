@@ -15,6 +15,7 @@ Bondry's core is storage-neutral. `AuthStore` defines transactional client and t
 - A busy timeout for independent local connections
 - WAL with full synchronous durability
 - A bounded audit query API
+- Transactional schema migrations that preserve authentication, grants, and audit history
 
 The store has no plaintext open function. Opening it requires a 256-bit `DatabaseKey`. The key must be persisted separately in a platform-secure secret store. Apple hosts can use the `BondryApple` Keychain provider; other platforms should use their native credential facilities or a host-provided equivalent.
 
@@ -30,4 +31,4 @@ The current API does not provide backup, restore, database-key rotation, or mult
 
 ## Data Minimization
 
-Access-token secrets and invocation payloads are never persisted. The database contains token digests, client and token labels, lifecycle timestamps, exact authorization grants, capability identifiers, adapters, and audit outcomes. These fields remain sensitive metadata and are therefore encrypted at rest.
+Access-token secrets, invocation payloads, and capability schemas are never persisted. The database contains token digests, client and token labels, lifecycle timestamps, exact authorization grants, capability identifiers, adapters, and audit outcomes. These fields remain sensitive metadata and are therefore encrypted at rest.

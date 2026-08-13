@@ -1,13 +1,30 @@
-use std::sync::Arc;
+use std::{future::Future, pin::Pin, sync::Arc};
 
 use serde_json::Value;
 use thiserror::Error;
 
 use crate::{
     AuditError, AuditEvent, AuditOutcome, AuditSink, AuthorizationDecision, AuthorizationPolicy,
-    AuthorizationRequest, CapabilityId, CapabilityRegistry, DenialReason, HandlerError, Invocation,
-    InvocationContext,
+    AuthorizationRequest, CapabilityDescriptor, CapabilityId, CapabilityRegistry, DenialReason,
+    HandlerError, Invocation, InvocationContext, Principal,
 };
+
+/// A future returned by a protocol-neutral automation service.
+pub type DispatchFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<Value, DispatchError>> + Send + 'a>>;
+
+/// The capability operations consumed by protocol adapters.
+pub trait AutomationService: Send + Sync {
+    /// Returns capabilities currently authorized for one principal and adapter.
+    fn capabilities(
+        &self,
+        principal: &Principal,
+        adapter: &crate::AdapterId,
+    ) -> Result<Vec<CapabilityDescriptor>, CapabilityDiscoveryError>;
+
+    /// Dispatches one authenticated invocation.
+    fn dispatch(&self, invocation: Invocation) -> DispatchFuture<'_>;
+}
 
 /// Resolves, authorizes, executes, and audits capability invocations.
 pub struct Dispatcher {
@@ -63,6 +80,12 @@ impl Dispatcher {
             return Err(DispatchError::AccessDenied(reason));
         }
 
+        if !descriptor.accepts_input(invocation.input()) {
+            self.audit
+                .record(AuditEvent::new(&context, AuditOutcome::InvalidInput))?;
+            return Err(DispatchError::InvalidInput);
+        }
+
         self.audit
             .record(AuditEvent::new(&context, AuditOutcome::Started))?;
         match handler.invoke(context.clone(), invocation.input).await {
@@ -80,6 +103,50 @@ impl Dispatcher {
             }
         }
     }
+
+    /// Returns registered capabilities authorized for one principal and adapter.
+    pub fn capabilities(
+        &self,
+        principal: &Principal,
+        adapter: &crate::AdapterId,
+    ) -> Result<Vec<CapabilityDescriptor>, CapabilityDiscoveryError> {
+        let mut allowed = Vec::new();
+        for descriptor in self.registry.descriptors() {
+            match self
+                .policy
+                .evaluate(AuthorizationRequest::new(principal, adapter, descriptor))
+            {
+                AuthorizationDecision::Allow => allowed.push(descriptor.clone()),
+                AuthorizationDecision::Deny(DenialReason::NotGranted) => {}
+                AuthorizationDecision::Deny(DenialReason::PolicyUnavailable) => {
+                    return Err(CapabilityDiscoveryError::PolicyUnavailable);
+                }
+            }
+        }
+        Ok(allowed)
+    }
+}
+
+impl AutomationService for Dispatcher {
+    fn capabilities(
+        &self,
+        principal: &Principal,
+        adapter: &crate::AdapterId,
+    ) -> Result<Vec<CapabilityDescriptor>, CapabilityDiscoveryError> {
+        self.capabilities(principal, adapter)
+    }
+
+    fn dispatch(&self, invocation: Invocation) -> DispatchFuture<'_> {
+        Box::pin(self.dispatch(invocation))
+    }
+}
+
+/// A safe capability-discovery failure.
+#[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
+pub enum CapabilityDiscoveryError {
+    /// Authorization policy state could not be read safely.
+    #[error("authorization policy is unavailable")]
+    PolicyUnavailable,
 }
 
 /// An invocation failure safe to map into an adapter-specific response.
@@ -94,6 +161,9 @@ pub enum DispatchError {
     /// Authorization policy rejected the invocation.
     #[error("access denied: {0:?}")]
     AccessDenied(DenialReason),
+    /// Invocation input did not satisfy the capability's declared schema.
+    #[error("capability input is invalid")]
+    InvalidInput,
     /// The capability handler returned a stable failure code.
     #[error(transparent)]
     Handler(#[from] HandlerError),

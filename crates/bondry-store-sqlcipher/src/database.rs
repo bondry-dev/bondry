@@ -10,7 +10,7 @@ use thiserror::Error;
 
 use crate::DatabaseKey;
 
-const SCHEMA_VERSION: i64 = 2;
+const SCHEMA_VERSION: i64 = 3;
 
 /// SQLCipher-backed authentication and audit persistence.
 pub struct SqlCipherStore {
@@ -92,6 +92,7 @@ fn migrate(connection: &mut Connection) -> Result<(), SqlCipherStoreError> {
     let version: i64 = connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
     match version {
         SCHEMA_VERSION => Ok(()),
+        2 => migrate_from_version_two(connection),
         1 => migrate_from_version_one(connection),
         0 => migrate_from_empty(connection),
         unsupported => Err(SqlCipherStoreError::UnsupportedSchema(unsupported)),
@@ -132,6 +133,7 @@ fn migrate_from_empty(connection: &mut Connection) -> Result<(), SqlCipherStoreE
                      'capability_not_found',
                      'denied',
                      'started',
+                     'invalid_input',
                      'succeeded',
                      'handler_failed'
                  )
@@ -153,7 +155,7 @@ fn migrate_from_empty(connection: &mut Connection) -> Result<(), SqlCipherStoreE
              PRIMARY KEY (principal_id, adapter_id, capability_id)
          );
 
-         PRAGMA user_version = 2;",
+         PRAGMA user_version = 3;",
     )?;
     transaction.commit()?;
     Ok(())
@@ -167,11 +169,61 @@ fn migrate_from_version_one(connection: &mut Connection) -> Result<(), SqlCipher
              adapter_id TEXT NOT NULL,
              capability_id TEXT NOT NULL,
              PRIMARY KEY (principal_id, adapter_id, capability_id)
-         );
-         PRAGMA user_version = 2;",
+         );",
     )?;
+    rebuild_audit_table(&transaction)?;
+    transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     transaction.commit()?;
     Ok(())
+}
+
+fn migrate_from_version_two(connection: &mut Connection) -> Result<(), SqlCipherStoreError> {
+    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    rebuild_audit_table(&transaction)?;
+    transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+    transaction.commit()?;
+    Ok(())
+}
+
+fn rebuild_audit_table(transaction: &rusqlite::Transaction<'_>) -> rusqlite::Result<()> {
+    transaction.execute_batch(
+        "ALTER TABLE audit_events RENAME TO audit_events_previous;
+         CREATE TABLE audit_events (
+             sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+             occurred_at_ms INTEGER NOT NULL,
+             invocation_id TEXT NOT NULL,
+             principal_id TEXT NOT NULL,
+             adapter_id TEXT NOT NULL,
+             capability_id TEXT NOT NULL,
+             outcome_kind TEXT NOT NULL CHECK (
+                 outcome_kind IN (
+                     'capability_not_found',
+                     'denied',
+                     'started',
+                     'invalid_input',
+                     'succeeded',
+                     'handler_failed'
+                 )
+             ),
+             detail_code TEXT,
+             CHECK (
+                 (outcome_kind IN ('denied', 'handler_failed') AND detail_code IS NOT NULL)
+                 OR
+                 (outcome_kind NOT IN ('denied', 'handler_failed') AND detail_code IS NULL)
+             )
+         );
+         INSERT INTO audit_events (
+             sequence, occurred_at_ms, invocation_id, principal_id, adapter_id,
+             capability_id, outcome_kind, detail_code
+         )
+         SELECT
+             sequence, occurred_at_ms, invocation_id, principal_id, adapter_id,
+             capability_id, outcome_kind, detail_code
+         FROM audit_events_previous;
+         DROP TABLE audit_events_previous;
+         CREATE INDEX audit_by_principal ON audit_events(principal_id, sequence DESC);
+         CREATE INDEX audit_by_invocation ON audit_events(invocation_id, sequence);",
+    )
 }
 
 /// An encrypted SQLCipher persistence failure.

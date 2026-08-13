@@ -1,13 +1,16 @@
-use std::{future::Future, pin::Pin};
+use std::{fmt, future::Future, pin::Pin, sync::Arc};
 
-use serde::Serialize;
-use serde_json::Value;
+use serde::{Serialize, Serializer};
+use serde_json::{Map, Value};
 use thiserror::Error;
 
 use crate::{CapabilityId, HandlerErrorCode, InvocationContext};
 
 /// The maximum UTF-8 encoded length of a capability summary.
 pub const MAX_CAPABILITY_SUMMARY_LENGTH: usize = 256;
+
+/// The maximum encoded length of a capability input schema.
+pub const MAX_CAPABILITY_SCHEMA_LENGTH: usize = 65_536;
 
 /// Describes whether a capability may change observable state.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -25,6 +28,7 @@ pub struct CapabilityDescriptor {
     id: CapabilityId,
     summary: CapabilitySummary,
     effect: CapabilityEffect,
+    input_schema: CapabilityInputSchema,
 }
 
 impl CapabilityDescriptor {
@@ -38,7 +42,14 @@ impl CapabilityDescriptor {
             id,
             summary: CapabilitySummary::new(summary)?,
             effect,
+            input_schema: CapabilityInputSchema::default(),
         })
+    }
+
+    /// Replaces the permissive default input schema with a JSON Schema 2020-12 document.
+    pub fn with_input_schema(mut self, schema: Value) -> Result<Self, CapabilitySchemaError> {
+        self.input_schema = CapabilityInputSchema::new(schema)?;
+        Ok(self)
     }
 
     /// Returns the stable capability identifier.
@@ -57,6 +68,86 @@ impl CapabilityDescriptor {
     #[must_use]
     pub const fn effect(&self) -> CapabilityEffect {
         self.effect
+    }
+
+    /// Returns the JSON Schema 2020-12 document describing accepted input.
+    #[must_use]
+    pub const fn input_schema(&self) -> &Value {
+        self.input_schema.document()
+    }
+
+    pub(crate) fn accepts_input(&self, input: &Value) -> bool {
+        self.input_schema.accepts(input)
+    }
+}
+
+#[derive(Clone)]
+struct CapabilityInputSchema {
+    document: Value,
+    validator: Option<Arc<jsonschema::Validator>>,
+}
+
+impl CapabilityInputSchema {
+    fn new(document: Value) -> Result<Self, CapabilitySchemaError> {
+        if !document.is_object() {
+            return Err(CapabilitySchemaError::NotObject);
+        }
+        if serde_json::to_vec(&document)
+            .map_or(true, |encoded| encoded.len() > MAX_CAPABILITY_SCHEMA_LENGTH)
+        {
+            return Err(CapabilitySchemaError::TooLarge);
+        }
+        if !jsonschema::draft202012::meta::is_valid(&document) {
+            return Err(CapabilitySchemaError::Invalid);
+        }
+        let validator =
+            jsonschema::draft202012::new(&document).map_err(|_| CapabilitySchemaError::Invalid)?;
+        Ok(Self {
+            document,
+            validator: Some(Arc::new(validator)),
+        })
+    }
+
+    const fn document(&self) -> &Value {
+        &self.document
+    }
+
+    fn accepts(&self, input: &Value) -> bool {
+        self.validator
+            .as_ref()
+            .is_none_or(|validator| validator.is_valid(input))
+    }
+}
+
+impl Default for CapabilityInputSchema {
+    fn default() -> Self {
+        Self {
+            document: Value::Object(Map::new()),
+            validator: None,
+        }
+    }
+}
+
+impl fmt::Debug for CapabilityInputSchema {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.document.fmt(formatter)
+    }
+}
+
+impl PartialEq for CapabilityInputSchema {
+    fn eq(&self, other: &Self) -> bool {
+        self.document == other.document
+    }
+}
+
+impl Eq for CapabilityInputSchema {}
+
+impl Serialize for CapabilityInputSchema {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        self.document.serialize(serializer)
     }
 }
 
@@ -97,6 +188,20 @@ pub enum CapabilitySummaryError {
     /// The summary contains a control character.
     #[error("a capability summary cannot contain control characters")]
     ControlCharacter,
+}
+
+/// An invalid capability input schema.
+#[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
+pub enum CapabilitySchemaError {
+    /// MCP tool input schemas must be JSON objects.
+    #[error("a capability input schema must be a JSON object")]
+    NotObject,
+    /// The encoded schema exceeds the supported limit.
+    #[error("a capability input schema cannot exceed {MAX_CAPABILITY_SCHEMA_LENGTH} bytes")]
+    TooLarge,
+    /// The schema is not a self-contained JSON Schema 2020-12 document.
+    #[error("a capability input schema must be a self-contained JSON Schema 2020-12 document")]
+    Invalid,
 }
 
 /// A future returned by a capability handler.

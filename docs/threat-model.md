@@ -24,6 +24,7 @@ Capability handlers are host-application code. They are trusted to enforce domai
 - Grants are scoped to one principal, adapter, and capability.
 - Durable grant lookup failures deny access as `PolicyUnavailable`.
 - Capability identifiers are validated and bounded before entering policy state.
+- Capability input schemas are size-bounded, validated as self-contained JSON Schema 2020-12 documents, compiled once, and enforced after authorization but before handler execution.
 - Duplicate capability registration is rejected.
 - Credentials are excluded from principals and invocation context, and principals cannot be deserialized directly from external input.
 - Audit events exclude request and response payloads.
@@ -41,7 +42,7 @@ Capability handlers are host-application code. They are trusted to enforce domai
 
 ## Known Gaps
 
-The core does not yet provide input-schema validation, payload-size limits, invocation deadlines, cancellation, idempotency, authentication protocols, transport security, or rate limiting. Protocol adapters must not be considered production-ready until the relevant controls are implemented and tested.
+The core does not yet provide invocation deadlines, cancellation, idempotency, authentication protocols, transport security, or rate limiting. Payload-size limits currently exist at the C ABI rather than in every native Rust entry point. Protocol adapters must not be considered production-ready until the relevant controls are implemented and tested.
 
 An audit completion can still fail after a handler has changed state. Mutating capabilities require an idempotency design before production use so that an adapter can safely handle this ambiguous outcome.
 

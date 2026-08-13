@@ -355,6 +355,44 @@ fn migrates_version_one_without_losing_authentication_state()
 }
 
 #[test]
+fn migrates_version_two_without_losing_audit_events() -> Result<(), Box<dyn std::error::Error>> {
+    let directory = TempDir::new()?;
+    let path = database_path(&directory);
+    let key = fixed_key(24);
+    let store = SqlCipherStore::open(&path, &key)?;
+    store.record(AuditEvent::from_parts(
+        SystemTime::now(),
+        InvocationId::new("request_migrated")?,
+        PrincipalId::new("client_migrated")?,
+        AdapterId::new("rest")?,
+        CapabilityId::new("battery.read")?,
+        AuditOutcome::Succeeded,
+    ))?;
+    store.connection()?.pragma_update(None, "user_version", 2)?;
+    drop(store);
+
+    let store = SqlCipherStore::open(&path, &key)?;
+    let events = store.recent_audit_events(AuditQueryLimit::new(10)?)?;
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].event().outcome(), &AuditOutcome::Succeeded);
+    store.record(AuditEvent::from_parts(
+        SystemTime::now(),
+        InvocationId::new("request_invalid")?,
+        PrincipalId::new("client_migrated")?,
+        AdapterId::new("rest")?,
+        CapabilityId::new("battery.read")?,
+        AuditOutcome::InvalidInput,
+    ))?;
+    assert_eq!(
+        store.recent_audit_events(AuditQueryLimit::new(1)?)?[0]
+            .event()
+            .outcome(),
+        &AuditOutcome::InvalidInput
+    );
+    Ok(())
+}
+
+#[test]
 fn rejects_unsupported_schema_versions() -> Result<(), Box<dyn std::error::Error>> {
     let directory = TempDir::new()?;
     let path = database_path(&directory);

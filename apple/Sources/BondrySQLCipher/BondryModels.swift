@@ -95,6 +95,7 @@ public enum BondryAuditOutcome: Equatable, Sendable {
   case capabilityNotFound
   case denied(code: String)
   case started
+  case invalidInput
   case succeeded
   case handlerFailed(code: String)
 }
@@ -170,6 +171,8 @@ private func decodeOutcome(_ value: UInt32, detail: String?) throws -> BondryAud
     .denied(code: code)
   case (BONDRY_AUDIT_OUTCOME_STARTED_V1, nil):
     .started
+  case (BONDRY_AUDIT_OUTCOME_INVALID_INPUT_V1, nil):
+    .invalidInput
   case (BONDRY_AUDIT_OUTCOME_SUCCEEDED_V1, nil):
     .succeeded
   case (BONDRY_AUDIT_OUTCOME_HANDLER_FAILED_V1, .some(let code)):

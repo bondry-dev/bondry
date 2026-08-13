@@ -41,9 +41,9 @@ Foreign handler completion can be synchronous or asynchronous and can occur on a
 
 ## Dispatch
 
-`bondry_dispatch_token_v1` validates identifiers and payload bounds, authenticates the bearer token, parses JSON, resolves the capability, checks the exact principal-adapter-capability grant, records required audit events, and invokes the handler. JSON input and handler output are each limited to 1 MiB. Credentials and payloads are not retained or written to audit storage.
+`bondry_dispatch_token_v1` validates identifiers and payload bounds, authenticates the bearer token, parses JSON, resolves the capability, checks the exact principal-adapter-capability grant, validates the input schema, records required audit events, and invokes the handler. JSON input and handler output are each limited to 1 MiB. Credentials and payloads are not retained or written to audit storage.
 
-An `OK` return accepts the dispatch and guarantees exactly one result callback, which may occur before the entry point returns. An immediate validation, authentication, or storage error never calls the result callback and leaves its context caller-owned. Accepted results distinguish success, missing capability, access denial, audit unavailability, and handler failure. Result pointers remain valid only for the callback duration.
+An `OK` return accepts the dispatch and guarantees exactly one result callback, which may occur before the entry point returns. An immediate validation, authentication, or storage error never calls the result callback and leaves its context caller-owned. Accepted results distinguish success, missing capability, access denial, invalid capability input, audit unavailability, and handler failure. Result pointers remain valid only for the callback duration.
 
 ## Errors and Panics
 

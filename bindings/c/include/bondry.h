@@ -54,6 +54,7 @@ typedef int32_t BondryStatus;
 #define BONDRY_AUDIT_OUTCOME_STARTED_V1 ((uint32_t)3)
 #define BONDRY_AUDIT_OUTCOME_SUCCEEDED_V1 ((uint32_t)4)
 #define BONDRY_AUDIT_OUTCOME_HANDLER_FAILED_V1 ((uint32_t)5)
+#define BONDRY_AUDIT_OUTCOME_INVALID_INPUT_V1 ((uint32_t)6)
 
 #define BONDRY_CAPABILITY_EFFECT_READ_ONLY_V1 ((uint32_t)1)
 #define BONDRY_CAPABILITY_EFFECT_MUTATING_V1 ((uint32_t)2)
@@ -66,6 +67,7 @@ typedef int32_t BondryStatus;
 #define BONDRY_DISPATCH_OUTCOME_ACCESS_DENIED_V1 ((uint32_t)3)
 #define BONDRY_DISPATCH_OUTCOME_AUDIT_UNAVAILABLE_V1 ((uint32_t)4)
 #define BONDRY_DISPATCH_OUTCOME_HANDLER_FAILED_V1 ((uint32_t)5)
+#define BONDRY_DISPATCH_OUTCOME_INVALID_INPUT_V1 ((uint32_t)6)
 
 typedef struct BondryStoreHandle BondryStoreHandle;
 

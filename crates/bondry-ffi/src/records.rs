@@ -21,6 +21,7 @@ pub const BONDRY_AUDIT_OUTCOME_DENIED_V1: u32 = 2;
 pub const BONDRY_AUDIT_OUTCOME_STARTED_V1: u32 = 3;
 pub const BONDRY_AUDIT_OUTCOME_SUCCEEDED_V1: u32 = 4;
 pub const BONDRY_AUDIT_OUTCOME_HANDLER_FAILED_V1: u32 = 5;
+pub const BONDRY_AUDIT_OUTCOME_INVALID_INPUT_V1: u32 = 6;
 
 pub const BONDRY_CAPABILITY_EFFECT_READ_ONLY_V1: u32 = 1;
 pub const BONDRY_CAPABILITY_EFFECT_MUTATING_V1: u32 = 2;
@@ -33,6 +34,7 @@ pub const BONDRY_DISPATCH_OUTCOME_CAPABILITY_NOT_FOUND_V1: u32 = 2;
 pub const BONDRY_DISPATCH_OUTCOME_ACCESS_DENIED_V1: u32 = 3;
 pub const BONDRY_DISPATCH_OUTCOME_AUDIT_UNAVAILABLE_V1: u32 = 4;
 pub const BONDRY_DISPATCH_OUTCOME_HANDLER_FAILED_V1: u32 = 5;
+pub const BONDRY_DISPATCH_OUTCOME_INVALID_INPUT_V1: u32 = 6;
 
 /// A fixed-capacity client record written into caller-owned memory.
 #[derive(Clone, Copy)]
@@ -276,6 +278,7 @@ impl BondryAuditEventV1 {
                 (BONDRY_AUDIT_OUTCOME_DENIED_V1, Some("policy_unavailable"))
             }
             AuditOutcome::Started => (BONDRY_AUDIT_OUTCOME_STARTED_V1, None),
+            AuditOutcome::InvalidInput => (BONDRY_AUDIT_OUTCOME_INVALID_INPUT_V1, None),
             AuditOutcome::Succeeded => (BONDRY_AUDIT_OUTCOME_SUCCEEDED_V1, None),
             AuditOutcome::HandlerFailed(code) => {
                 (BONDRY_AUDIT_OUTCOME_HANDLER_FAILED_V1, Some(code.as_str()))

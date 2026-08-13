@@ -66,6 +66,7 @@ public enum BondryAccessDenialReason: Equatable, Sendable {
 public enum BondryDispatchError: Error, Equatable, Sendable {
   case capabilityNotFound
   case accessDenied(BondryAccessDenialReason)
+  case invalidInput
   case auditUnavailable
   case handlerFailed(code: String)
 }

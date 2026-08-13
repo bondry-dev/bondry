@@ -14,7 +14,7 @@ The project is in private, pre-alpha development. Its APIs are not stable yet.
 
 ## Architecture
 
-The workspace currently contains the protocol-neutral dispatch core, client authentication lifecycle, exact authorization grants, an optional encrypted SQLCipher reference store, a versioned asynchronous C embedding ABI, an Apple Keychain provider, and native Swift administration and capability APIs. Network servers, protocol adapters, and Apple App Intents remain separate layers.
+The workspace currently contains the protocol-neutral dispatch core with JSON Schema 2020-12 input validation, client authentication lifecycle, exact authorization grants, an optional encrypted SQLCipher reference store, a versioned asynchronous C embedding ABI, an Apple Keychain provider, and native Swift administration and capability APIs. Network servers, protocol adapters, and Apple App Intents remain separate layers.
 
 See [Architecture](docs/architecture.md), [Authentication](docs/authentication.md), [Authorization](docs/authorization.md), [Storage](docs/storage.md), [C ABI](docs/c-abi.md), [Apple Keychain](docs/apple-keychain.md), [Threat model](docs/threat-model.md), and [Repository safety](docs/repository-safety.md) for the current design constraints.
 

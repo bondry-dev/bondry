@@ -149,6 +149,7 @@ fn encode_outcome(outcome: &AuditOutcome) -> (&'static str, Option<&str>) {
             ("denied", Some("policy_unavailable"))
         }
         AuditOutcome::Started => ("started", None),
+        AuditOutcome::InvalidInput => ("invalid_input", None),
         AuditOutcome::Succeeded => ("succeeded", None),
         AuditOutcome::HandlerFailed(code) => ("handler_failed", Some(code.as_str())),
     }
@@ -208,6 +209,7 @@ fn decode_outcome(
             Ok(AuditOutcome::Denied(DenialReason::PolicyUnavailable))
         }
         ("started", None) => Ok(AuditOutcome::Started),
+        ("invalid_input", None) => Ok(AuditOutcome::InvalidInput),
         ("succeeded", None) => Ok(AuditOutcome::Succeeded),
         ("handler_failed", Some(code)) => Ok(AuditOutcome::HandlerFailed(
             HandlerErrorCode::new(code).map_err(|_| SqlCipherStoreError::InvalidData)?,

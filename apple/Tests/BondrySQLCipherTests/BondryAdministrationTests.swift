@@ -92,8 +92,8 @@ final class BondryAdministrationTests: XCTestCase {
     let store = try makeStore()
     let recent = try store.recentAuditEvents(limit: 20)
 
-    XCTAssertEqual(recent.count, 5)
-    XCTAssertEqual(recent[0].id, 5)
+    XCTAssertEqual(recent.count, 6)
+    XCTAssertEqual(recent[0].id, 6)
     XCTAssertEqual(recent[0].occurredAt, Date(timeIntervalSince1970: 400))
     XCTAssertEqual(recent[0].invocationID, "request_test")
     XCTAssertEqual(recent[0].principalID, "client_test")
@@ -105,6 +105,7 @@ final class BondryAdministrationTests: XCTestCase {
         .capabilityNotFound,
         .denied(code: "not_granted"),
         .started,
+        .invalidInput,
         .succeeded,
         .handlerFailed(code: "busy"),
       ])

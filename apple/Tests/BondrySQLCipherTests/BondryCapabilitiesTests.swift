@@ -105,6 +105,7 @@ final class BondryCapabilitiesTests: XCTestCase {
     let cases: [(UInt32, BondryDispatchError)] = [
       (BONDRY_DISPATCH_OUTCOME_CAPABILITY_NOT_FOUND_V1, .capabilityNotFound),
       (BONDRY_DISPATCH_OUTCOME_ACCESS_DENIED_V1, .accessDenied(.notGranted)),
+      (BONDRY_DISPATCH_OUTCOME_INVALID_INPUT_V1, .invalidInput),
       (BONDRY_DISPATCH_OUTCOME_AUDIT_UNAVAILABLE_V1, .auditUnavailable),
       (BONDRY_DISPATCH_OUTCOME_HANDLER_FAILED_V1, .handlerFailed(code: "busy")),
     ]

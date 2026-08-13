@@ -272,6 +272,8 @@ private func decodeDispatchResult(_ result: BondryDispatchResultV1) throws -> Da
     throw BondryDispatchError.accessDenied(.notGranted)
   case (BONDRY_DISPATCH_OUTCOME_ACCESS_DENIED_V1, "policy_unavailable"):
     throw BondryDispatchError.accessDenied(.policyUnavailable)
+  case (BONDRY_DISPATCH_OUTCOME_INVALID_INPUT_V1, nil):
+    throw BondryDispatchError.invalidInput
   case (BONDRY_DISPATCH_OUTCOME_AUDIT_UNAVAILABLE_V1, nil):
     throw BondryDispatchError.auditUnavailable
   case (BONDRY_DISPATCH_OUTCOME_HANDLER_FAILED_V1, .some(let code)):

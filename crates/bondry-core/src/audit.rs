@@ -16,6 +16,8 @@ pub enum AuditOutcome {
     Denied(DenialReason),
     /// Authorization succeeded and handler execution is about to begin.
     Started,
+    /// The input did not satisfy the capability's declared schema.
+    InvalidInput,
     /// The capability handler completed successfully.
     Succeeded,
     /// The capability handler returned a safe error code.

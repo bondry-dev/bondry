@@ -693,18 +693,19 @@ BondryStatus bondry_audit_recent_v1(
     if (store == NULL || out_count == NULL || limit == 0) {
         return BONDRY_STATUS_INVALID_ARGUMENT;
     }
-    *out_count = 5;
+    *out_count = 6;
     if (output == NULL && capacity == 0) {
         return BONDRY_STATUS_OK;
     }
-    if (output == NULL || capacity < 5) {
+    if (output == NULL || capacity < 6) {
         return BONDRY_STATUS_BUFFER_TOO_SMALL;
     }
-    fill_audit(&output[0], 5, BONDRY_AUDIT_OUTCOME_CAPABILITY_NOT_FOUND_V1, NULL);
-    fill_audit(&output[1], 4, BONDRY_AUDIT_OUTCOME_DENIED_V1, "not_granted");
-    fill_audit(&output[2], 3, BONDRY_AUDIT_OUTCOME_STARTED_V1, NULL);
-    fill_audit(&output[3], 2, BONDRY_AUDIT_OUTCOME_SUCCEEDED_V1, NULL);
-    fill_audit(&output[4], 1, BONDRY_AUDIT_OUTCOME_HANDLER_FAILED_V1, "busy");
+    fill_audit(&output[0], 6, BONDRY_AUDIT_OUTCOME_CAPABILITY_NOT_FOUND_V1, NULL);
+    fill_audit(&output[1], 5, BONDRY_AUDIT_OUTCOME_DENIED_V1, "not_granted");
+    fill_audit(&output[2], 4, BONDRY_AUDIT_OUTCOME_STARTED_V1, NULL);
+    fill_audit(&output[3], 3, BONDRY_AUDIT_OUTCOME_INVALID_INPUT_V1, NULL);
+    fill_audit(&output[4], 2, BONDRY_AUDIT_OUTCOME_SUCCEEDED_V1, NULL);
+    fill_audit(&output[5], 1, BONDRY_AUDIT_OUTCOME_HANDLER_FAILED_V1, "busy");
     return BONDRY_STATUS_OK;
 }
 

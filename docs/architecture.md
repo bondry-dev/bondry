@@ -18,7 +18,7 @@ Registry -> Policy -> Dispatcher -> Capability handler
 
 The portable Rust core owns protocol-neutral concepts:
 
-- Capability metadata and handlers
+- Capability metadata, JSON Schema 2020-12 input contracts, and handlers
 - Authenticated principal identities
 - Authorization policy evaluation
 - Invocation dispatch
@@ -53,10 +53,11 @@ The host application defines capabilities and decides which principals and adapt
 1. An adapter validates the transport and authenticates a client.
 2. The adapter constructs a principal and a protocol-neutral invocation.
 3. The dispatcher resolves the capability and evaluates policy.
-4. An authorized invocation records a pre-execution audit event or fails closed.
-5. The authorized handler executes.
-6. A completion audit outcome is recorded.
-7. The adapter maps the result into its external protocol.
+4. The dispatcher validates authorized input against the capability schema.
+5. An authorized, valid invocation records a pre-execution audit event or fails closed.
+6. The authorized handler executes.
+7. A completion audit outcome is recorded.
+8. The adapter maps the result into its external protocol.
 
 ## Portability
 

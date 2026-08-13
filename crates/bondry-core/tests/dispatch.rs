@@ -10,10 +10,11 @@ use std::{
 
 use bondry_core::{
     AdapterId, AuditError, AuditEvent, AuditOutcome, AuditSink, CapabilityDescriptor,
-    CapabilityEffect, CapabilityGrant, CapabilityId, CapabilityRegistry, DenialReason,
-    DenyAllPolicy, DispatchError, Dispatcher, GrantPolicy, GrantStore, GrantStoreError,
-    HandlerError, HandlerErrorCode, Invocation, InvocationContext, InvocationId, Principal,
-    PrincipalId, PrincipalKind, RegistrationError, StoredGrantPolicy,
+    CapabilityEffect, CapabilityGrant, CapabilityId, CapabilityRegistry, CapabilitySchemaError,
+    DenialReason, DenyAllPolicy, DispatchError, Dispatcher, GrantPolicy, GrantStore,
+    GrantStoreError, HandlerError, HandlerErrorCode, Invocation, InvocationContext, InvocationId,
+    MAX_CAPABILITY_SCHEMA_LENGTH, Principal, PrincipalId, PrincipalKind, RegistrationError,
+    StoredGrantPolicy,
 };
 use futures::executor::block_on;
 use serde_json::{Value, json};
@@ -127,6 +128,81 @@ fn capability_summaries_reject_empty_oversized_and_control_text()
     Ok(())
 }
 
+#[test]
+fn capability_input_schemas_are_validated() -> Result<(), Box<dyn std::error::Error>> {
+    let described = descriptor()?.with_input_schema(json!({
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+            "includeHealth": { "type": "boolean" },
+        },
+        "additionalProperties": false,
+    }))?;
+    assert_eq!(
+        described.input_schema()["properties"]["includeHealth"]["type"],
+        "boolean"
+    );
+    assert_eq!(
+        descriptor()?.with_input_schema(json!(true)),
+        Err(CapabilitySchemaError::NotObject)
+    );
+    assert_eq!(
+        descriptor()?.with_input_schema(json!({ "type": "not-a-json-schema-type" })),
+        Err(CapabilitySchemaError::Invalid)
+    );
+    assert_eq!(
+        descriptor()?.with_input_schema(json!({ "$ref": "https://example.com/schema" })),
+        Err(CapabilitySchemaError::Invalid)
+    );
+    assert_eq!(
+        descriptor()?.with_input_schema(json!({
+            "description": "x".repeat(MAX_CAPABILITY_SCHEMA_LENGTH),
+        })),
+        Err(CapabilitySchemaError::TooLarge)
+    );
+    Ok(())
+}
+
+#[test]
+fn default_capability_input_schema_is_permissive() -> Result<(), Box<dyn std::error::Error>> {
+    assert_eq!(descriptor()?.input_schema(), &json!({}));
+    Ok(())
+}
+
+#[test]
+fn rejects_input_that_does_not_match_the_declared_schema() -> Result<(), Box<dyn std::error::Error>>
+{
+    let executions = Arc::new(AtomicUsize::new(0));
+    let handler_executions = Arc::clone(&executions);
+    let mut registry = CapabilityRegistry::new();
+    registry.register(
+        descriptor()?.with_input_schema(json!({
+            "type": "object",
+            "properties": { "detail": { "type": "boolean" } },
+            "required": ["detail"],
+            "additionalProperties": false,
+        }))?,
+        move |_, _| {
+            let executions = Arc::clone(&handler_executions);
+            async move {
+                executions.fetch_add(1, Ordering::Relaxed);
+                Ok(Value::Null)
+            }
+        },
+    )?;
+    let policy = GrantPolicy::new();
+    assert!(policy.grant(principal_id()?, adapter_id()?, capability_id()?)?);
+    let audit = Arc::new(CollectingAuditSink::default());
+    let dispatcher = Dispatcher::from_shared(registry, Arc::new(policy), audit.clone());
+
+    let result = block_on(dispatcher.dispatch(invocation(json!({ "detail": "yes" }))?));
+
+    assert_eq!(result, Err(DispatchError::InvalidInput));
+    assert_eq!(executions.load(Ordering::Relaxed), 0);
+    assert_eq!(audit.events()[0].outcome(), &AuditOutcome::InvalidInput);
+    Ok(())
+}
+
 fn adapter_id() -> Result<AdapterId, Box<dyn std::error::Error>> {
     Ok(AdapterId::new("mcp")?)
 }
@@ -223,6 +299,36 @@ fn executes_only_an_exact_grant() -> Result<(), Box<dyn std::error::Error>> {
             .map(AuditEvent::outcome)
             .collect::<Vec<_>>(),
         vec![&AuditOutcome::Started, &AuditOutcome::Succeeded]
+    );
+    Ok(())
+}
+
+#[test]
+fn capability_discovery_returns_only_exact_authorized_capabilities()
+-> Result<(), Box<dyn std::error::Error>> {
+    let mut registry = CapabilityRegistry::new();
+    registry.register(descriptor()?, |_, _| async { Ok(Value::Null) })?;
+    registry.register(
+        CapabilityDescriptor::new(
+            CapabilityId::new("battery.health")?,
+            "Read battery health",
+            CapabilityEffect::ReadOnly,
+        )?,
+        |_, _| async { Ok(Value::Null) },
+    )?;
+    let policy = GrantPolicy::new();
+    assert!(policy.grant(principal_id()?, adapter_id()?, capability_id()?)?);
+    let dispatcher = Dispatcher::new(registry, policy, CollectingAuditSink::default());
+    let principal = Principal::new(principal_id()?, PrincipalKind::Application);
+
+    let capabilities = dispatcher.capabilities(&principal, &adapter_id()?)?;
+
+    assert_eq!(capabilities.len(), 1);
+    assert_eq!(capabilities[0].id(), &capability_id()?);
+    assert!(
+        dispatcher
+            .capabilities(&principal, &AdapterId::new("rest")?)?
+            .is_empty()
     );
     Ok(())
 }

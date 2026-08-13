@@ -11,10 +11,13 @@ mod registry;
 
 pub use audit::{AuditError, AuditEvent, AuditOutcome, AuditSink, NoopAuditSink};
 pub use capability::{
-    CapabilityDescriptor, CapabilityEffect, CapabilityHandler, CapabilitySummaryError,
-    HandlerError, HandlerFuture, MAX_CAPABILITY_SUMMARY_LENGTH,
+    CapabilityDescriptor, CapabilityEffect, CapabilityHandler, CapabilitySchemaError,
+    CapabilitySummaryError, HandlerError, HandlerFuture, MAX_CAPABILITY_SCHEMA_LENGTH,
+    MAX_CAPABILITY_SUMMARY_LENGTH,
 };
-pub use dispatch::{DispatchError, Dispatcher};
+pub use dispatch::{
+    AutomationService, CapabilityDiscoveryError, DispatchError, DispatchFuture, Dispatcher,
+};
 pub use identifier::{
     AdapterId, CapabilityId, HandlerErrorCode, IdentifierError, InvocationId, PrincipalId,
 };

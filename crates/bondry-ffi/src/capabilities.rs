@@ -31,8 +31,8 @@ use crate::{
         BONDRY_CAPABILITY_EFFECT_MUTATING_V1, BONDRY_CAPABILITY_EFFECT_READ_ONLY_V1,
         BONDRY_DISPATCH_OUTCOME_ACCESS_DENIED_V1, BONDRY_DISPATCH_OUTCOME_AUDIT_UNAVAILABLE_V1,
         BONDRY_DISPATCH_OUTCOME_CAPABILITY_NOT_FOUND_V1, BONDRY_DISPATCH_OUTCOME_HANDLER_FAILED_V1,
-        BONDRY_DISPATCH_OUTCOME_SUCCEEDED_V1, BONDRY_HANDLER_RESULT_FAILED_V1,
-        BONDRY_HANDLER_RESULT_SUCCEEDED_V1, optional_terminated,
+        BONDRY_DISPATCH_OUTCOME_INVALID_INPUT_V1, BONDRY_DISPATCH_OUTCOME_SUCCEEDED_V1,
+        BONDRY_HANDLER_RESULT_FAILED_V1, BONDRY_HANDLER_RESULT_SUCCEEDED_V1, optional_terminated,
     },
     required_utf8, write_records,
 };
@@ -285,6 +285,9 @@ impl DispatchCallback {
                 None,
                 Some("policy_unavailable".to_owned()),
             ),
+            Err(DispatchError::InvalidInput) => {
+                (BONDRY_DISPATCH_OUTCOME_INVALID_INPUT_V1, None, None)
+            }
             Err(DispatchError::Audit(_)) => {
                 (BONDRY_DISPATCH_OUTCOME_AUDIT_UNAVAILABLE_V1, None, None)
             }
