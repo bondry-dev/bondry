@@ -1,6 +1,5 @@
 use std::{net::SocketAddr, sync::Arc};
 
-use bondry_auth::{AuthManager, AuthenticationError as TokenAuthenticationError};
 use bondry_core::Principal;
 use http::{HeaderMap, Method, Uri, header};
 use thiserror::Error;
@@ -79,18 +78,6 @@ pub trait BearerTokenVerifier: Send + Sync {
     fn verify(&self, token: &str) -> Result<Principal, AuthenticationError>;
 }
 
-impl BearerTokenVerifier for AuthManager {
-    fn verify(&self, token: &str) -> Result<Principal, AuthenticationError> {
-        match self.authenticate(token) {
-            Ok(principal) => Ok(principal),
-            Err(TokenAuthenticationError::Rejected) => Err(AuthenticationError::Rejected),
-            Err(TokenAuthenticationError::StorageUnavailable) => {
-                Err(AuthenticationError::Unavailable)
-            }
-        }
-    }
-}
-
 /// Bearer authentication backed by a pluggable token verifier.
 pub struct BearerAuthenticator {
     verifier: Arc<dyn BearerTokenVerifier>,
@@ -144,12 +131,6 @@ impl Authentication {
     #[must_use]
     pub const fn required(authenticator: Arc<dyn HttpAuthenticator>) -> Self {
         Self::Required(authenticator)
-    }
-
-    /// Requires Bondry bearer tokens.
-    #[must_use]
-    pub fn bearer(manager: Arc<AuthManager>) -> Self {
-        Self::Required(Arc::new(BearerAuthenticator::new(manager)))
     }
 
     /// Disables credentials and assigns every request the supplied principal.

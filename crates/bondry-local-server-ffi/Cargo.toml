@@ -1,0 +1,35 @@
+[package]
+name = "bondry-local-server-ffi"
+description = "Versioned C ABI for Bondry local REST and MCP servers"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["rlib", "staticlib"]
+
+[dependencies]
+bondry-core = { path = "../bondry-core" }
+bondry-http = { path = "../bondry-http" }
+bondry-mcp = { path = "../bondry-mcp" }
+bondry-rest = { path = "../bondry-rest" }
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+bondry-runtime-ffi = { path = "../bondry-runtime-ffi" }
+tempfile.workspace = true
+
+[lints.rust]
+missing_docs = "warn"
+unsafe_code = "allow"
+unsafe_op_in_unsafe_fn = "deny"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+expect_used = "deny"
+panic = "deny"
+unwrap_used = "deny"

@@ -1,8 +1,10 @@
-import CBondry
+import Bondry
+import CBondryLocalServer
 import Foundation
 
-public final class BondryServer: @unchecked Sendable {
-  public let endpoint: BondryServerEndpoint
+// The lock serializes native handle ownership; the endpoint is immutable.
+public final class BondryLocalServer: @unchecked Sendable {
+  public let endpoint: BondryLocalServerEndpoint
 
   private let lock = NSLock()
   private var handle: OpaquePointer?
@@ -22,7 +24,7 @@ public final class BondryServer: @unchecked Sendable {
     }
     let status = bondry_server_stop_v1(handle)
     guard status == BONDRY_STATUS_OK else {
-      throw BondryEncryptedStoreError(status: status)
+      throw BondryLocalServerError(status: status)
     }
   }
 
@@ -30,15 +32,17 @@ public final class BondryServer: @unchecked Sendable {
     try? stop()
   }
 
-  init(handle: OpaquePointer, endpoint: BondryServerEndpoint) {
+  init(handle: OpaquePointer, endpoint: BondryLocalServerEndpoint) {
     self.handle = handle
     self.endpoint = endpoint
   }
 }
 
-extension BondryEncryptedStore {
-  public func startServer(configuration: BondryServerConfiguration) throws -> BondryServer {
-    let input = try JSONEncoder().encode(BondryServerInput(configuration))
+extension BondryRuntime {
+  public func startLocalServer(
+    configuration: BondryLocalServerConfiguration
+  ) throws -> BondryLocalServer {
+    let input = try JSONEncoder().encode(LocalServerInput(configuration))
     var serverHandle: OpaquePointer?
     var address = BondryServerAddressV1()
     let status = input.withUnsafeBytes { buffer in
@@ -55,16 +59,16 @@ extension BondryEncryptedStore {
       if let serverHandle {
         _ = bondry_server_stop_v1(serverHandle)
       }
-      throw BondryEncryptedStoreError(status: status)
+      throw BondryLocalServerError(status: status)
     }
     guard let serverHandle else {
-      throw BondryEncryptedStoreError.invalidHandle
+      throw BondryLocalServerError.invalidHandle
     }
     do {
-      return BondryServer(
+      return BondryLocalServer(
         handle: serverHandle,
-        endpoint: BondryServerEndpoint(
-          address: try decodeCString(address.address),
+        endpoint: BondryLocalServerEndpoint(
+          address: try decodeLocalServerAddress(address.address),
           port: address.port
         )
       )
@@ -72,5 +76,16 @@ extension BondryEncryptedStore {
       _ = bondry_server_stop_v1(serverHandle)
       throw error
     }
+  }
+}
+
+private func decodeLocalServerAddress<Value>(_ value: Value) throws -> String {
+  try withUnsafeBytes(of: value) { bytes in
+    guard let end = bytes.firstIndex(of: 0), end > 0,
+      let string = String(bytes: bytes[..<end], encoding: .utf8)
+    else {
+      throw BondryLocalServerError.invalidAddress
+    }
+    return string
   }
 }

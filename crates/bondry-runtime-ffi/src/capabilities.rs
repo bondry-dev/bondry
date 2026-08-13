@@ -38,7 +38,7 @@ use crate::{
         BONDRY_PRINCIPAL_KIND_APPLICATION_V1, BONDRY_PRINCIPAL_KIND_SYSTEM_V1,
         BONDRY_PRINCIPAL_KIND_USER_V1, optional_terminated,
     },
-    required_utf8, write_records,
+    required_utf8, write_bytes, write_records,
 };
 
 const MAX_JSON_PAYLOAD_LENGTH: usize = 1_048_576;
@@ -488,6 +488,73 @@ pub unsafe extern "C" fn bondry_capability_register_v1(
     invoke: Option<BondryCapabilityInvokeV1>,
     release: Option<BondryCapabilityReleaseV1>,
 ) -> i32 {
+    unsafe {
+        register_capability(
+            store,
+            capability_id,
+            capability_id_length,
+            summary,
+            summary_length,
+            effect,
+            None,
+            handler_context,
+            invoke,
+            release,
+        )
+    }
+}
+
+/// Registers a protocol-neutral capability with a JSON Schema 2020-12 input contract.
+///
+/// # Safety
+///
+/// Input buffers must be readable for their declared lengths. Ownership and callback requirements
+/// match `bondry_capability_register_v1`.
+#[must_use]
+#[unsafe(no_mangle)]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn bondry_capability_register_with_schema_v1(
+    store: *const BondryStoreHandle,
+    capability_id: *const u8,
+    capability_id_length: usize,
+    summary: *const u8,
+    summary_length: usize,
+    effect: u32,
+    input_schema_json: *const u8,
+    input_schema_json_length: usize,
+    handler_context: *mut c_void,
+    invoke: Option<BondryCapabilityInvokeV1>,
+    release: Option<BondryCapabilityReleaseV1>,
+) -> i32 {
+    unsafe {
+        register_capability(
+            store,
+            capability_id,
+            capability_id_length,
+            summary,
+            summary_length,
+            effect,
+            Some(RawBuffer::new(input_schema_json, input_schema_json_length)),
+            handler_context,
+            invoke,
+            release,
+        )
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+unsafe fn register_capability(
+    store: *const BondryStoreHandle,
+    capability_id: *const u8,
+    capability_id_length: usize,
+    summary: *const u8,
+    summary_length: usize,
+    effect: u32,
+    input_schema_json: Option<RawBuffer>,
+    handler_context: *mut c_void,
+    invoke: Option<BondryCapabilityInvokeV1>,
+    release: Option<BondryCapabilityReleaseV1>,
+) -> i32 {
     catch_status(|| {
         let Ok(handle) = crate::auth::store_handle(store) else {
             return BONDRY_STATUS_NULL_POINTER;
@@ -502,6 +569,7 @@ pub unsafe extern "C" fn bondry_capability_register_v1(
                 summary,
                 summary_length,
                 effect,
+                input_schema_json,
             )
         } {
             Ok(descriptor) => descriptor,
@@ -593,19 +661,105 @@ pub unsafe extern "C" fn bondry_capabilities_list_v1(
         let Ok(handle) = crate::auth::store_handle(store) else {
             return BONDRY_STATUS_NULL_POINTER;
         };
-        let Ok(capabilities) = handle.capabilities.read() else {
-            return BONDRY_STATUS_UNAVAILABLE;
+        let descriptors = match registered_descriptors(handle) {
+            Ok(descriptors) => descriptors,
+            Err(status) => return status,
         };
-        let mut descriptors = capabilities
-            .values()
-            .map(|capability| capability.descriptor.clone())
-            .collect::<Vec<_>>();
-        descriptors.sort_unstable_by(|left, right| left.id().cmp(right.id()));
         let records = descriptors
             .iter()
             .map(BondryCapabilityV1::from_descriptor)
             .collect::<Vec<_>>();
         write_records(&records, output, capacity, out_count)
+    })
+}
+
+/// Serializes every registered capability descriptor in stable identifier order.
+///
+/// # Safety
+///
+/// A non-null output must be writable for `capacity` bytes. `out_length` must be writable.
+#[must_use]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn bondry_capabilities_json_v1(
+    store: *const BondryStoreHandle,
+    output_json: *mut u8,
+    capacity: usize,
+    out_length: *mut usize,
+) -> i32 {
+    if out_length.is_null() {
+        return BONDRY_STATUS_NULL_POINTER;
+    }
+    // SAFETY: out_length was validated as writable by contract.
+    unsafe { out_length.write(0) };
+    catch_status(|| {
+        let Ok(handle) = crate::auth::store_handle(store) else {
+            return BONDRY_STATUS_NULL_POINTER;
+        };
+        let descriptors = match registered_descriptors(handle) {
+            Ok(descriptors) => descriptors,
+            Err(status) => return status,
+        };
+        let encoded = match serde_json::to_vec(&descriptors) {
+            Ok(encoded) => encoded,
+            Err(_) => return BONDRY_STATUS_INTERNAL_FAILURE,
+        };
+        write_bytes(&encoded, output_json, capacity, out_length)
+    })
+}
+
+/// Serializes capability descriptors authorized for one principal and adapter.
+///
+/// # Safety
+///
+/// Input buffers must be readable for their declared lengths. A non-null output must be writable
+/// for `capacity` bytes. `out_length` must be writable.
+#[must_use]
+#[unsafe(no_mangle)]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn bondry_capabilities_discover_json_v1(
+    store: *const BondryStoreHandle,
+    principal_id: *const u8,
+    principal_id_length: usize,
+    principal_kind: u32,
+    adapter_id: *const u8,
+    adapter_id_length: usize,
+    output_json: *mut u8,
+    capacity: usize,
+    out_length: *mut usize,
+) -> i32 {
+    if out_length.is_null() {
+        return BONDRY_STATUS_NULL_POINTER;
+    }
+    // SAFETY: out_length was validated as writable by contract.
+    unsafe { out_length.write(0) };
+    catch_status(|| {
+        let Ok(handle) = crate::auth::store_handle(store) else {
+            return BONDRY_STATUS_NULL_POINTER;
+        };
+        let principal =
+            match unsafe { parse_principal(principal_id, principal_id_length, principal_kind) } {
+                Ok(principal) => principal,
+                Err(status) => return status,
+            };
+        let adapter = match unsafe { required_utf8(adapter_id, adapter_id_length) }
+            .and_then(|value| AdapterId::new(value).map_err(|_| BONDRY_STATUS_INVALID_ARGUMENT))
+        {
+            Ok(adapter) => adapter,
+            Err(status) => return status,
+        };
+        let service =
+            ForeignAutomationService::new(handle.store.clone(), handle.capabilities.clone());
+        let descriptors = match service.capabilities(&principal, &adapter) {
+            Ok(descriptors) => descriptors,
+            Err(CapabilityDiscoveryError::PolicyUnavailable) => {
+                return BONDRY_STATUS_UNAVAILABLE;
+            }
+        };
+        let encoded = match serde_json::to_vec(&descriptors) {
+            Ok(encoded) => encoded,
+            Err(_) => return BONDRY_STATUS_INTERNAL_FAILURE,
+        };
+        write_bytes(&encoded, output_json, capacity, out_length)
     })
 }
 
@@ -714,29 +868,16 @@ pub unsafe extern "C" fn bondry_dispatch_principal_v1(
             Ok(dispatch) => dispatch,
             Err(status) => return status,
         };
-        let principal_id = match unsafe { required_utf8(principal_id, principal_id_length) }
-            .and_then(|value| PrincipalId::new(value).map_err(|_| BONDRY_STATUS_INVALID_ARGUMENT))
-        {
-            Ok(principal_id) => principal_id,
-            Err(status) => return status,
-        };
-        let kind = match principal_kind {
-            BONDRY_PRINCIPAL_KIND_USER_V1 => PrincipalKind::User,
-            BONDRY_PRINCIPAL_KIND_APPLICATION_V1 => PrincipalKind::Application,
-            BONDRY_PRINCIPAL_KIND_SYSTEM_V1 => PrincipalKind::System,
-            _ => return BONDRY_STATUS_INVALID_ARGUMENT,
-        };
+        let principal =
+            match unsafe { parse_principal(principal_id, principal_id_length, principal_kind) } {
+                Ok(principal) => principal,
+                Err(status) => return status,
+            };
         let dispatch = match unsafe { dispatch.parse_input() } {
             Ok(dispatch) => dispatch,
             Err(status) => return status,
         };
-        start_dispatch(
-            handle,
-            Principal::new(principal_id, kind),
-            dispatch,
-            completion,
-            completion_context,
-        )
+        start_dispatch(handle, principal, dispatch, completion, completion_context)
     })
 }
 
@@ -865,6 +1006,7 @@ unsafe fn parse_descriptor(
     summary: *const u8,
     summary_length: usize,
     effect: u32,
+    input_schema_json: Option<RawBuffer>,
 ) -> Result<CapabilityDescriptor, i32> {
     // SAFETY: The public entry point requires readable identifier input.
     let capability = unsafe { parse_capability_id(capability_id, capability_id_length) }?;
@@ -875,8 +1017,57 @@ unsafe fn parse_descriptor(
         BONDRY_CAPABILITY_EFFECT_MUTATING_V1 => CapabilityEffect::Mutating,
         _ => return Err(BONDRY_STATUS_INVALID_ARGUMENT),
     };
-    CapabilityDescriptor::new(capability, summary, effect)
+    let descriptor = CapabilityDescriptor::new(capability, summary, effect)
+        .map_err(|_| BONDRY_STATUS_INVALID_ARGUMENT)?;
+    let Some(input_schema_json) = input_schema_json else {
+        return Ok(descriptor);
+    };
+    if input_schema_json.bytes.is_null() {
+        return Err(BONDRY_STATUS_NULL_POINTER);
+    }
+    if input_schema_json.length > isize::MAX as usize {
+        return Err(BONDRY_STATUS_INVALID_LENGTH);
+    }
+    if input_schema_json.length > MAX_JSON_PAYLOAD_LENGTH {
+        return Err(BONDRY_STATUS_PAYLOAD_TOO_LARGE);
+    }
+    // SAFETY: The caller guarantees the schema buffer is readable for its declared length.
+    let input_schema =
+        unsafe { slice::from_raw_parts(input_schema_json.bytes, input_schema_json.length) };
+    let input_schema =
+        serde_json::from_slice(input_schema).map_err(|_| BONDRY_STATUS_INVALID_JSON)?;
+    descriptor
+        .with_input_schema(input_schema)
         .map_err(|_| BONDRY_STATUS_INVALID_ARGUMENT)
+}
+
+fn registered_descriptors(handle: &crate::StoreHandle) -> Result<Vec<CapabilityDescriptor>, i32> {
+    let capabilities = handle
+        .capabilities
+        .read()
+        .map_err(|_| BONDRY_STATUS_UNAVAILABLE)?;
+    let mut descriptors = capabilities
+        .values()
+        .map(|capability| capability.descriptor.clone())
+        .collect::<Vec<_>>();
+    descriptors.sort_unstable_by(|left, right| left.id().cmp(right.id()));
+    Ok(descriptors)
+}
+
+unsafe fn parse_principal(
+    principal_id: *const u8,
+    principal_id_length: usize,
+    principal_kind: u32,
+) -> Result<Principal, i32> {
+    let principal_id = unsafe { required_utf8(principal_id, principal_id_length) }
+        .and_then(|value| PrincipalId::new(value).map_err(|_| BONDRY_STATUS_INVALID_ARGUMENT))?;
+    let kind = match principal_kind {
+        BONDRY_PRINCIPAL_KIND_USER_V1 => PrincipalKind::User,
+        BONDRY_PRINCIPAL_KIND_APPLICATION_V1 => PrincipalKind::Application,
+        BONDRY_PRINCIPAL_KIND_SYSTEM_V1 => PrincipalKind::System,
+        _ => return Err(BONDRY_STATUS_INVALID_ARGUMENT),
+    };
+    Ok(Principal::new(principal_id, kind))
 }
 
 unsafe fn parse_capability_id(bytes: *const u8, length: usize) -> Result<CapabilityId, i32> {

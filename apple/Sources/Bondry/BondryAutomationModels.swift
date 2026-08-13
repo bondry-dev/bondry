@@ -1,4 +1,4 @@
-import CBondry
+import CBondryRuntime
 import Foundation
 
 public enum BondryCapabilityEffect: Equatable, Sendable {
@@ -6,29 +6,61 @@ public enum BondryCapabilityEffect: Equatable, Sendable {
   case mutating
 }
 
+public struct BondryCapabilityInputSchema: Equatable, Sendable {
+  public static let permissive = BondryCapabilityInputSchema(validatedJSON: Data([0x7B, 0x7D]))
+
+  public let jsonRepresentation: Data
+
+  public init(jsonRepresentation: Data) throws {
+    guard jsonRepresentation.count <= 65_536 else {
+      throw BondryCapabilityInputSchemaError.tooLarge
+    }
+    let value: Any
+    do {
+      value = try JSONSerialization.jsonObject(with: jsonRepresentation)
+    } catch {
+      throw BondryCapabilityInputSchemaError.invalidJSON
+    }
+    guard value is [String: Any] else {
+      throw BondryCapabilityInputSchemaError.notObject
+    }
+    do {
+      self.jsonRepresentation = try JSONSerialization.data(
+        withJSONObject: value,
+        options: [.sortedKeys, .withoutEscapingSlashes]
+      )
+    } catch {
+      throw BondryCapabilityInputSchemaError.invalidJSON
+    }
+  }
+
+  private init(validatedJSON: Data) {
+    jsonRepresentation = validatedJSON
+  }
+}
+
+public enum BondryCapabilityInputSchemaError: Error, Equatable, Sendable {
+  case invalidJSON
+  case notObject
+  case tooLarge
+}
+
 public struct BondryCapability: Equatable, Identifiable, Sendable {
   public let id: String
   public let summary: String
   public let effect: BondryCapabilityEffect
+  public let inputSchema: BondryCapabilityInputSchema
 
-  public init(id: String, summary: String, effect: BondryCapabilityEffect) {
+  public init(
+    id: String,
+    summary: String,
+    effect: BondryCapabilityEffect,
+    inputSchema: BondryCapabilityInputSchema = .permissive
+  ) {
     self.id = id
     self.summary = summary
     self.effect = effect
-  }
-
-  init(record: BondryCapabilityV1) throws {
-    id = try decodeCString(record.id)
-    summary = try decodeCString(record.summary)
-    effect =
-      switch record.effect {
-      case BONDRY_CAPABILITY_EFFECT_READ_ONLY_V1:
-        .readOnly
-      case BONDRY_CAPABILITY_EFFECT_MUTATING_V1:
-        .mutating
-      default:
-        throw BondryEncryptedStoreError.invalidData
-      }
+    self.inputSchema = inputSchema
   }
 }
 
@@ -48,7 +80,7 @@ public struct BondryCapabilityInvocation: Sendable {
     adapterID = try decodeCString(record.adapter_id)
     capabilityID = try decodeCString(record.capability_id)
     guard let input = record.input_json, record.input_json_length > 0 else {
-      throw BondryEncryptedStoreError.invalidData
+      throw BondryRuntimeError.invalidData
     }
     inputJSON = Data(bytes: input, count: record.input_json_length)
   }

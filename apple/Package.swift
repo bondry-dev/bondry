@@ -9,13 +9,18 @@ let package = Package(
     .iOS(.v16),
   ],
   products: [
+    .library(name: "Bondry", targets: ["Bondry"]),
     .library(name: "BondryApple", targets: ["BondryApple"]),
     .library(name: "BondryAppIntents", targets: ["BondryAppIntents"]),
-    .library(name: "BondrySQLCipher", targets: ["BondrySQLCipher"]),
+    .library(name: "BondryLocalServer", targets: ["BondryLocalServer"]),
   ],
   targets: [
     .target(
-      name: "CBondry",
+      name: "CBondryRuntime",
+      publicHeadersPath: "include"
+    ),
+    .target(
+      name: "CBondryLocalServer",
       publicHeadersPath: "include"
     ),
     .target(
@@ -23,8 +28,8 @@ let package = Package(
       linkerSettings: [.linkedFramework("Security")]
     ),
     .target(
-      name: "BondrySQLCipher",
-      dependencies: ["BondryApple", "CBondry"],
+      name: "Bondry",
+      dependencies: ["BondryApple", "CBondryRuntime"],
       linkerSettings: [
         .linkedFramework("CoreFoundation"),
         .linkedFramework("Security"),
@@ -32,13 +37,17 @@ let package = Package(
       ]
     ),
     .target(
+      name: "BondryLocalServer",
+      dependencies: ["Bondry", "CBondryLocalServer"]
+    ),
+    .target(
       name: "BondryAppIntents",
-      dependencies: ["BondrySQLCipher"],
+      dependencies: ["Bondry"],
       linkerSettings: [.linkedFramework("AppIntents")]
     ),
     .target(
       name: "CBondryTestSupport",
-      dependencies: ["CBondry"],
+      dependencies: ["CBondryRuntime", "CBondryLocalServer"],
       path: "Tests/CBondryTestSupport",
       publicHeadersPath: "include"
     ),
@@ -47,12 +56,22 @@ let package = Package(
       dependencies: ["BondryApple"]
     ),
     .testTarget(
-      name: "BondrySQLCipherTests",
-      dependencies: ["BondrySQLCipher", "CBondryTestSupport"]
+      name: "BondryTests",
+      dependencies: ["Bondry", "CBondryTestSupport"]
+    ),
+    .testTarget(
+      name: "BondryLocalServerTests",
+      dependencies: [
+        "Bondry",
+        "BondryApple",
+        "BondryLocalServer",
+        "CBondryLocalServer",
+        "CBondryTestSupport",
+      ]
     ),
     .testTarget(
       name: "BondryAppIntentsTests",
-      dependencies: ["BondryAppIntents", "BondrySQLCipher", "CBondryTestSupport"]
+      dependencies: ["BondryAppIntents", "Bondry", "CBondryTestSupport"]
     ),
   ]
 )

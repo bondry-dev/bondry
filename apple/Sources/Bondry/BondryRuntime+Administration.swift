@@ -1,7 +1,7 @@
-import CBondry
+import CBondryRuntime
 import Foundation
 
-extension BondryEncryptedStore {
+extension BondryRuntime {
   public func createClient(named name: String) throws -> BondryClient {
     var record = BondryClientV1()
     let status = withUTF8Bytes(name) { nameBytes, nameLength in
@@ -57,7 +57,7 @@ extension BondryEncryptedStore {
     }
     try requireSuccess(status)
     guard changed <= 1 else {
-      throw BondryEncryptedStoreError.invalidData
+      throw BondryRuntimeError.invalidData
     }
     return changed == 1
   }
@@ -176,7 +176,7 @@ extension BondryEncryptedStore {
   ) throws -> BondryIssuedToken {
     if let expiresInSeconds {
       guard expiresInSeconds > 0 else {
-        throw BondryEncryptedStoreError.invalidTokenLifetime
+        throw BondryRuntimeError.invalidTokenLifetime
       }
     }
     let storage = try BondryIssuedTokenStorage()
@@ -251,7 +251,7 @@ extension BondryEncryptedStore {
     }
     try requireSuccess(status)
     guard changed <= 1 else {
-      throw BondryEncryptedStoreError.invalidData
+      throw BondryRuntimeError.invalidData
     }
     return changed == 1
   }
@@ -259,7 +259,7 @@ extension BondryEncryptedStore {
 
 func requireSuccess(_ status: BondryStatus) throws {
   guard status == BONDRY_STATUS_OK else {
-    throw BondryEncryptedStoreError(status: status)
+    throw BondryRuntimeError(status: status)
   }
 }
 
@@ -280,16 +280,46 @@ func queryRecords<Record>(
     let status = query(records, capacity, &returnedCount)
     if status == BONDRY_STATUS_OK {
       guard returnedCount >= 0, returnedCount <= capacity else {
-        throw BondryEncryptedStoreError.invalidData
+        throw BondryRuntimeError.invalidData
       }
       return Array(UnsafeBufferPointer(start: records, count: returnedCount))
     }
     guard status == BONDRY_STATUS_BUFFER_TOO_SMALL, returnedCount > capacity else {
-      throw BondryEncryptedStoreError(status: status)
+      throw BondryRuntimeError(status: status)
     }
     capacity = returnedCount
   }
-  throw BondryEncryptedStoreError.bufferTooSmall
+  throw BondryRuntimeError.bufferTooSmall
+}
+
+func queryBytes(
+  _ query: (UnsafeMutablePointer<UInt8>?, Int, UnsafeMutablePointer<Int>) -> BondryStatus
+) throws -> Data {
+  var requiredLength = 0
+  try requireSuccess(query(nil, 0, &requiredLength))
+  guard requiredLength > 0 else {
+    return Data()
+  }
+
+  var capacity = requiredLength
+  for _ in 0..<4 {
+    var bytes = Data(count: capacity)
+    var returnedLength = capacity
+    let status = bytes.withUnsafeMutableBytes { buffer in
+      query(buffer.bindMemory(to: UInt8.self).baseAddress, capacity, &returnedLength)
+    }
+    if status == BONDRY_STATUS_OK {
+      guard returnedLength >= 0, returnedLength <= capacity else {
+        throw BondryRuntimeError.invalidData
+      }
+      return bytes.prefix(returnedLength)
+    }
+    guard status == BONDRY_STATUS_BUFFER_TOO_SMALL, returnedLength > capacity else {
+      throw BondryRuntimeError(status: status)
+    }
+    capacity = returnedLength
+  }
+  throw BondryRuntimeError.bufferTooSmall
 }
 
 func withUTF8Bytes<Result>(

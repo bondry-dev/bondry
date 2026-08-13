@@ -1,5 +1,5 @@
+import Bondry
 import BondryApple
-import BondrySQLCipher
 import Darwin
 import Foundation
 import Security
@@ -56,19 +56,19 @@ do {
 
   let databaseURL = directory.appendingPathComponent("bondry.db")
   do {
-    let store = try BondryEncryptedStore.open(at: databaseURL, key: created)
-    try store.checkHealth()
-    let client = try store.createClient(named: "Keychain Probe")
-    guard try store.clients() == [client] else {
+    let runtime = try BondryRuntime.open(at: databaseURL, key: created)
+    try runtime.checkHealth()
+    let client = try runtime.createClient(named: "Keychain Probe")
+    guard try runtime.clients() == [client] else {
       throw ProbeError.administrationMismatch
     }
     guard
-      try store.addGrant(
+      try runtime.addGrant(
         principalID: client.id,
         adapterID: "rest",
         capabilityID: "probe.read"
       ),
-      try store.grants(for: client.id)
+      try runtime.grants(for: client.id)
         == [
           BondryCapabilityGrant(
             principalID: client.id,
@@ -79,24 +79,24 @@ do {
     else {
       throw ProbeError.administrationMismatch
     }
-    let issued = try store.issueToken(for: client.id, label: "Initial")
-    guard try store.authenticate(token: issued).id == client.id,
-      try store.tokens(for: client.id).count == 1
+    let issued = try runtime.issueToken(for: client.id, label: "Initial")
+    guard try runtime.authenticate(token: issued).id == client.id,
+      try runtime.tokens(for: client.id).count == 1
     else {
       throw ProbeError.administrationMismatch
     }
-    let replacement = try store.rotateToken(issued.metadata.id, label: "Rotated")
+    let replacement = try runtime.rotateToken(issued.metadata.id, label: "Rotated")
     do {
-      _ = try store.authenticate(token: issued)
+      _ = try runtime.authenticate(token: issued)
       throw ProbeError.administrationMismatch
-    } catch BondryEncryptedStoreError.authenticationRejected {
+    } catch BondryRuntimeError.authenticationRejected {
     }
-    guard try store.authenticate(token: replacement).id == client.id,
-      try store.tokens(for: client.id).count == 2
+    guard try runtime.authenticate(token: replacement).id == client.id,
+      try runtime.tokens(for: client.id).count == 2
     else {
       throw ProbeError.administrationMismatch
     }
-    try store.registerCapability(
+    try runtime.registerCapability(
       BondryCapability(
         id: "probe.read",
         summary: "Read probe state",
@@ -112,17 +112,17 @@ do {
       }
       return Data(#"{"ready":true}"#.utf8)
     }
-    guard try store.capabilities().map(\.id) == ["probe.read"],
-      try await store.dispatch(
+    guard try runtime.capabilities().map(\.id) == ["probe.read"],
+      try await runtime.dispatch(
         invocationID: "probe-request",
         adapterID: "rest",
         token: replacement,
         capabilityID: "probe.read",
         inputJSON: Data(#"{"detail":true}"#.utf8)
       ) == Data(#"{"ready":true}"#.utf8),
-      try store.recentAuditEvents(limit: 10).map(\.outcome) == [.succeeded, .started],
-      try store.unregisterCapability("probe.read"),
-      try store.revokeToken(replacement.metadata.id)
+      try runtime.recentAuditEvents(limit: 10).map(\.outcome) == [.succeeded, .started],
+      try runtime.unregisterCapability("probe.read"),
+      try runtime.revokeToken(replacement.metadata.id)
     else {
       throw ProbeError.administrationMismatch
     }

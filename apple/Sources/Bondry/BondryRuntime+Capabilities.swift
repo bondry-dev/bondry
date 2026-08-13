@@ -1,7 +1,7 @@
-import CBondry
+import CBondryRuntime
 import Foundation
 
-extension BondryEncryptedStore {
+extension BondryRuntime {
   public func registerCapability(
     _ capability: BondryCapability,
     handler: @escaping BondryCapabilityHandler
@@ -9,22 +9,26 @@ extension BondryEncryptedStore {
     let context = Unmanaged.passRetained(CapabilityHandlerBox(handler: handler)).toOpaque()
     let status = withUTF8Bytes(capability.id) { idBytes, idLength in
       withUTF8Bytes(capability.summary) { summaryBytes, summaryLength in
-        bondry_capability_register_v1(
-          handle,
-          idBytes,
-          idLength,
-          summaryBytes,
-          summaryLength,
-          capability.effect.cValue,
-          context,
-          invokeSwiftCapability,
-          releaseSwiftCapability
-        )
+        withDataBytes(capability.inputSchema.jsonRepresentation) { schemaBytes, schemaLength in
+          bondry_capability_register_with_schema_v1(
+            handle,
+            idBytes,
+            idLength,
+            summaryBytes,
+            summaryLength,
+            capability.effect.cValue,
+            schemaBytes,
+            schemaLength,
+            context,
+            invokeSwiftCapability,
+            releaseSwiftCapability
+          )
+        }
       }
     }
     guard status == BONDRY_STATUS_OK else {
       Unmanaged<CapabilityHandlerBox>.fromOpaque(context).release()
-      throw BondryEncryptedStoreError(status: status)
+      throw BondryRuntimeError(status: status)
     }
   }
 
@@ -36,15 +40,53 @@ extension BondryEncryptedStore {
     }
     try requireSuccess(status)
     guard changed <= 1 else {
-      throw BondryEncryptedStoreError.invalidData
+      throw BondryRuntimeError.invalidData
     }
     return changed == 1
   }
 
   public func capabilities() throws -> [BondryCapability] {
-    try queryRecords { output, capacity, count in
-      bondry_capabilities_list_v1(handle, output, capacity, count)
-    }.map(BondryCapability.init)
+    let data = try queryBytes { output, capacity, length in
+      bondry_capabilities_json_v1(handle, output, capacity, length)
+    }
+    return try decodeCapabilities(data)
+  }
+
+  public func capabilities(
+    authorizedFor principal: BondryPrincipal,
+    adapterID: String
+  ) throws -> [BondryCapability] {
+    let data = try withUTF8Bytes(principal.id) { principalBytes, principalLength in
+      try withUTF8Bytes(adapterID) { adapterBytes, adapterLength in
+        try queryBytes { output, capacity, length in
+          bondry_capabilities_discover_json_v1(
+            handle,
+            principalBytes,
+            principalLength,
+            principal.kind.cValue,
+            adapterBytes,
+            adapterLength,
+            output,
+            capacity,
+            length
+          )
+        }
+      }
+    }
+    return try decodeCapabilities(data)
+  }
+
+  private func decodeCapabilities(_ data: Data) throws -> [BondryCapability] {
+    let value: Any
+    do {
+      value = try JSONSerialization.jsonObject(with: data)
+    } catch {
+      throw BondryRuntimeError.invalidData
+    }
+    guard let records = value as? [[String: Any]] else {
+      throw BondryRuntimeError.invalidData
+    }
+    return try records.map(decodeCapability)
   }
 
   public func dispatch(
@@ -187,11 +229,42 @@ extension BondryEncryptedStore {
       return
     }
     let box = Unmanaged<DispatchContinuationBox>.fromOpaque(context).takeRetainedValue()
-    box.continuation.resume(throwing: BondryEncryptedStoreError(status: status))
+    box.continuation.resume(throwing: BondryRuntimeError(status: status))
   }
 }
 
-private final class CapabilityHandlerBox: @unchecked Sendable {
+private func decodeCapability(_ record: [String: Any]) throws -> BondryCapability {
+  guard let id = record["id"] as? String,
+    let summary = record["summary"] as? String,
+    let effectValue = record["effect"] as? String,
+    let schema = record["input_schema"] as? [String: Any]
+  else {
+    throw BondryRuntimeError.invalidData
+  }
+  let effect: BondryCapabilityEffect
+  switch effectValue {
+  case "read_only": effect = .readOnly
+  case "mutating": effect = .mutating
+  default: throw BondryRuntimeError.invalidData
+  }
+  let schemaData: Data
+  do {
+    schemaData = try JSONSerialization.data(
+      withJSONObject: schema,
+      options: [.sortedKeys, .withoutEscapingSlashes]
+    )
+  } catch {
+    throw BondryRuntimeError.invalidData
+  }
+  return BondryCapability(
+    id: id,
+    summary: summary,
+    effect: effect,
+    inputSchema: try BondryCapabilityInputSchema(jsonRepresentation: schemaData)
+  )
+}
+
+private final class CapabilityHandlerBox: Sendable {
   let handler: BondryCapabilityHandler
 
   init(handler: @escaping BondryCapabilityHandler) {
@@ -199,6 +272,7 @@ private final class CapabilityHandlerBox: @unchecked Sendable {
   }
 }
 
+// The C callback and its context remain valid until exactly one completion call.
 private final class CapabilityCompletionBox: @unchecked Sendable {
   let completion: BondryCapabilityCompletionV1
   let context: UnsafeMutableRawPointer
@@ -221,7 +295,7 @@ private final class CapabilityCompletionBox: @unchecked Sendable {
   }
 }
 
-private final class DispatchContinuationBox: @unchecked Sendable {
+private final class DispatchContinuationBox: Sendable {
   let continuation: CheckedContinuation<Data, any Error>
 
   init(continuation: CheckedContinuation<Data, any Error>) {
@@ -282,7 +356,7 @@ private func receiveSwiftDispatch(
   }
   let box = Unmanaged<DispatchContinuationBox>.fromOpaque(context).takeRetainedValue()
   guard let result else {
-    box.continuation.resume(throwing: BondryEncryptedStoreError.invalidData)
+    box.continuation.resume(throwing: BondryRuntimeError.invalidData)
     return
   }
   do {
@@ -300,13 +374,13 @@ private func decodeDispatchResult(_ result: BondryDispatchResultV1) throws -> Da
   case 1:
     detail = try decodeCString(result.detail_code)
   default:
-    throw BondryEncryptedStoreError.invalidData
+    throw BondryRuntimeError.invalidData
   }
 
   switch (result.outcome, detail) {
   case (BONDRY_DISPATCH_OUTCOME_SUCCEEDED_V1, nil):
     guard let output = result.output_json, result.output_json_length > 0 else {
-      throw BondryEncryptedStoreError.invalidData
+      throw BondryRuntimeError.invalidData
     }
     return Data(bytes: output, count: result.output_json_length)
   case (BONDRY_DISPATCH_OUTCOME_CAPABILITY_NOT_FOUND_V1, nil):
@@ -322,7 +396,7 @@ private func decodeDispatchResult(_ result: BondryDispatchResultV1) throws -> Da
   case (BONDRY_DISPATCH_OUTCOME_HANDLER_FAILED_V1, .some(let code)):
     throw BondryDispatchError.handlerFailed(code: code)
   default:
-    throw BondryEncryptedStoreError.invalidData
+    throw BondryRuntimeError.invalidData
   }
 }
 

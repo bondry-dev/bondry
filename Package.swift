@@ -2,10 +2,6 @@
 
 import PackageDescription
 
-let bondryVersion = "0.0.1"
-let bondryArtifactURL =
-  "https://github.com/bondry-dev/bondry/releases/download/v\(bondryVersion)/BondryFFI.xcframework.zip"
-
 let package = Package(
   name: "Bondry",
   platforms: [
@@ -13,15 +9,21 @@ let package = Package(
     .iOS(.v16),
   ],
   products: [
+    .library(name: "Bondry", targets: ["Bondry"]),
     .library(name: "BondryApple", targets: ["BondryApple"]),
     .library(name: "BondryAppIntents", targets: ["BondryAppIntents"]),
-    .library(name: "BondrySQLCipher", targets: ["BondrySQLCipher"]),
+    .library(name: "BondryLocalServer", targets: ["BondryLocalServer"]),
   ],
   targets: [
-    .binaryTarget(
-      name: "BondryFFI",
-      url: bondryArtifactURL,
-      checksum: "77ebd512fb657d7b221fc5c690f5c9d101d55bd0d4952132ed2f2bdae013d41e"
+    .target(
+      name: "CBondryRuntime",
+      path: "apple/Sources/CBondryRuntime",
+      publicHeadersPath: "include"
+    ),
+    .target(
+      name: "CBondryLocalServer",
+      path: "apple/Sources/CBondryLocalServer",
+      publicHeadersPath: "include"
     ),
     .target(
       name: "BondryApple",
@@ -29,9 +31,9 @@ let package = Package(
       linkerSettings: [.linkedFramework("Security")]
     ),
     .target(
-      name: "BondrySQLCipher",
-      dependencies: ["BondryApple", "BondryFFI"],
-      path: "apple/Sources/BondrySQLCipher",
+      name: "Bondry",
+      dependencies: ["BondryApple", "CBondryRuntime"],
+      path: "apple/Sources/Bondry",
       linkerSettings: [
         .linkedFramework("CoreFoundation"),
         .linkedFramework("Security"),
@@ -39,8 +41,13 @@ let package = Package(
       ]
     ),
     .target(
+      name: "BondryLocalServer",
+      dependencies: ["Bondry", "CBondryLocalServer"],
+      path: "apple/Sources/BondryLocalServer"
+    ),
+    .target(
       name: "BondryAppIntents",
-      dependencies: ["BondrySQLCipher"],
+      dependencies: ["Bondry"],
       path: "apple/Sources/BondryAppIntents",
       linkerSettings: [.linkedFramework("AppIntents")]
     ),

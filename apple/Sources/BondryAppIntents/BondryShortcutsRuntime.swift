@@ -1,15 +1,15 @@
 import AppIntents
-import BondrySQLCipher
+import Bondry
 import Foundation
 
 public struct BondryShortcutsRuntime: Sendable {
   public static let adapterID = "shortcuts"
 
-  private let store: BondryEncryptedStore
+  private let runtime: BondryRuntime
   public let principal: BondryPrincipal
 
-  public init(store: BondryEncryptedStore, principal: BondryPrincipal) {
-    self.store = store
+  public init(runtime: BondryRuntime, principal: BondryPrincipal) {
+    self.runtime = runtime
     self.principal = principal
   }
 
@@ -19,12 +19,10 @@ public struct BondryShortcutsRuntime: Sendable {
 
   public func authorizedCapabilities() throws -> [BondryCapability] {
     do {
-      let identifiers = Set(
-        try store.grants(for: principal.id)
-          .filter { $0.principalID == principal.id && $0.adapterID == Self.adapterID }
-          .map(\.capabilityID)
+      return try runtime.capabilities(
+        authorizedFor: principal,
+        adapterID: Self.adapterID
       )
-      return try store.capabilities().filter { identifiers.contains($0.id) }
     } catch {
       throw BondryShortcutsError.serviceUnavailable
     }
@@ -36,7 +34,7 @@ public struct BondryShortcutsRuntime: Sendable {
     invocationID: String = UUID().uuidString
   ) async throws -> Data {
     do {
-      return try await store.dispatchPlatformInvocation(
+      return try await runtime.dispatchPlatformInvocation(
         invocationID: invocationID,
         adapterID: Self.adapterID,
         principal: principal,
@@ -53,7 +51,7 @@ public struct BondryShortcutsRuntime: Sendable {
       throw BondryShortcutsError.serviceUnavailable
     } catch BondryDispatchError.handlerFailed {
       throw BondryShortcutsError.executionFailed
-    } catch let error as BondryEncryptedStoreError where error == .invalidJSON {
+    } catch let error as BondryRuntimeError where error == .invalidJSON {
       throw BondryShortcutsError.invalidInput
     } catch {
       throw BondryShortcutsError.serviceUnavailable

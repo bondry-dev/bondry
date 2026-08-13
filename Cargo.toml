@@ -2,8 +2,9 @@
 members = [
     "crates/bondry-auth",
     "crates/bondry-core",
-    "crates/bondry-ffi",
+    "crates/bondry-runtime-ffi",
     "crates/bondry-http",
+    "crates/bondry-local-server-ffi",
     "crates/bondry-mcp",
     "crates/bondry-rest",
     "crates/bondry-store-sqlcipher",

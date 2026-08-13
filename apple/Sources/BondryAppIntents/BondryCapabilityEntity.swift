@@ -1,5 +1,5 @@
 import AppIntents
-import BondrySQLCipher
+import Bondry
 import Foundation
 
 public struct BondryCapabilityEntity: AppEntity, Equatable, Sendable {

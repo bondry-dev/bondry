@@ -1,4 +1,4 @@
-module CBondry {
+module CBondryRuntime {
   header "bondry.h"
   export *
 }

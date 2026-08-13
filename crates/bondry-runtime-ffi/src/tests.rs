@@ -24,13 +24,15 @@ use super::{
     BondryCapabilityV1, BondryClientV1, BondryDispatchResultV1, BondryGrantV1, BondryInvocationV1,
     BondryIssuedTokenV1, BondryPrincipalV1, BondryStoreHandle, BondryTokenMetadataV1, StoreHandle,
     bondry_abi_version_v1, bondry_audit_for_principal_v1, bondry_audit_recent_v1,
-    bondry_capabilities_list_v1, bondry_capability_register_v1, bondry_capability_unregister_v1,
-    bondry_client_create_v1, bondry_client_set_enabled_v1, bondry_clients_list_v1,
-    bondry_dispatch_principal_v1, bondry_dispatch_token_v1, bondry_grant_add_v1,
-    bondry_grant_remove_v1, bondry_grants_list_v1, bondry_issued_token_clear_v1,
-    bondry_store_check_v1, bondry_store_close_v1, bondry_store_open_v1,
-    bondry_token_authenticate_v1, bondry_token_issue_v1, bondry_token_revoke_v1,
-    bondry_token_rotate_v1, bondry_tokens_list_v1, catch_status,
+    bondry_capabilities_discover_json_v1, bondry_capabilities_json_v1, bondry_capabilities_list_v1,
+    bondry_capability_register_v1, bondry_capability_register_with_schema_v1,
+    bondry_capability_unregister_v1, bondry_client_create_v1, bondry_client_set_enabled_v1,
+    bondry_clients_list_v1, bondry_dispatch_principal_v1, bondry_dispatch_token_v1,
+    bondry_grant_add_v1, bondry_grant_remove_v1, bondry_grants_list_v1,
+    bondry_issued_token_clear_v1, bondry_store_check_v1, bondry_store_close_v1,
+    bondry_store_open_v1, bondry_store_retain_v1, bondry_token_authenticate_v1,
+    bondry_token_issue_v1, bondry_token_revoke_v1, bondry_token_rotate_v1, bondry_tokens_list_v1,
+    catch_status,
     records::{
         BONDRY_AUDIT_OUTCOME_DENIED_V1, BONDRY_AUDIT_OUTCOME_SUCCEEDED_V1,
         BONDRY_CAPABILITY_EFFECT_MUTATING_V1, BONDRY_CAPABILITY_EFFECT_READ_ONLY_V1,
@@ -177,6 +179,22 @@ fn opens_checks_and_closes_an_encrypted_store() -> Result<(), Box<dyn std::error
         !raw.windows(b"CREATE TABLE clients".len())
             .any(|window| { window == b"CREATE TABLE clients" })
     );
+    Ok(())
+}
+
+#[test]
+fn retains_store_ownership_for_independent_components() -> Result<(), Box<dyn std::error::Error>> {
+    let (_directory, store) = open_test_store(0x34)?;
+    let mut retained = ptr::null_mut();
+
+    assert_eq!(
+        unsafe { bondry_store_retain_v1(store, &mut retained) },
+        BONDRY_STATUS_OK
+    );
+    assert!(!retained.is_null());
+    close_test_store(store);
+    assert_eq!(unsafe { bondry_store_check_v1(retained) }, BONDRY_STATUS_OK);
+    close_test_store(retained);
     Ok(())
 }
 
@@ -829,6 +847,115 @@ fn registers_lists_and_releases_capabilities() -> Result<(), Box<dyn std::error:
     assert_eq!(releases.load(Ordering::SeqCst), 2);
     close_test_store(store);
     assert_eq!(releases.load(Ordering::SeqCst), 3);
+    Ok(())
+}
+
+#[test]
+fn discovers_authorized_capabilities_with_input_schemas() -> Result<(), Box<dyn std::error::Error>>
+{
+    let (_directory, store) = open_test_store(0x5E)?;
+    let releases = Arc::new(AtomicUsize::new(0));
+    let context = test_handler_context(releases.clone());
+    let schema =
+        br#"{"type":"object","properties":{"level":{"type":"integer"}},"required":["level"]}"#;
+    assert_eq!(
+        unsafe {
+            bondry_capability_register_with_schema_v1(
+                store,
+                b"battery.configure".as_ptr(),
+                17,
+                b"Change battery settings".as_ptr(),
+                23,
+                BONDRY_CAPABILITY_EFFECT_MUTATING_V1,
+                schema.as_ptr(),
+                schema.len(),
+                context,
+                Some(test_handler),
+                Some(release_test_handler),
+            )
+        },
+        BONDRY_STATUS_OK
+    );
+    let principal = b"desktop-client";
+    let mut changed = 0;
+    assert_eq!(
+        unsafe {
+            bondry_grant_add_v1(
+                store,
+                principal.as_ptr(),
+                principal.len(),
+                b"rest".as_ptr(),
+                4,
+                b"battery.configure".as_ptr(),
+                17,
+                &mut changed,
+            )
+        },
+        BONDRY_STATUS_OK
+    );
+
+    let mut registered_length = 0;
+    assert_eq!(
+        unsafe { bondry_capabilities_json_v1(store, ptr::null_mut(), 0, &mut registered_length,) },
+        BONDRY_STATUS_OK
+    );
+    let mut registered = vec![0_u8; registered_length];
+    assert_eq!(
+        unsafe {
+            bondry_capabilities_json_v1(
+                store,
+                registered.as_mut_ptr(),
+                registered.len(),
+                &mut registered_length,
+            )
+        },
+        BONDRY_STATUS_OK
+    );
+    let registered: serde_json::Value = serde_json::from_slice(&registered)?;
+    assert_eq!(registered[0]["input_schema"]["required"][0], "level");
+
+    let mut length = 0;
+    assert_eq!(
+        unsafe {
+            bondry_capabilities_discover_json_v1(
+                store,
+                principal.as_ptr(),
+                principal.len(),
+                super::records::BONDRY_PRINCIPAL_KIND_APPLICATION_V1,
+                b"rest".as_ptr(),
+                4,
+                ptr::null_mut(),
+                0,
+                &mut length,
+            )
+        },
+        BONDRY_STATUS_OK
+    );
+    let mut output = vec![0_u8; length];
+    assert_eq!(
+        unsafe {
+            bondry_capabilities_discover_json_v1(
+                store,
+                principal.as_ptr(),
+                principal.len(),
+                super::records::BONDRY_PRINCIPAL_KIND_APPLICATION_V1,
+                b"rest".as_ptr(),
+                4,
+                output.as_mut_ptr(),
+                output.len(),
+                &mut length,
+            )
+        },
+        BONDRY_STATUS_OK
+    );
+    let descriptors: serde_json::Value = serde_json::from_slice(&output)?;
+    assert_eq!(descriptors[0]["id"], "battery.configure");
+    assert_eq!(descriptors[0]["effect"], "mutating");
+    assert_eq!(descriptors[0]["input_schema"]["type"], "object");
+    assert_eq!(descriptors[0]["input_schema"]["required"][0], "level");
+
+    close_test_store(store);
+    assert_eq!(releases.load(Ordering::SeqCst), 1);
     Ok(())
 }
 

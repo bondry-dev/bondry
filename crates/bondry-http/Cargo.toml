@@ -9,7 +9,6 @@ license.workspace = true
 
 [dependencies]
 base64.workspace = true
-bondry-auth = { path = "../bondry-auth" }
 bondry-core = { path = "../bondry-core" }
 bytes.workspace = true
 getrandom.workspace = true

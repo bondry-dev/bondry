@@ -1,0 +1,4 @@
+module CBondryLocalServer {
+  header "bondry_local_server.h"
+  export *
+}

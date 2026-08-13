@@ -15,7 +15,7 @@ targets:
       - package: BondryApple
         product: BondryApple
       - package: BondryApple
-        product: BondrySQLCipher
+        product: Bondry
     settings:
       base:
         CODE_SIGN_ENTITLEMENTS: KeychainProbe.entitlements
@@ -25,6 +25,6 @@ targets:
         GENERATE_INFOPLIST_FILE: true
         INFOPLIST_KEY_LSUIElement: true
         LIBRARY_SEARCH_PATHS: "$(SRCROOT)/../../../target/apple/macos/debug"
-        OTHER_LDFLAGS: "$(inherited) -lbondry_ffi"
+        OTHER_LDFLAGS: "$(inherited) -lbondry_runtime_ffi"
         PRODUCT_BUNDLE_IDENTIFIER: dev.bondry.keychain-probe
         SWIFT_VERSION: "6.0"

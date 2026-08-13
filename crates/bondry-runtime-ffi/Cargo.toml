@@ -1,6 +1,6 @@
 [package]
-name = "bondry-ffi"
-description = "Versioned C ABI for embedding Bondry"
+name = "bondry-runtime-ffi"
+description = "Versioned C ABI for the Bondry runtime"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -13,9 +13,6 @@ crate-type = ["rlib", "staticlib"]
 [dependencies]
 bondry-auth = { path = "../bondry-auth" }
 bondry-core = { path = "../bondry-core" }
-bondry-http = { path = "../bondry-http" }
-bondry-mcp = { path = "../bondry-mcp" }
-bondry-rest = { path = "../bondry-rest" }
 bondry-store-sqlcipher = { path = "../bondry-store-sqlcipher" }
 serde.workspace = true
 serde_json.workspace = true

@@ -1,11 +1,11 @@
+import Bondry
 import BondryApple
-import BondrySQLCipher
-import CBondry
+import CBondryRuntime
 import CBondryTestSupport
 import Foundation
 import XCTest
 
-final class BondryEncryptedStoreTests: XCTestCase {
+final class BondryRuntimeTests: XCTestCase {
   override func setUp() {
     super.setUp()
     bondry_test_reset()
@@ -13,19 +13,19 @@ final class BondryEncryptedStoreTests: XCTestCase {
 
   func testOpenPassesPathAndKeyAndOwnsHandle() throws {
     let key = try DatabaseKeyMaterial(rawRepresentation: Data(repeating: 0xA5, count: 32))
-    let url = URL(fileURLWithPath: "/tmp/bondry-store-test.db")
-    var store: BondryEncryptedStore? = try BondryEncryptedStore.open(at: url, key: key)
+    let url = URL(fileURLWithPath: "/tmp/bondry-runtime-test.db")
+    var runtime: BondryRuntime? = try BondryRuntime.open(at: url, key: key)
 
-    XCTAssertNotNil(store)
+    XCTAssertNotNil(runtime)
     XCTAssertEqual(bondry_test_open_count(), 1)
     XCTAssertEqual(bondry_test_path_length(), url.path.utf8.count)
     XCTAssertEqual(bondry_test_key_length(), 32)
     XCTAssertEqual(bondry_test_key_byte(0), 0xA5)
     XCTAssertEqual(bondry_test_key_byte(31), 0xA5)
-    XCTAssertNoThrow(try store?.checkHealth())
+    XCTAssertNoThrow(try runtime?.checkHealth())
     XCTAssertEqual(bondry_test_close_count(), 0)
 
-    store = nil
+    runtime = nil
     XCTAssertEqual(bondry_test_close_count(), 1)
   }
 
@@ -34,10 +34,10 @@ final class BondryEncryptedStoreTests: XCTestCase {
     let key = try makeKey()
 
     XCTAssertThrowsError(
-      try BondryEncryptedStore.open(at: fileURL(), key: key)
+      try BondryRuntime.open(at: fileURL(), key: key)
     ) { error in
       XCTAssertEqual(
-        error as? BondryEncryptedStoreError,
+        error as? BondryRuntimeError,
         .incompatibleABI(expected: BONDRY_ABI_VERSION_V1, actual: BONDRY_ABI_VERSION_V1 + 1)
       )
     }
@@ -47,8 +47,8 @@ final class BondryEncryptedStoreTests: XCTestCase {
   func testRejectsNonFileURLWithoutOpening() throws {
     let url = try XCTUnwrap(URL(string: "https://example.com/database"))
 
-    XCTAssertThrowsError(try BondryEncryptedStore.open(at: url, key: makeKey())) { error in
-      XCTAssertEqual(error as? BondryEncryptedStoreError, .invalidFileURL)
+    XCTAssertThrowsError(try BondryRuntime.open(at: url, key: makeKey())) { error in
+      XCTAssertEqual(error as? BondryRuntimeError, .invalidFileURL)
     }
     XCTAssertEqual(bondry_test_open_count(), 0)
   }
@@ -57,14 +57,14 @@ final class BondryEncryptedStoreTests: XCTestCase {
     bondry_test_set_null_handle(1)
 
     XCTAssertThrowsError(
-      try BondryEncryptedStore.open(at: fileURL(), key: makeKey())
+      try BondryRuntime.open(at: fileURL(), key: makeKey())
     ) { error in
-      XCTAssertEqual(error as? BondryEncryptedStoreError, .invalidHandle)
+      XCTAssertEqual(error as? BondryRuntimeError, .invalidHandle)
     }
   }
 
   func testMapsEveryOpenFailure() throws {
-    let cases: [(BondryStatus, BondryEncryptedStoreError)] = [
+    let cases: [(BondryStatus, BondryRuntimeError)] = [
       (BONDRY_STATUS_NULL_POINTER, .nullPointer),
       (BONDRY_STATUS_INVALID_LENGTH, .invalidLength),
       (BONDRY_STATUS_INVALID_UTF8, .invalidUTF8),
@@ -88,9 +88,6 @@ final class BondryEncryptedStoreTests: XCTestCase {
       (BONDRY_STATUS_TIME_UNAVAILABLE, .timeUnavailable),
       (BONDRY_STATUS_GENERATION_EXHAUSTED, .generationExhausted),
       (BONDRY_STATUS_ALREADY_EXISTS, .alreadyExists),
-      (BONDRY_STATUS_SERVER_BIND, .serverBind),
-      (BONDRY_STATUS_SERVER_START, .serverStart),
-      (BONDRY_STATUS_SERVER_STOP, .serverStop),
       (BONDRY_STATUS_INTERNAL_FAILURE, .internalFailure(BONDRY_STATUS_INTERNAL_FAILURE)),
       (99, .internalFailure(99)),
     ]
@@ -98,19 +95,19 @@ final class BondryEncryptedStoreTests: XCTestCase {
     for (status, expected) in cases {
       bondry_test_set_open_status(status)
       XCTAssertThrowsError(
-        try BondryEncryptedStore.open(at: fileURL(), key: makeKey())
+        try BondryRuntime.open(at: fileURL(), key: makeKey())
       ) { error in
-        XCTAssertEqual(error as? BondryEncryptedStoreError, expected)
+        XCTAssertEqual(error as? BondryRuntimeError, expected)
       }
     }
   }
 
   func testMapsHealthCheckFailure() throws {
-    let store = try BondryEncryptedStore.open(at: fileURL(), key: makeKey())
+    let runtime = try BondryRuntime.open(at: fileURL(), key: makeKey())
     bondry_test_set_check_status(BONDRY_STATUS_UNAVAILABLE)
 
-    XCTAssertThrowsError(try store.checkHealth()) { error in
-      XCTAssertEqual(error as? BondryEncryptedStoreError, .unavailable)
+    XCTAssertThrowsError(try runtime.checkHealth()) { error in
+      XCTAssertEqual(error as? BondryRuntimeError, .unavailable)
     }
   }
 
@@ -119,6 +116,6 @@ final class BondryEncryptedStoreTests: XCTestCase {
   }
 
   private func fileURL() -> URL {
-    URL(fileURLWithPath: "/tmp/bondry-store-test.db")
+    URL(fileURLWithPath: "/tmp/bondry-runtime-test.db")
   }
 }

@@ -1,5 +1,6 @@
 #include "BondryTestSupport.h"
 #include "bondry.h"
+#include "bondry_local_server.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -51,6 +52,8 @@ static size_t captured_capability_length = 0;
 static uint8_t captured_capability[256];
 static size_t captured_summary_length = 0;
 static uint8_t captured_summary[512];
+static size_t captured_schema_length = 0;
+static uint8_t captured_schema[65536];
 static uint32_t captured_capability_effect = 0;
 static size_t captured_input_length = 0;
 static uint8_t captured_input[1024];
@@ -199,6 +202,8 @@ void bondry_test_reset(void) {
     memset(captured_capability, 0, sizeof(captured_capability));
     captured_summary_length = 0;
     memset(captured_summary, 0, sizeof(captured_summary));
+    captured_schema_length = 0;
+    memset(captured_schema, 0, sizeof(captured_schema));
     captured_capability_effect = 0;
     captured_input_length = 0;
     memset(captured_input, 0, sizeof(captured_input));
@@ -411,6 +416,14 @@ size_t bondry_test_summary_length(void) {
 
 uint8_t bondry_test_summary_byte(size_t index) {
     return index < sizeof(captured_summary) ? captured_summary[index] : 0;
+}
+
+size_t bondry_test_schema_length(void) {
+    return captured_schema_length;
+}
+
+uint8_t bondry_test_schema_byte(size_t index) {
+    return index < sizeof(captured_schema) ? captured_schema[index] : 0;
 }
 
 uint32_t bondry_test_capability_effect(void) {
@@ -999,6 +1012,35 @@ BondryStatus bondry_capability_register_v1(
     BondryCapabilityInvokeV1 invoke,
     BondryCapabilityReleaseV1 release
 ) {
+    static const uint8_t permissive_schema[] = {'{', '}'};
+    return bondry_capability_register_with_schema_v1(
+        store,
+        capability_id,
+        capability_id_length,
+        summary,
+        summary_length,
+        effect,
+        permissive_schema,
+        sizeof(permissive_schema),
+        handler_context,
+        invoke,
+        release
+    );
+}
+
+BondryStatus bondry_capability_register_with_schema_v1(
+    const BondryStoreHandle *store,
+    const uint8_t *capability_id,
+    size_t capability_id_length,
+    const uint8_t *summary,
+    size_t summary_length,
+    uint32_t effect,
+    const uint8_t *input_schema_json,
+    size_t input_schema_json_length,
+    void *handler_context,
+    BondryCapabilityInvokeV1 invoke,
+    BondryCapabilityReleaseV1 release
+) {
     register_capability_count += 1;
     capture_bytes(
         captured_capability,
@@ -1015,10 +1057,18 @@ BondryStatus bondry_capability_register_v1(
         summary_length
     );
     captured_capability_effect = effect;
+    capture_bytes(
+        captured_schema,
+        sizeof(captured_schema),
+        &captured_schema_length,
+        input_schema_json,
+        input_schema_json_length
+    );
     if (administration_status != BONDRY_STATUS_OK) {
         return administration_status;
     }
-    if (store == NULL || capability_id == NULL || summary == NULL || invoke == NULL) {
+    if (store == NULL || capability_id == NULL || summary == NULL || input_schema_json == NULL ||
+        invoke == NULL) {
         return BONDRY_STATUS_NULL_POINTER;
     }
     if (capability_registered) {
@@ -1029,6 +1079,90 @@ BondryStatus bondry_capability_register_v1(
     capability_release = release;
     capability_store = store;
     capability_registered = 1;
+    return BONDRY_STATUS_OK;
+}
+
+BondryStatus bondry_capabilities_json_v1(
+    const BondryStoreHandle *store,
+    uint8_t *output_json,
+    size_t capacity,
+    size_t *out_length
+) {
+    static const char empty[] = "[]";
+    static const char read_only[] =
+        "[{\"id\":\"battery.read\",\"summary\":\"Read battery state\","
+        "\"effect\":\"read_only\",\"input_schema\":{}}]";
+    static const char mutating[] =
+        "[{\"id\":\"battery.read\",\"summary\":\"Read battery state\","
+        "\"effect\":\"mutating\",\"input_schema\":{}}]";
+    if (administration_status != BONDRY_STATUS_OK) {
+        return administration_status;
+    }
+    if (store == NULL || out_length == NULL) {
+        return BONDRY_STATUS_NULL_POINTER;
+    }
+    const char *json = empty;
+    if (capability_registered) {
+        json = captured_capability_effect == BONDRY_CAPABILITY_EFFECT_MUTATING_V1
+            ? mutating
+            : read_only;
+    }
+    size_t length = strlen(json);
+    *out_length = length;
+    if (output_json == NULL && capacity == 0) {
+        return BONDRY_STATUS_OK;
+    }
+    if (output_json == NULL || capacity < length) {
+        return BONDRY_STATUS_BUFFER_TOO_SMALL;
+    }
+    memcpy(output_json, json, length);
+    return BONDRY_STATUS_OK;
+}
+
+BondryStatus bondry_capabilities_discover_json_v1(
+    const BondryStoreHandle *store,
+    const uint8_t *principal_id,
+    size_t principal_id_length,
+    uint32_t principal_kind,
+    const uint8_t *adapter_id,
+    size_t adapter_id_length,
+    uint8_t *output_json,
+    size_t capacity,
+    size_t *out_length
+) {
+    capture_bytes(
+        captured_identifier,
+        sizeof(captured_identifier),
+        &captured_identifier_length,
+        principal_id,
+        principal_id_length
+    );
+    capture_bytes(
+        captured_adapter,
+        sizeof(captured_adapter),
+        &captured_adapter_length,
+        adapter_id,
+        adapter_id_length
+    );
+    captured_principal_kind = principal_kind;
+    if (shortcuts_grant_mode == 1) {
+        return bondry_capabilities_json_v1(store, output_json, capacity, out_length);
+    }
+    static const uint8_t empty[] = {'[', ']'};
+    if (administration_status != BONDRY_STATUS_OK) {
+        return administration_status;
+    }
+    if (store == NULL || principal_id == NULL || adapter_id == NULL || out_length == NULL) {
+        return BONDRY_STATUS_NULL_POINTER;
+    }
+    *out_length = sizeof(empty);
+    if (output_json == NULL && capacity == 0) {
+        return BONDRY_STATUS_OK;
+    }
+    if (output_json == NULL || capacity < sizeof(empty)) {
+        return BONDRY_STATUS_BUFFER_TOO_SMALL;
+    }
+    memcpy(output_json, empty, sizeof(empty));
     return BONDRY_STATUS_OK;
 }
 

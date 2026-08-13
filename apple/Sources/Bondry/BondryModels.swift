@@ -1,4 +1,4 @@
-import CBondry
+import CBondryRuntime
 import Foundation
 
 public struct BondryClient: Equatable, Identifiable, Sendable {
@@ -73,7 +73,7 @@ public struct BondryPrincipal: Equatable, Identifiable, Sendable {
     case BONDRY_PRINCIPAL_KIND_SYSTEM_V1:
       .system
     default:
-      throw BondryEncryptedStoreError.invalidData
+      throw BondryRuntimeError.invalidData
     }
   }
 }
@@ -133,12 +133,12 @@ public struct BondryAuditEvent: Equatable, Identifiable, Sendable {
   }
 }
 
-func decodeCString<Value>(_ value: Value) throws -> String {
+package func decodeCString<Value>(_ value: Value) throws -> String {
   try withUnsafeBytes(of: value) { bytes in
     guard let end = bytes.firstIndex(of: 0), end > 0,
       let string = String(bytes: bytes[..<end], encoding: .utf8)
     else {
-      throw BondryEncryptedStoreError.invalidData
+      throw BondryRuntimeError.invalidData
     }
     return string
   }
@@ -148,7 +148,7 @@ private func decodeBoolean(_ value: UInt8) throws -> Bool {
   switch value {
   case 0: false
   case 1: true
-  default: throw BondryEncryptedStoreError.invalidData
+  default: throw BondryRuntimeError.invalidData
   }
 }
 
@@ -156,7 +156,7 @@ private func decodeOptionalCString<Value>(_ value: Value, presence: UInt8) throw
   switch presence {
   case 0: return nil
   case 1: return try decodeCString(value)
-  default: throw BondryEncryptedStoreError.invalidData
+  default: throw BondryRuntimeError.invalidData
   }
 }
 
@@ -164,7 +164,7 @@ private func decodeOptionalDate(_ seconds: Int64, presence: UInt8) throws -> Dat
   switch presence {
   case 0: return nil
   case 1: return Date(timeIntervalSince1970: TimeInterval(seconds))
-  default: throw BondryEncryptedStoreError.invalidData
+  default: throw BondryRuntimeError.invalidData
   }
 }
 
@@ -183,6 +183,6 @@ private func decodeOutcome(_ value: UInt32, detail: String?) throws -> BondryAud
   case (BONDRY_AUDIT_OUTCOME_HANDLER_FAILED_V1, .some(let code)):
     .handlerFailed(code: code)
   default:
-    throw BondryEncryptedStoreError.invalidData
+    throw BondryRuntimeError.invalidData
   }
 }

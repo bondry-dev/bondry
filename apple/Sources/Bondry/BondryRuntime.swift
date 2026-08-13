@@ -1,9 +1,10 @@
 import BondryApple
-import CBondry
+import CBondryRuntime
 import Foundation
 
-public final class BondryEncryptedStore: @unchecked Sendable {
-  let handle: OpaquePointer
+// Native operations are synchronized, and this instance owns one immutable handle.
+public final class BondryRuntime: @unchecked Sendable {
+  package let handle: OpaquePointer
 
   deinit {
     _ = bondry_store_close_v1(handle)
@@ -12,21 +13,21 @@ public final class BondryEncryptedStore: @unchecked Sendable {
   public static func open(
     at fileURL: URL,
     key: DatabaseKeyMaterial
-  ) throws -> BondryEncryptedStore {
+  ) throws -> BondryRuntime {
     let actualVersion = bondry_abi_version_v1()
     guard actualVersion == BONDRY_ABI_VERSION_V1 else {
-      throw BondryEncryptedStoreError.incompatibleABI(
+      throw BondryRuntimeError.incompatibleABI(
         expected: BONDRY_ABI_VERSION_V1,
         actual: actualVersion
       )
     }
     guard fileURL.isFileURL else {
-      throw BondryEncryptedStoreError.invalidFileURL
+      throw BondryRuntimeError.invalidFileURL
     }
 
     let path = Array(fileURL.path.utf8)
     guard !path.isEmpty, !path.contains(0) else {
-      throw BondryEncryptedStoreError.invalidFileURL
+      throw BondryRuntimeError.invalidFileURL
     }
 
     let keyData = key.rawRepresentation
@@ -47,22 +48,22 @@ public final class BondryEncryptedStore: @unchecked Sendable {
       if let openedHandle {
         _ = bondry_store_close_v1(openedHandle)
       }
-      throw BondryEncryptedStoreError(status: status)
+      throw BondryRuntimeError(status: status)
     }
     guard let openedHandle else {
-      throw BondryEncryptedStoreError.invalidHandle
+      throw BondryRuntimeError.invalidHandle
     }
-    return BondryEncryptedStore(handle: openedHandle)
+    return BondryRuntime(handle: openedHandle)
   }
 
   public func checkHealth() throws {
     let status = bondry_store_check_v1(handle)
     guard status == BONDRY_STATUS_OK else {
-      throw BondryEncryptedStoreError(status: status)
+      throw BondryRuntimeError(status: status)
     }
   }
 
-  private init(handle: OpaquePointer) {
+  package init(handle: OpaquePointer) {
     self.handle = handle
   }
 }

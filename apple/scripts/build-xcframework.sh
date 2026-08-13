@@ -38,11 +38,15 @@ cargo fetch --locked --manifest-path "$bondry_root/Cargo.toml"
 mkdir -p "$artifact_directory" "$cargo_target_directory"
 artifact_directory=$(CDPATH='' cd -- "$artifact_directory" && pwd)
 cargo_target_directory=$(CDPATH='' cd -- "$cargo_target_directory" && pwd)
-xcframework="$artifact_directory/BondryFFI.xcframework"
-archive="$artifact_directory/BondryFFI.xcframework.zip"
-checksum_file="$archive.sha256"
-rm -rf "$xcframework"
-rm -f "$archive" "$checksum_file"
+rm -rf \
+    "$artifact_directory/BondryRuntime.xcframework" \
+    "$artifact_directory/BondryLocalServer.xcframework" \
+    "$artifact_directory/staging"
+rm -f \
+    "$artifact_directory/BondryRuntime.xcframework.zip" \
+    "$artifact_directory/BondryRuntime.xcframework.zip.sha256" \
+    "$artifact_directory/BondryLocalServer.xcframework.zip" \
+    "$artifact_directory/BondryLocalServer.xcframework.zip.sha256"
 
 export CARGO_TARGET_DIR="$cargo_target_directory"
 rust_sysroot=$(rustc --print sysroot)
@@ -75,76 +79,98 @@ for target in $required_targets; do
             --locked \
             --release \
             --manifest-path "$bondry_root/Cargo.toml" \
-            --package bondry-ffi \
+            --package bondry-runtime-ffi \
+            --package bondry-local-server-ffi \
             --target "$target"
 done
 
-staging_directory="$artifact_directory/staging"
-headers_directory="$staging_directory/Headers"
-macos_directory="$staging_directory/macos"
-ios_directory="$staging_directory/ios"
-simulator_directory="$staging_directory/ios-simulator"
+create_xcframework() {
+    framework_name=$1
+    source_library_name=$2
+    packaged_library_name=$3
+    header=$4
+    module_map=$5
+    staging_directory="$artifact_directory/staging/$framework_name"
+    headers_directory="$staging_directory/Headers"
+    macos_directory="$staging_directory/macos"
+    ios_directory="$staging_directory/ios"
+    simulator_directory="$staging_directory/ios-simulator"
+    xcframework="$artifact_directory/$framework_name.xcframework"
 
-rm -rf "$staging_directory"
-mkdir -p \
-    "$headers_directory" \
-    "$macos_directory" \
-    "$ios_directory" \
-    "$simulator_directory"
+    mkdir -p \
+        "$headers_directory" \
+        "$macos_directory" \
+        "$ios_directory" \
+        "$simulator_directory"
+    cp "$bondry_root/bindings/c/include/$header" "$headers_directory/$header"
+    cp "$bondry_root/apple/Distribution/$module_map" "$headers_directory/module.modulemap"
 
-cp "$bondry_root/bindings/c/include/bondry.h" "$headers_directory/bondry.h"
-cp "$bondry_root/apple/Distribution/module.modulemap" \
-    "$headers_directory/module.modulemap"
+    lipo -create \
+        "$cargo_target_directory/aarch64-apple-darwin/release/$source_library_name" \
+        "$cargo_target_directory/x86_64-apple-darwin/release/$source_library_name" \
+        -output "$macos_directory/$packaged_library_name"
+    cp \
+        "$cargo_target_directory/aarch64-apple-ios/release/$source_library_name" \
+        "$ios_directory/$packaged_library_name"
+    lipo -create \
+        "$cargo_target_directory/aarch64-apple-ios-sim/release/$source_library_name" \
+        "$cargo_target_directory/x86_64-apple-ios/release/$source_library_name" \
+        -output "$simulator_directory/$packaged_library_name"
 
-lipo -create \
-    "$cargo_target_directory/aarch64-apple-darwin/release/libbondry_ffi.a" \
-    "$cargo_target_directory/x86_64-apple-darwin/release/libbondry_ffi.a" \
-    -output "$macos_directory/libbondry_ffi.a"
+    xcodebuild -create-xcframework \
+        -library "$macos_directory/$packaged_library_name" \
+        -headers "$headers_directory" \
+        -library "$ios_directory/$packaged_library_name" \
+        -headers "$headers_directory" \
+        -library "$simulator_directory/$packaged_library_name" \
+        -headers "$headers_directory" \
+        -output "$xcframework"
 
-cp \
-    "$cargo_target_directory/aarch64-apple-ios/release/libbondry_ffi.a" \
-    "$ios_directory/libbondry_ffi.a"
+    cp "$bondry_root/LICENSE" "$xcframework/LICENSE"
+    cp "$bondry_root/THIRD_PARTY_NOTICES.md" "$xcframework/THIRD_PARTY_NOTICES.md"
+    cp "$artifact_directory/THIRD_PARTY_LICENSES.txt" "$xcframework/THIRD_PARTY_LICENSES.txt"
+}
 
-lipo -create \
-    "$cargo_target_directory/aarch64-apple-ios-sim/release/libbondry_ffi.a" \
-    "$cargo_target_directory/x86_64-apple-ios/release/libbondry_ffi.a" \
-    -output "$simulator_directory/libbondry_ffi.a"
-
-xcodebuild -create-xcframework \
-    -library "$macos_directory/libbondry_ffi.a" \
-    -headers "$headers_directory" \
-    -library "$ios_directory/libbondry_ffi.a" \
-    -headers "$headers_directory" \
-    -library "$simulator_directory/libbondry_ffi.a" \
-    -headers "$headers_directory" \
-    -output "$xcframework"
-
-cp "$bondry_root/apple/Distribution/BondryFFI.Info.plist" \
-    "$xcframework/Info.plist"
-cp "$bondry_root/LICENSE" "$xcframework/LICENSE"
-cp "$bondry_root/THIRD_PARTY_NOTICES.md" \
-    "$xcframework/THIRD_PARTY_NOTICES.md"
 cargo about generate \
     --config "$bondry_root/apple/Distribution/about.toml" \
     --fail \
     --locked \
     --manifest-path "$bondry_root/Cargo.toml" \
     --offline \
-    --output-file "$xcframework/THIRD_PARTY_LICENSES.txt" \
+    --output-file "$artifact_directory/THIRD_PARTY_LICENSES.txt" \
     --workspace \
     "$bondry_root/apple/Distribution/ThirdPartyLicenses.hbs"
-"$script_directory/verify-xcframework.sh" "$xcframework"
-archive_timestamp=$(date -u -r "$source_date_epoch" '+%Y%m%d%H%M.%S')
-find "$xcframework" -exec touch -h -t "$archive_timestamp" {} +
-(
-    cd "$artifact_directory"
-    find BondryFFI.xcframework -print \
-        | LC_ALL=C sort \
-        | zip -X -q "$archive" -@
-)
-unzip -tq "$archive"
-swift package compute-checksum "$archive" > "$checksum_file"
 
-printf 'XCFramework: %s\n' "$xcframework"
-printf 'Archive: %s\n' "$archive"
-printf 'Checksum: %s\n' "$(sed -n '1p' "$checksum_file")"
+create_xcframework \
+    BondryRuntime \
+    libbondry_runtime_ffi.a \
+    libbondry_runtime.a \
+    bondry.h \
+    BondryRuntime.modulemap
+create_xcframework \
+    BondryLocalServer \
+    libbondry_local_server_ffi.a \
+    libbondry_local_server.a \
+    bondry_local_server.h \
+    BondryLocalServer.modulemap
+
+"$script_directory/verify-xcframework.sh" \
+    "$artifact_directory/BondryRuntime.xcframework" \
+    "$artifact_directory/BondryLocalServer.xcframework"
+
+archive_timestamp=$(date -u -r "$source_date_epoch" '+%Y%m%d%H%M.%S')
+for framework_name in BondryRuntime BondryLocalServer; do
+    xcframework="$artifact_directory/$framework_name.xcframework"
+    archive="$xcframework.zip"
+    find "$xcframework" -exec touch -h -t "$archive_timestamp" {} +
+    (
+        cd "$artifact_directory"
+        find "$framework_name.xcframework" -print \
+            | LC_ALL=C sort \
+            | zip -X -q "$archive" -@
+    )
+    unzip -tq "$archive"
+    swift package compute-checksum "$archive" > "$archive.sha256"
+    printf '%s: %s\n' "$framework_name" "$archive"
+    printf 'Checksum: %s\n' "$(sed -n '1p' "$archive.sha256")"
+done

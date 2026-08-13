@@ -1,4 +1,4 @@
-import CBondry
+import CBondryRuntime
 
 public struct BondryIssuedToken: Sendable, CustomDebugStringConvertible {
   public let metadata: BondryTokenMetadata
@@ -31,6 +31,7 @@ public struct BondryIssuedToken: Sendable, CustomDebugStringConvertible {
   }
 }
 
+// Initialization is single-threaded; sealed storage permits only concurrent reads.
 final class BondryIssuedTokenStorage: @unchecked Sendable {
   private let record: UnsafeMutablePointer<BondryIssuedTokenV1>
   private let secretOffset: Int
@@ -39,7 +40,7 @@ final class BondryIssuedTokenStorage: @unchecked Sendable {
 
   init() throws {
     guard let secretOffset = MemoryLayout<BondryIssuedTokenV1>.offset(of: \.secret) else {
-      throw BondryEncryptedStoreError.invalidData
+      throw BondryRuntimeError.invalidData
     }
     self.secretOffset = secretOffset
     record = .allocate(capacity: 1)
@@ -71,7 +72,7 @@ final class BondryIssuedTokenStorage: @unchecked Sendable {
     guard let end = bytes.firstIndex(of: 0), end > 0,
       String(bytes: bytes[..<end], encoding: .utf8) != nil
     else {
-      throw BondryEncryptedStoreError.invalidData
+      throw BondryRuntimeError.invalidData
     }
     secretLength = end
   }

@@ -16,7 +16,6 @@ mod auth;
 mod capabilities;
 mod grants;
 mod records;
-mod server;
 
 pub use audit::{bondry_audit_for_principal_v1, bondry_audit_recent_v1};
 pub use auth::{
@@ -26,8 +25,10 @@ pub use auth::{
 };
 pub use capabilities::{
     BondryCapabilityCompletionV1, BondryCapabilityInvokeV1, BondryCapabilityReleaseV1,
-    BondryDispatchCompletionV1, bondry_capabilities_list_v1, bondry_capability_register_v1,
-    bondry_capability_unregister_v1, bondry_dispatch_principal_v1, bondry_dispatch_token_v1,
+    BondryDispatchCompletionV1, bondry_capabilities_discover_json_v1, bondry_capabilities_json_v1,
+    bondry_capabilities_list_v1, bondry_capability_register_v1,
+    bondry_capability_register_with_schema_v1, bondry_capability_unregister_v1,
+    bondry_dispatch_principal_v1, bondry_dispatch_token_v1,
 };
 pub use grants::{bondry_grant_add_v1, bondry_grant_remove_v1, bondry_grants_list_v1};
 pub use records::{
@@ -35,10 +36,6 @@ pub use records::{
     BONDRY_PRINCIPAL_KIND_USER_V1, BondryAuditEventV1, BondryCapabilityV1, BondryClientV1,
     BondryDispatchResultV1, BondryGrantV1, BondryInvocationV1, BondryIssuedTokenV1,
     BondryPrincipalV1, BondryTokenMetadataV1,
-};
-pub use server::{
-    BONDRY_SERVER_ADDRESS_CAPACITY_V1, BONDRY_SERVER_CONFIGURATION_VERSION_V1,
-    BondryServerAddressV1, BondryServerHandle, bondry_server_start_v1, bondry_server_stop_v1,
 };
 
 /// The first Bondry C ABI version.
@@ -92,12 +89,6 @@ pub const BONDRY_STATUS_TIME_UNAVAILABLE: i32 = 26;
 pub const BONDRY_STATUS_GENERATION_EXHAUSTED: i32 = 27;
 /// A capability with the same identifier is already registered.
 pub const BONDRY_STATUS_ALREADY_EXISTS: i32 = 28;
-/// The requested local address or port could not be bound.
-pub const BONDRY_STATUS_SERVER_BIND: i32 = 29;
-/// The local server could not start.
-pub const BONDRY_STATUS_SERVER_START: i32 = 30;
-/// The local server did not stop cleanly.
-pub const BONDRY_STATUS_SERVER_STOP: i32 = 31;
 /// Bondry stopped an internal failure at the ABI boundary.
 pub const BONDRY_STATUS_INTERNAL_FAILURE: i32 = 255;
 
@@ -171,7 +162,7 @@ pub unsafe extern "C" fn bondry_store_open_v1(
             Err(error) => return store_error_status(&error),
         };
         let auth_store: Arc<dyn AuthStore> = store.clone();
-        let handle = Box::new(StoreHandle {
+        let handle = Arc::new(StoreHandle {
             store,
             auth: AuthManager::from_shared(auth_store),
             capabilities: Arc::new(RwLock::new(HashMap::new())),
@@ -179,8 +170,37 @@ pub unsafe extern "C" fn bondry_store_open_v1(
 
         // SAFETY: out_store was validated above and receives ownership of this allocation.
         unsafe {
-            out_store.write(Box::into_raw(handle).cast::<BondryStoreHandle>());
+            out_store.write(Arc::into_raw(handle).cast_mut().cast::<BondryStoreHandle>());
         }
+        BONDRY_STATUS_OK
+    })
+}
+
+/// Retains an open encrypted store for another independently owned component.
+///
+/// # Safety
+///
+/// `store` must be a live handle returned by `bondry_store_open_v1` or this function. The caller
+/// must close the returned handle exactly once. Closing `store` concurrently is not permitted.
+#[must_use]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn bondry_store_retain_v1(
+    store: *const BondryStoreHandle,
+    out_store: *mut *mut BondryStoreHandle,
+) -> i32 {
+    if out_store.is_null() {
+        return BONDRY_STATUS_NULL_POINTER;
+    }
+    // SAFETY: out_store was validated as writable by contract.
+    unsafe { out_store.write(ptr::null_mut()) };
+    catch_status(|| {
+        if store.is_null() {
+            return BONDRY_STATUS_NULL_POINTER;
+        }
+        // SAFETY: The caller guarantees a live Arc-backed handle and no concurrent close.
+        unsafe { Arc::increment_strong_count(store.cast::<StoreHandle>()) };
+        // SAFETY: out_store was validated and receives one newly retained ownership unit.
+        unsafe { out_store.write(store.cast_mut()) };
         BONDRY_STATUS_OK
     })
 }
@@ -222,8 +242,8 @@ pub unsafe extern "C" fn bondry_store_close_v1(store: *mut BondryStoreHandle) ->
     }
 
     catch_status(|| {
-        // SAFETY: The caller transfers ownership of a live Bondry handle exactly once.
-        unsafe { drop(Box::from_raw(store.cast::<StoreHandle>())) };
+        // SAFETY: The caller transfers one ownership unit of a live Arc-backed handle.
+        unsafe { drop(Arc::from_raw(store.cast::<StoreHandle>())) };
         BONDRY_STATUS_OK
     })
 }
@@ -312,6 +332,27 @@ fn write_records<T: Copy>(
     // SAFETY: The caller guarantees output is writable for capacity elements, which is
     // at least records.len(), and foreign output cannot overlap Rust-owned records.
     unsafe { ptr::copy_nonoverlapping(records.as_ptr(), output, records.len()) };
+    BONDRY_STATUS_OK
+}
+
+fn write_bytes(bytes: &[u8], output: *mut u8, capacity: usize, out_length: *mut usize) -> i32 {
+    if out_length.is_null() {
+        return BONDRY_STATUS_NULL_POINTER;
+    }
+    // SAFETY: The caller guarantees that out_length points to writable memory.
+    unsafe { out_length.write(bytes.len()) };
+    if output.is_null() {
+        return if capacity == 0 {
+            BONDRY_STATUS_OK
+        } else {
+            BONDRY_STATUS_NULL_POINTER
+        };
+    }
+    if capacity < bytes.len() {
+        return BONDRY_STATUS_BUFFER_TOO_SMALL;
+    }
+    // SAFETY: output is writable for capacity bytes, which is at least bytes.len().
+    unsafe { ptr::copy_nonoverlapping(bytes.as_ptr(), output, bytes.len()) };
     BONDRY_STATUS_OK
 }
 

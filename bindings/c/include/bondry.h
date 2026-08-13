@@ -36,9 +36,6 @@ typedef int32_t BondryStatus;
 #define BONDRY_STATUS_TIME_UNAVAILABLE ((BondryStatus)26)
 #define BONDRY_STATUS_GENERATION_EXHAUSTED ((BondryStatus)27)
 #define BONDRY_STATUS_ALREADY_EXISTS ((BondryStatus)28)
-#define BONDRY_STATUS_SERVER_BIND ((BondryStatus)29)
-#define BONDRY_STATUS_SERVER_START ((BondryStatus)30)
-#define BONDRY_STATUS_SERVER_STOP ((BondryStatus)31)
 #define BONDRY_STATUS_INTERNAL_FAILURE ((BondryStatus)255)
 
 #define BONDRY_IDENTIFIER_CAPACITY_V1 ((size_t)129)
@@ -46,9 +43,7 @@ typedef int32_t BondryStatus;
 #define BONDRY_TOKEN_CAPACITY_V1 ((size_t)100)
 #define BONDRY_AUDIT_DETAIL_CAPACITY_V1 ((size_t)129)
 #define BONDRY_CAPABILITY_SUMMARY_CAPACITY_V1 ((size_t)257)
-#define BONDRY_SERVER_ADDRESS_CAPACITY_V1 ((size_t)46)
 #define BONDRY_MAX_JSON_PAYLOAD_LENGTH_V1 ((size_t)1048576)
-#define BONDRY_SERVER_CONFIGURATION_VERSION_V1 ((uint32_t)1)
 
 #define BONDRY_PRINCIPAL_KIND_USER_V1 ((uint32_t)1)
 #define BONDRY_PRINCIPAL_KIND_APPLICATION_V1 ((uint32_t)2)
@@ -75,12 +70,6 @@ typedef int32_t BondryStatus;
 #define BONDRY_DISPATCH_OUTCOME_INVALID_INPUT_V1 ((uint32_t)6)
 
 typedef struct BondryStoreHandle BondryStoreHandle;
-typedef struct BondryServerHandle BondryServerHandle;
-
-typedef struct BondryServerAddressV1 {
-    uint8_t address[BONDRY_SERVER_ADDRESS_CAPACITY_V1];
-    uint16_t port;
-} BondryServerAddressV1;
 
 typedef struct BondryClientV1 {
     uint8_t id[BONDRY_IDENTIFIER_CAPACITY_V1];
@@ -188,26 +177,17 @@ BondryStatus bondry_store_open_v1(
     BondryStoreHandle **out_store
 );
 
+/* Creates another independently owned reference to a live store handle. */
+BondryStatus bondry_store_retain_v1(
+    const BondryStoreHandle *store,
+    BondryStoreHandle **out_store
+);
+
 /* The handle must remain live and must not be closed concurrently. */
 BondryStatus bondry_store_check_v1(const BondryStoreHandle *store);
 
 /* A non-null handle must be live and must not be used again. Null is allowed. */
 BondryStatus bondry_store_close_v1(BondryStoreHandle *store);
-
-/* The configuration is a bounded UTF-8 JSON document. On success, out_server
- * owns one handle that must be passed exactly once to stop, and out_address
- * contains the actual bound IP address and port. The running server owns the
- * storage and capability references it needs after this call returns. */
-BondryStatus bondry_server_start_v1(
-    const BondryStoreHandle *store,
-    const uint8_t *configuration_json,
-    size_t configuration_json_length,
-    BondryServerHandle **out_server,
-    BondryServerAddressV1 *out_address
-);
-
-/* A non-null handle must be live and must not be used again. Null is allowed. */
-BondryStatus bondry_server_stop_v1(BondryServerHandle *server);
 
 BondryStatus bondry_client_create_v1(
     const BondryStoreHandle *store,
@@ -354,6 +334,21 @@ BondryStatus bondry_capability_register_v1(
     BondryCapabilityReleaseV1 release
 );
 
+/* Registration with a self-contained JSON Schema 2020-12 input contract. */
+BondryStatus bondry_capability_register_with_schema_v1(
+    const BondryStoreHandle *store,
+    const uint8_t *capability_id,
+    size_t capability_id_length,
+    const uint8_t *summary,
+    size_t summary_length,
+    uint32_t effect,
+    const uint8_t *input_schema_json,
+    size_t input_schema_json_length,
+    void *handler_context,
+    BondryCapabilityInvokeV1 invoke,
+    BondryCapabilityReleaseV1 release
+);
+
 /* In-flight invocations keep the handler context alive after unregistration. */
 BondryStatus bondry_capability_unregister_v1(
     const BondryStoreHandle *store,
@@ -368,6 +363,29 @@ BondryStatus bondry_capabilities_list_v1(
     BondryCapabilityV1 *output,
     size_t capacity,
     size_t *out_count
+);
+
+/* Serializes complete registered descriptors in stable identifier order.
+ * Passing a null output with zero capacity returns the required byte length. */
+BondryStatus bondry_capabilities_json_v1(
+    const BondryStoreHandle *store,
+    uint8_t *output_json,
+    size_t capacity,
+    size_t *out_length
+);
+
+/* Serializes the complete descriptors authorized for one principal and adapter.
+ * Passing a null output with zero capacity returns the required byte length. */
+BondryStatus bondry_capabilities_discover_json_v1(
+    const BondryStoreHandle *store,
+    const uint8_t *principal_id,
+    size_t principal_id_length,
+    uint32_t principal_kind,
+    const uint8_t *adapter_id,
+    size_t adapter_id_length,
+    uint8_t *output_json,
+    size_t capacity,
+    size_t *out_length
 );
 
 /* On BONDRY_STATUS_OK, completion is called exactly once and may run before
