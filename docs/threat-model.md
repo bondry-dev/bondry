@@ -1,0 +1,35 @@
+# Threat Model
+
+This document describes the current pre-alpha core. Every adapter and binding will require its own threat-model extension.
+
+## Assets
+
+- Application capabilities and the data they expose or modify
+- Client credentials and authenticated identities
+- Authorization policy state
+- Audit-event integrity and confidentiality
+- Host application availability
+
+## Trust Boundaries
+
+External requests, credentials, and payloads are untrusted. An adapter must validate its transport and authenticate the requester before constructing a `Principal`.
+
+The core trusts that an adapter-created principal has been authenticated correctly. It does not trust the principal to invoke any capability until authorization policy explicitly grants the exact principal, adapter, and capability combination.
+
+Capability handlers are host-application code. They are trusted to enforce domain invariants and to avoid returning secrets that their capability contract does not expose.
+
+## Current Controls
+
+- Empty and unavailable policies fail closed.
+- Grants are scoped to one principal, adapter, and capability.
+- Capability identifiers are validated and bounded before entering policy state.
+- Duplicate capability registration is rejected.
+- Credentials are excluded from principals and invocation context, and principals cannot be deserialized directly from external input.
+- Audit events exclude request and response payloads.
+- Handler failures expose a stable code instead of an internal error message.
+
+## Known Gaps
+
+The core does not yet provide input-schema validation, payload-size limits, invocation deadlines, cancellation, idempotency, durable audit storage, credential storage, authentication protocols, transport security, or rate limiting. Protocol adapters must not be considered production-ready until the relevant controls are implemented and tested.
+
+Audit sinks currently observe completed outcomes and do not provide a durable pre-execution guarantee. Mutating capabilities require an idempotency and durable-audit design before production use.
