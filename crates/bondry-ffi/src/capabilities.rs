@@ -821,15 +821,16 @@ fn start_dispatch(
         capabilities.get(&dispatch.capability).cloned()
     };
     let mut registry = CapabilityRegistry::new();
-    if let Some(registered) = registered
-        && registry
+    if let Some(registered) = registered {
+        if registry
             .register(
                 registered.descriptor,
                 SharedForeignHandler(registered.handler),
             )
             .is_err()
-    {
-        return BONDRY_STATUS_INTERNAL_FAILURE;
+        {
+            return BONDRY_STATUS_INTERNAL_FAILURE;
+        }
     }
     let store = handle.store.clone();
     let policy_store: Arc<dyn GrantStore> = store.clone();
