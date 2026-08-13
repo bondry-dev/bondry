@@ -10,7 +10,7 @@ Only the public identifier and a SHA-256 digest of the random secret are persist
 
 SHA-256 is used here for a uniformly random 256-bit secret, not for a human-created password. Password-based credentials require a dedicated password-hashing design and are outside this token format.
 
-Malformed, unknown, mismatched, expired, revoked, and disabled-client tokens all produce the same external rejection. Administrative APIs may expose lifecycle state to an authorized local user.
+Malformed, unknown, mismatched, expired, revoked, and disabled-client tokens all produce the same external rejection. Parsed unknown and mismatched tokens both perform a constant-time digest comparison. Administrative APIs may expose lifecycle state to an authorized local user.
 
 ## Client State
 

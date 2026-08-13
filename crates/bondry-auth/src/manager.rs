@@ -152,18 +152,23 @@ impl AuthManager {
         let record = self
             .store
             .authentication_record(&presented.id)
-            .map_err(|_| AuthenticationError::StorageUnavailable)?
-            .ok_or(AuthenticationError::Rejected)?;
+            .map_err(|_| AuthenticationError::StorageUnavailable)?;
         let now = self
             .clock
             .now_unix_seconds()
             .map_err(|_| AuthenticationError::StorageUnavailable)?;
-        let valid = presented.matches(record.token().digest())
-            & record.token().is_active_at(now)
-            & record.client_enabled();
+        let dummy_digest = crate::TokenDigest::from_bytes([0_u8; 32]);
+        let digest = record
+            .as_ref()
+            .map_or(&dummy_digest, |record| record.token().digest());
+        let digest_matches = presented.matches(digest);
+        let valid = record.as_ref().is_some_and(|record| {
+            digest_matches & record.token().is_active_at(now) & record.client_enabled()
+        });
         if !valid {
             return Err(AuthenticationError::Rejected);
         }
+        let record = record.ok_or(AuthenticationError::Rejected)?;
         Ok(Principal::new(
             record.token().client().clone(),
             PrincipalKind::Application,

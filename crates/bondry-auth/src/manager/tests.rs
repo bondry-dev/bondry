@@ -110,7 +110,7 @@ impl AuthStore for MemoryStore {
         let Some(token) = state.tokens.get_mut(id) else {
             return Ok(false);
         };
-        if token.revoked_at_unix_seconds().is_some() {
+        if !token.is_active_at(revoked_at_unix_seconds) {
             return Ok(false);
         }
         token.mark_revoked(revoked_at_unix_seconds);
@@ -330,6 +330,7 @@ fn expiration_rejects_at_the_exact_boundary() -> Result<(), Box<dyn std::error::
         manager.authenticate(issued.secret().expose()),
         Err(AuthenticationError::Rejected)
     );
+    assert!(!manager.revoke_token(issued.metadata().id())?);
     Ok(())
 }
 
