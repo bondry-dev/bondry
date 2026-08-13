@@ -22,6 +22,8 @@ size_t bondry_test_authenticate_count(void);
 size_t bondry_test_recent_audit_count(void);
 size_t bondry_test_principal_audit_count(void);
 size_t bondry_test_issued_token_clear_count(void);
+size_t bondry_test_add_grant_count(void);
+size_t bondry_test_remove_grant_count(void);
 size_t bondry_test_path_length(void);
 size_t bondry_test_key_length(void);
 uint8_t bondry_test_key_byte(size_t index);
@@ -32,5 +34,9 @@ uint8_t bondry_test_label_byte(size_t index);
 uint64_t bondry_test_expiration_seconds(void);
 uint8_t bondry_test_has_expiration(void);
 uint8_t bondry_test_enabled(void);
+size_t bondry_test_adapter_length(void);
+uint8_t bondry_test_adapter_byte(size_t index);
+size_t bondry_test_capability_length(void);
+uint8_t bondry_test_capability_byte(size_t index);
 
 #endif

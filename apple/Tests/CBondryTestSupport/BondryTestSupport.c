@@ -25,6 +25,8 @@ static size_t authenticate_count = 0;
 static size_t recent_audit_count = 0;
 static size_t principal_audit_count = 0;
 static size_t issued_token_clear_count = 0;
+static size_t add_grant_count = 0;
+static size_t remove_grant_count = 0;
 static size_t captured_path_length = 0;
 static size_t captured_key_length = 0;
 static uint8_t captured_key[32];
@@ -35,6 +37,10 @@ static uint8_t captured_label[256];
 static uint64_t captured_expiration_seconds = 0;
 static uint8_t captured_has_expiration = 0;
 static uint8_t captured_enabled = 0;
+static size_t captured_adapter_length = 0;
+static uint8_t captured_adapter[256];
+static size_t captured_capability_length = 0;
+static uint8_t captured_capability[256];
 
 static void write_string(uint8_t *destination, size_t capacity, const char *value) {
     size_t length = strlen(value);
@@ -129,6 +135,8 @@ void bondry_test_reset(void) {
     recent_audit_count = 0;
     principal_audit_count = 0;
     issued_token_clear_count = 0;
+    add_grant_count = 0;
+    remove_grant_count = 0;
     captured_path_length = 0;
     captured_key_length = 0;
     memset(captured_key, 0, sizeof(captured_key));
@@ -139,6 +147,10 @@ void bondry_test_reset(void) {
     captured_expiration_seconds = 0;
     captured_has_expiration = 0;
     captured_enabled = 0;
+    captured_adapter_length = 0;
+    memset(captured_adapter, 0, sizeof(captured_adapter));
+    captured_capability_length = 0;
+    memset(captured_capability, 0, sizeof(captured_capability));
 }
 
 void bondry_test_set_abi_version(uint32_t version) {
@@ -209,6 +221,14 @@ size_t bondry_test_issued_token_clear_count(void) {
     return issued_token_clear_count;
 }
 
+size_t bondry_test_add_grant_count(void) {
+    return add_grant_count;
+}
+
+size_t bondry_test_remove_grant_count(void) {
+    return remove_grant_count;
+}
+
 size_t bondry_test_path_length(void) {
     return captured_path_length;
 }
@@ -247,6 +267,22 @@ uint8_t bondry_test_has_expiration(void) {
 
 uint8_t bondry_test_enabled(void) {
     return captured_enabled;
+}
+
+size_t bondry_test_adapter_length(void) {
+    return captured_adapter_length;
+}
+
+uint8_t bondry_test_adapter_byte(size_t index) {
+    return index < sizeof(captured_adapter) ? captured_adapter[index] : 0;
+}
+
+size_t bondry_test_capability_length(void) {
+    return captured_capability_length;
+}
+
+uint8_t bondry_test_capability_byte(size_t index) {
+    return index < sizeof(captured_capability) ? captured_capability[index] : 0;
 }
 
 uint32_t bondry_abi_version_v1(void) {
@@ -613,4 +649,129 @@ BondryStatus bondry_audit_for_principal_v1(
         principal_id_length
     );
     return bondry_audit_recent_v1(store, limit, output, capacity, out_count);
+}
+
+static BondryStatus update_grant(
+    const BondryStoreHandle *store,
+    const uint8_t *principal_id,
+    size_t principal_id_length,
+    const uint8_t *adapter_id,
+    size_t adapter_id_length,
+    const uint8_t *capability_id,
+    size_t capability_id_length,
+    uint8_t *out_changed
+) {
+    capture_bytes(
+        captured_identifier,
+        sizeof(captured_identifier),
+        &captured_identifier_length,
+        principal_id,
+        principal_id_length
+    );
+    capture_bytes(
+        captured_adapter,
+        sizeof(captured_adapter),
+        &captured_adapter_length,
+        adapter_id,
+        adapter_id_length
+    );
+    capture_bytes(
+        captured_capability,
+        sizeof(captured_capability),
+        &captured_capability_length,
+        capability_id,
+        capability_id_length
+    );
+    if (administration_status != BONDRY_STATUS_OK) {
+        return administration_status;
+    }
+    if (store == NULL || out_changed == NULL) {
+        return BONDRY_STATUS_NULL_POINTER;
+    }
+    *out_changed = 1;
+    return BONDRY_STATUS_OK;
+}
+
+BondryStatus bondry_grant_add_v1(
+    const BondryStoreHandle *store,
+    const uint8_t *principal_id,
+    size_t principal_id_length,
+    const uint8_t *adapter_id,
+    size_t adapter_id_length,
+    const uint8_t *capability_id,
+    size_t capability_id_length,
+    uint8_t *out_changed
+) {
+    add_grant_count += 1;
+    return update_grant(
+        store,
+        principal_id,
+        principal_id_length,
+        adapter_id,
+        adapter_id_length,
+        capability_id,
+        capability_id_length,
+        out_changed
+    );
+}
+
+BondryStatus bondry_grant_remove_v1(
+    const BondryStoreHandle *store,
+    const uint8_t *principal_id,
+    size_t principal_id_length,
+    const uint8_t *adapter_id,
+    size_t adapter_id_length,
+    const uint8_t *capability_id,
+    size_t capability_id_length,
+    uint8_t *out_changed
+) {
+    remove_grant_count += 1;
+    return update_grant(
+        store,
+        principal_id,
+        principal_id_length,
+        adapter_id,
+        adapter_id_length,
+        capability_id,
+        capability_id_length,
+        out_changed
+    );
+}
+
+BondryStatus bondry_grants_list_v1(
+    const BondryStoreHandle *store,
+    const uint8_t *principal_id,
+    size_t principal_id_length,
+    BondryGrantV1 *output,
+    size_t capacity,
+    size_t *out_count
+) {
+    capture_bytes(
+        captured_identifier,
+        sizeof(captured_identifier),
+        &captured_identifier_length,
+        principal_id,
+        principal_id_length
+    );
+    if (administration_status != BONDRY_STATUS_OK) {
+        return administration_status;
+    }
+    if (store == NULL || out_count == NULL) {
+        return BONDRY_STATUS_NULL_POINTER;
+    }
+    *out_count = 2;
+    if (output == NULL && capacity == 0) {
+        return BONDRY_STATUS_OK;
+    }
+    if (output == NULL || capacity < 2) {
+        return BONDRY_STATUS_BUFFER_TOO_SMALL;
+    }
+    memset(output, 0, sizeof(*output) * 2);
+    write_string(output[0].principal_id, sizeof(output[0].principal_id), "client_test");
+    write_string(output[0].adapter_id, sizeof(output[0].adapter_id), "mcp");
+    write_string(output[0].capability_id, sizeof(output[0].capability_id), "battery.health");
+    write_string(output[1].principal_id, sizeof(output[1].principal_id), "client_test");
+    write_string(output[1].adapter_id, sizeof(output[1].adapter_id), "rest");
+    write_string(output[1].capability_id, sizeof(output[1].capability_id), "battery.status");
+    return BONDRY_STATUS_OK;
 }

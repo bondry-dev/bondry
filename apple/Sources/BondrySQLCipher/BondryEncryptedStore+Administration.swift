@@ -126,6 +126,48 @@ extension BondryEncryptedStore {
     return try records.map(BondryAuditEvent.init)
   }
 
+  public func addGrant(
+    principalID: String,
+    adapterID: String,
+    capabilityID: String
+  ) throws -> Bool {
+    try updateGrant(
+      principalID: principalID,
+      adapterID: adapterID,
+      capabilityID: capabilityID,
+      add: true
+    )
+  }
+
+  public func removeGrant(
+    principalID: String,
+    adapterID: String,
+    capabilityID: String
+  ) throws -> Bool {
+    try updateGrant(
+      principalID: principalID,
+      adapterID: adapterID,
+      capabilityID: capabilityID,
+      add: false
+    )
+  }
+
+  public func grants(for principalID: String) throws -> [BondryCapabilityGrant] {
+    let records: [BondryGrantV1] = try withUTF8Bytes(principalID) { idBytes, idLength in
+      try queryRecords { output, capacity, count in
+        bondry_grants_list_v1(
+          handle,
+          idBytes,
+          idLength,
+          output,
+          capacity,
+          count
+        )
+      }
+    }
+    return try records.map(BondryCapabilityGrant.init)
+  }
+
   private func issueOrRotateToken(
     identifier: String,
     label: String?,
@@ -169,6 +211,49 @@ extension BondryEncryptedStore {
     }
     try requireSuccess(status)
     return try BondryIssuedToken(storage: storage)
+  }
+
+  private func updateGrant(
+    principalID: String,
+    adapterID: String,
+    capabilityID: String,
+    add: Bool
+  ) throws -> Bool {
+    var changed: UInt8 = 0
+    let status = withUTF8Bytes(principalID) { principalBytes, principalLength in
+      withUTF8Bytes(adapterID) { adapterBytes, adapterLength in
+        withUTF8Bytes(capabilityID) { capabilityBytes, capabilityLength in
+          if add {
+            bondry_grant_add_v1(
+              handle,
+              principalBytes,
+              principalLength,
+              adapterBytes,
+              adapterLength,
+              capabilityBytes,
+              capabilityLength,
+              &changed
+            )
+          } else {
+            bondry_grant_remove_v1(
+              handle,
+              principalBytes,
+              principalLength,
+              adapterBytes,
+              adapterLength,
+              capabilityBytes,
+              capabilityLength,
+              &changed
+            )
+          }
+        }
+      }
+    }
+    try requireSuccess(status)
+    guard changed <= 1 else {
+      throw BondryEncryptedStoreError.invalidData
+    }
+    return changed == 1
   }
 }
 

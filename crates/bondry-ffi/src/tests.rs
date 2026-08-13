@@ -11,13 +11,13 @@ use super::{
     BONDRY_STATUS_CLIENT_DISABLED, BONDRY_STATUS_INTERNAL_FAILURE, BONDRY_STATUS_INVALID_ARGUMENT,
     BONDRY_STATUS_INVALID_DATABASE_KEY, BONDRY_STATUS_INVALID_LENGTH, BONDRY_STATUS_INVALID_PATH,
     BONDRY_STATUS_INVALID_UTF8, BONDRY_STATUS_NULL_POINTER, BONDRY_STATUS_OK, BondryAuditEventV1,
-    BondryClientV1, BondryIssuedTokenV1, BondryPrincipalV1, BondryStoreHandle,
+    BondryClientV1, BondryGrantV1, BondryIssuedTokenV1, BondryPrincipalV1, BondryStoreHandle,
     BondryTokenMetadataV1, StoreHandle, bondry_abi_version_v1, bondry_audit_for_principal_v1,
     bondry_audit_recent_v1, bondry_client_create_v1, bondry_client_set_enabled_v1,
-    bondry_clients_list_v1, bondry_issued_token_clear_v1, bondry_store_check_v1,
-    bondry_store_close_v1, bondry_store_open_v1, bondry_token_authenticate_v1,
-    bondry_token_issue_v1, bondry_token_revoke_v1, bondry_token_rotate_v1, bondry_tokens_list_v1,
-    catch_status,
+    bondry_clients_list_v1, bondry_grant_add_v1, bondry_grant_remove_v1, bondry_grants_list_v1,
+    bondry_issued_token_clear_v1, bondry_store_check_v1, bondry_store_close_v1,
+    bondry_store_open_v1, bondry_token_authenticate_v1, bondry_token_issue_v1,
+    bondry_token_revoke_v1, bondry_token_rotate_v1, bondry_tokens_list_v1, catch_status,
 };
 
 #[test]
@@ -593,6 +593,128 @@ fn returns_bounded_protocol_neutral_audit_records() -> Result<(), Box<dyn std::e
         utf8_field(&events[0].detail_code)?,
         "temporarily_unavailable"
     );
+    close_test_store(store);
+    Ok(())
+}
+
+#[test]
+fn manages_exact_authorization_grants() -> Result<(), Box<dyn std::error::Error>> {
+    let (_directory, store) = open_test_store(0x55)?;
+    let principal = b"client_policy";
+    let mut changed = 9;
+    assert_eq!(
+        unsafe {
+            bondry_grant_add_v1(
+                store,
+                principal.as_ptr(),
+                principal.len(),
+                b"rest".as_ptr(),
+                4,
+                b"battery.status".as_ptr(),
+                14,
+                &mut changed,
+            )
+        },
+        BONDRY_STATUS_OK
+    );
+    assert_eq!(changed, 1);
+    assert_eq!(
+        unsafe {
+            bondry_grant_add_v1(
+                store,
+                principal.as_ptr(),
+                principal.len(),
+                b"rest".as_ptr(),
+                4,
+                b"battery.status".as_ptr(),
+                14,
+                &mut changed,
+            )
+        },
+        BONDRY_STATUS_OK
+    );
+    assert_eq!(changed, 0);
+    assert_eq!(
+        unsafe {
+            bondry_grant_add_v1(
+                store,
+                principal.as_ptr(),
+                principal.len(),
+                b"mcp".as_ptr(),
+                3,
+                b"battery.health".as_ptr(),
+                14,
+                &mut changed,
+            )
+        },
+        BONDRY_STATUS_OK
+    );
+
+    let mut count = 0;
+    assert_eq!(
+        unsafe {
+            bondry_grants_list_v1(
+                store,
+                principal.as_ptr(),
+                principal.len(),
+                ptr::null_mut(),
+                0,
+                &mut count,
+            )
+        },
+        BONDRY_STATUS_OK
+    );
+    assert_eq!(count, 2);
+    let mut grants: [BondryGrantV1; 2] = unsafe { std::mem::zeroed() };
+    assert_eq!(
+        unsafe {
+            bondry_grants_list_v1(
+                store,
+                principal.as_ptr(),
+                principal.len(),
+                grants.as_mut_ptr(),
+                grants.len(),
+                &mut count,
+            )
+        },
+        BONDRY_STATUS_OK
+    );
+    assert_eq!(utf8_field(&grants[0].adapter_id)?, "mcp");
+    assert_eq!(utf8_field(&grants[1].adapter_id)?, "rest");
+    assert_eq!(utf8_field(&grants[1].capability_id)?, "battery.status");
+
+    assert_eq!(
+        unsafe {
+            bondry_grant_remove_v1(
+                store,
+                principal.as_ptr(),
+                principal.len(),
+                b"rest".as_ptr(),
+                4,
+                b"battery.status".as_ptr(),
+                14,
+                &mut changed,
+            )
+        },
+        BONDRY_STATUS_OK
+    );
+    assert_eq!(changed, 1);
+    assert_eq!(
+        unsafe {
+            bondry_grant_add_v1(
+                store,
+                principal.as_ptr(),
+                principal.len(),
+                b"invalid adapter".as_ptr(),
+                15,
+                b"battery.status".as_ptr(),
+                14,
+                &mut changed,
+            )
+        },
+        BONDRY_STATUS_INVALID_ARGUMENT
+    );
+    assert_eq!(changed, 0);
     close_test_store(store);
     Ok(())
 }

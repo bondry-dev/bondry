@@ -65,6 +65,24 @@ public struct BondryPrincipal: Equatable, Identifiable, Sendable {
   }
 }
 
+public struct BondryCapabilityGrant: Equatable, Hashable, Sendable {
+  public let principalID: String
+  public let adapterID: String
+  public let capabilityID: String
+
+  public init(principalID: String, adapterID: String, capabilityID: String) {
+    self.principalID = principalID
+    self.adapterID = adapterID
+    self.capabilityID = capabilityID
+  }
+
+  init(record: BondryGrantV1) throws {
+    principalID = try decodeCString(record.principal_id)
+    adapterID = try decodeCString(record.adapter_id)
+    capabilityID = try decodeCString(record.capability_id)
+  }
+}
+
 public enum BondryAuditOutcome: Equatable, Sendable {
   case capabilityNotFound
   case denied(code: String)

@@ -90,6 +90,56 @@ int main(int argc, char **argv) {
         return 10;
     }
 
+    uint8_t grant_changed = 0;
+    if (bondry_grant_add_v1(
+            store,
+            client.id,
+            strlen((const char *)client.id),
+            (const uint8_t *)"rest",
+            strlen("rest"),
+            (const uint8_t *)"battery.read",
+            strlen("battery.read"),
+            &grant_changed
+        ) != BONDRY_STATUS_OK || grant_changed != 1) {
+        return 30;
+    }
+    size_t grant_count = 0;
+    if (bondry_grants_list_v1(
+            store,
+            client.id,
+            strlen((const char *)client.id),
+            NULL,
+            0,
+            &grant_count
+        ) != BONDRY_STATUS_OK || grant_count != 1) {
+        return 31;
+    }
+    BondryGrantV1 grants[1];
+    if (bondry_grants_list_v1(
+            store,
+            client.id,
+            strlen((const char *)client.id),
+            grants,
+            1,
+            &grant_count
+        ) != BONDRY_STATUS_OK ||
+        strcmp((const char *)grants[0].adapter_id, "rest") != 0 ||
+        strcmp((const char *)grants[0].capability_id, "battery.read") != 0) {
+        return 32;
+    }
+    if (bondry_grant_remove_v1(
+            store,
+            client.id,
+            strlen((const char *)client.id),
+            (const uint8_t *)"rest",
+            strlen("rest"),
+            (const uint8_t *)"battery.read",
+            strlen("battery.read"),
+            &grant_changed
+        ) != BONDRY_STATUS_OK || grant_changed != 1) {
+        return 33;
+    }
+
     BondryIssuedTokenV1 issued;
     memset(&issued, 0xFF, sizeof(issued));
     if (bondry_token_issue_v1(

@@ -4,7 +4,7 @@ use std::{
 };
 
 use bondry_auth::{Client, IssuedToken, TokenMetadata};
-use bondry_core::{AuditOutcome, Principal};
+use bondry_core::{AuditOutcome, CapabilityGrant, Principal};
 use bondry_store_sqlcipher::StoredAuditEvent;
 
 pub const BONDRY_IDENTIFIER_CAPACITY_V1: usize = 129;
@@ -73,6 +73,18 @@ pub struct BondryPrincipalV1 {
     pub id: [u8; BONDRY_IDENTIFIER_CAPACITY_V1],
     /// Stable principal-kind value.
     pub kind: u32,
+}
+
+/// An exact authorization grant written into caller-owned memory.
+#[derive(Clone, Copy)]
+#[repr(C)]
+pub struct BondryGrantV1 {
+    /// UTF-8 principal identifier, terminated with zero.
+    pub principal_id: [u8; BONDRY_IDENTIFIER_CAPACITY_V1],
+    /// UTF-8 adapter identifier, terminated with zero.
+    pub adapter_id: [u8; BONDRY_IDENTIFIER_CAPACITY_V1],
+    /// UTF-8 capability identifier, terminated with zero.
+    pub capability_id: [u8; BONDRY_IDENTIFIER_CAPACITY_V1],
 }
 
 /// Protocol-neutral audit metadata written into caller-owned memory.
@@ -170,6 +182,16 @@ impl BondryPrincipalV1 {
     fn zeroed() -> Self {
         // SAFETY: Every field accepts an all-zero bit pattern.
         unsafe { std::mem::zeroed() }
+    }
+}
+
+impl BondryGrantV1 {
+    pub(crate) fn from_grant(grant: &CapabilityGrant) -> Self {
+        Self {
+            principal_id: terminated(grant.principal().as_str()),
+            adapter_id: terminated(grant.adapter().as_str()),
+            capability_id: terminated(grant.capability().as_str()),
+        }
     }
 }
 

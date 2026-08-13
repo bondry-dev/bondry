@@ -81,6 +81,12 @@ typedef struct BondryPrincipalV1 {
     uint32_t kind;
 } BondryPrincipalV1;
 
+typedef struct BondryGrantV1 {
+    uint8_t principal_id[BONDRY_IDENTIFIER_CAPACITY_V1];
+    uint8_t adapter_id[BONDRY_IDENTIFIER_CAPACITY_V1];
+    uint8_t capability_id[BONDRY_IDENTIFIER_CAPACITY_V1];
+} BondryGrantV1;
+
 typedef struct BondryAuditEventV1 {
     int64_t sequence;
     int64_t occurred_at_unix_milliseconds;
@@ -203,6 +209,38 @@ BondryStatus bondry_audit_for_principal_v1(
     size_t principal_id_length,
     uint32_t limit,
     BondryAuditEventV1 *output,
+    size_t capacity,
+    size_t *out_count
+);
+
+BondryStatus bondry_grant_add_v1(
+    const BondryStoreHandle *store,
+    const uint8_t *principal_id,
+    size_t principal_id_length,
+    const uint8_t *adapter_id,
+    size_t adapter_id_length,
+    const uint8_t *capability_id,
+    size_t capability_id_length,
+    uint8_t *out_changed
+);
+
+BondryStatus bondry_grant_remove_v1(
+    const BondryStoreHandle *store,
+    const uint8_t *principal_id,
+    size_t principal_id_length,
+    const uint8_t *adapter_id,
+    size_t adapter_id_length,
+    const uint8_t *capability_id,
+    size_t capability_id_length,
+    uint8_t *out_changed
+);
+
+/* Passing a null output with zero capacity returns the required count. */
+BondryStatus bondry_grants_list_v1(
+    const BondryStoreHandle *store,
+    const uint8_t *principal_id,
+    size_t principal_id_length,
+    BondryGrantV1 *output,
     size_t capacity,
     size_t *out_count
 );

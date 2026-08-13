@@ -62,6 +62,23 @@ do {
     guard try store.clients() == [client] else {
       throw ProbeError.administrationMismatch
     }
+    guard
+      try store.addGrant(
+        principalID: client.id,
+        adapterID: "rest",
+        capabilityID: "probe.read"
+      ),
+      try store.grants(for: client.id)
+        == [
+          BondryCapabilityGrant(
+            principalID: client.id,
+            adapterID: "rest",
+            capabilityID: "probe.read"
+          )
+        ]
+    else {
+      throw ProbeError.administrationMismatch
+    }
     let issued = try store.issueToken(for: client.id, label: "Initial")
     guard try store.authenticate(token: issued).id == client.id,
       try store.tokens(for: client.id).count == 1

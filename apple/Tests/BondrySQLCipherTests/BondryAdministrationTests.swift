@@ -115,6 +115,47 @@ final class BondryAdministrationTests: XCTestCase {
     XCTAssertEqual(bondry_test_principal_audit_count(), 2)
   }
 
+  func testManagesExactCapabilityGrants() throws {
+    let store = try makeStore()
+
+    XCTAssertTrue(
+      try store.addGrant(
+        principalID: "client_test",
+        adapterID: "rest",
+        capabilityID: "battery.status"
+      )
+    )
+    XCTAssertEqual(bondry_test_add_grant_count(), 1)
+    XCTAssertEqual(capturedIdentifier(), "client_test")
+    XCTAssertEqual(capturedAdapter(), "rest")
+    XCTAssertEqual(capturedCapability(), "battery.status")
+
+    XCTAssertEqual(
+      try store.grants(for: "client_test"),
+      [
+        BondryCapabilityGrant(
+          principalID: "client_test",
+          adapterID: "mcp",
+          capabilityID: "battery.health"
+        ),
+        BondryCapabilityGrant(
+          principalID: "client_test",
+          adapterID: "rest",
+          capabilityID: "battery.status"
+        ),
+      ]
+    )
+
+    XCTAssertTrue(
+      try store.removeGrant(
+        principalID: "client_test",
+        adapterID: "rest",
+        capabilityID: "battery.status"
+      )
+    )
+    XCTAssertEqual(bondry_test_remove_grant_count(), 1)
+  }
+
   func testRejectsZeroExpirationBeforeCrossingTheABI() throws {
     let store = try makeStore()
 
@@ -166,6 +207,16 @@ final class BondryAdministrationTests: XCTestCase {
 
   private func capturedLabel() -> String {
     let bytes = (0..<bondry_test_label_length()).map(bondry_test_label_byte)
+    return String(decoding: bytes, as: UTF8.self)
+  }
+
+  private func capturedAdapter() -> String {
+    let bytes = (0..<bondry_test_adapter_length()).map(bondry_test_adapter_byte)
+    return String(decoding: bytes, as: UTF8.self)
+  }
+
+  private func capturedCapability() -> String {
+    let bytes = (0..<bondry_test_capability_length()).map(bondry_test_capability_byte)
     return String(decoding: bytes, as: UTF8.self)
   }
 }

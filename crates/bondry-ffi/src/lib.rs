@@ -12,6 +12,7 @@ use bondry_store_sqlcipher::{DatabaseKey, SqlCipherStore, SqlCipherStoreError};
 
 mod audit;
 mod auth;
+mod grants;
 mod records;
 
 pub use audit::{bondry_audit_for_principal_v1, bondry_audit_recent_v1};
@@ -20,8 +21,9 @@ pub use auth::{
     bondry_issued_token_clear_v1, bondry_token_authenticate_v1, bondry_token_issue_v1,
     bondry_token_revoke_v1, bondry_token_rotate_v1, bondry_tokens_list_v1,
 };
+pub use grants::{bondry_grant_add_v1, bondry_grant_remove_v1, bondry_grants_list_v1};
 pub use records::{
-    BondryAuditEventV1, BondryClientV1, BondryIssuedTokenV1, BondryPrincipalV1,
+    BondryAuditEventV1, BondryClientV1, BondryGrantV1, BondryIssuedTokenV1, BondryPrincipalV1,
     BondryTokenMetadataV1,
 };
 

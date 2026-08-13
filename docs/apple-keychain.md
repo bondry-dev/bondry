@@ -37,6 +37,11 @@ let store = try BondryEncryptedStore.open(at: databaseURL, key: key)
 try store.checkHealth()
 
 let client = try store.createClient(named: "Local AI Client")
+_ = try store.addGrant(
+  principalID: client.id,
+  adapterID: "rest",
+  capabilityID: "battery.status"
+)
 let issued = try store.issueToken(for: client.id, label: "Primary")
 let principal = try store.authenticate(token: issued)
 let tokenForDeliberateCopy = issued.copySecret()
