@@ -50,7 +50,7 @@ jobs:
           sudo xcode-select --switch /Applications/Xcode_26.2.app/Contents/Developer
           xcodebuild -version
       - name: Install publication tools
-        run: brew install gh jq ripgrep
+        run: sh .github/scripts/install-homebrew-tools.sh gh jq ripgrep
       - name: Verify publication tools
         run: |
           set -eu
