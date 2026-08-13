@@ -33,6 +33,8 @@ for target in $required_targets; do
     fi
 done
 
+cargo fetch --locked --manifest-path "$bondry_root/Cargo.toml"
+
 mkdir -p "$artifact_directory" "$cargo_target_directory"
 artifact_directory=$(CDPATH='' cd -- "$artifact_directory" && pwd)
 cargo_target_directory=$(CDPATH='' cd -- "$cargo_target_directory" && pwd)
