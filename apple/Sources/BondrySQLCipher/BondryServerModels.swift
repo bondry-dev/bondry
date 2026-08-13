@@ -127,6 +127,12 @@ struct AuthenticationInput: Encodable {
   let principalID: String?
   let principalKind: String?
 
+  private enum CodingKeys: String, CodingKey {
+    case mode
+    case principalID = "principalId"
+    case principalKind
+  }
+
   init(_ authentication: BondryServerAuthentication) {
     switch authentication {
     case .bearerToken:
