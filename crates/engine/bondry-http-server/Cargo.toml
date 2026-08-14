@@ -9,9 +9,9 @@ license.workspace = true
 
 [dependencies]
 base64.workspace = true
-bondry-core = { path = "../../contract/bondry-core" }
-bondry-mcp-proto = { path = "../../proto/bondry-mcp-proto" }
-bondry-rest-proto = { path = "../../proto/bondry-rest-proto" }
+bondry-core = { version = "0.1.2", path = "../../contract/bondry-core" }
+bondry-mcp-proto = { version = "0.1.2", path = "../../proto/bondry-mcp-proto" }
+bondry-rest-proto = { version = "0.1.2", path = "../../proto/bondry-rest-proto" }
 bytes.workspace = true
 http.workspace = true
 http-body-util.workspace = true

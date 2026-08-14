@@ -1,0 +1,90 @@
+name: Nightly
+
+on:
+  schedule:
+    - cron: "17 18 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: "1"
+
+jobs:
+  full:
+    name: Full workspace and dependency policy
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Install Rust
+        run: rustup toolchain install 1.90.0 --profile minimal --component clippy,rustfmt
+      - name: Restore Rust cache
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: |
+            ~/.cargo/advisory-db
+            ~/.cargo/bin/cargo-audit
+            ~/.cargo/bin/cargo-deny
+            ~/.cargo/bin/cargo-nextest
+            ~/.cargo/git
+            ~/.cargo/registry
+            target
+          key: ${{ runner.os }}-rust-1.90.0-nightly-nextest-0.9.128-audit-0.22.2-deny-0.20.2-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-rust-1.90.0-nightly-nextest-0.9.128-audit-0.22.2-deny-0.20.2-
+      - name: Install tools
+        run: |
+          cargo nextest --version 2>/dev/null | grep -F 'cargo-nextest 0.9.128' > /dev/null || \
+            cargo +1.90.0 install cargo-nextest --locked --version 0.9.128
+          cargo audit --version 2>/dev/null | grep -F '0.22.2' > /dev/null || \
+            cargo +1.90.0 install cargo-audit --locked --version 0.22.2
+          cargo deny --version 2>/dev/null | grep -F 'cargo-deny 0.20.2' > /dev/null || \
+            cargo +1.90.0 install cargo-deny --locked --version 0.20.2
+      - name: Check formatting
+        run: cargo +1.90.0 fmt --all --check
+      - name: Run architecture gates
+        run: cargo +1.90.0 xtask gate
+      - name: Test workspace
+        run: cargo +1.90.0 nextest run --workspace --all-features --locked
+      - name: Lint workspace
+        run: cargo +1.90.0 clippy --workspace --all-targets --all-features --locked -- -D warnings
+      - name: Build documentation
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo +1.90.0 doc --workspace --all-features --no-deps --locked
+      - name: Audit advisories
+        run: cargo audit
+      - name: Check dependency policy
+        run: cargo deny check
+      - name: Report dependency drift
+        run: cargo update --dry-run
+
+  msrv:
+    name: Rust 1.85 MSRV
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Install Rust
+        run: rustup toolchain install 1.85.0 --profile minimal
+      - name: Restore MSRV cache
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: |
+            ~/.cargo/git
+            ~/.cargo/registry
+            target
+          key: ${{ runner.os }}-rust-1.85.0-msrv-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-rust-1.85.0-msrv-
+      - name: Check workspace
+        run: cargo +1.85.0 check --workspace --all-targets --all-features --locked

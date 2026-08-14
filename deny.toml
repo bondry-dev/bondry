@@ -1,0 +1,42 @@
+[graph]
+targets = [
+    "x86_64-unknown-linux-gnu",
+    "aarch64-apple-darwin",
+    "x86_64-apple-darwin",
+    "aarch64-apple-ios",
+    "aarch64-apple-ios-sim",
+]
+all-features = true
+
+[advisories]
+unmaintained = "workspace"
+unsound = "all"
+ignore = []
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+allow-wildcard-paths = true
+deny = []
+skip = []
+skip-tree = []
+
+[bans.std-replacements]
+scope = "workspace"
+
+[licenses]
+confidence-threshold = 0.93
+allow = [
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "MIT",
+    "MIT-0",
+    "Unicode-3.0",
+    "Zlib",
+]
+exceptions = []
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
