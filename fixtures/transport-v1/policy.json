@@ -1,0 +1,92 @@
+{
+  "version": 1,
+  "host_transport_contract": {
+    "policy_enforcement": "established_peer_before_application_bytes",
+    "missing_evidence": "reject",
+    "verified_connection_metadata": "required",
+    "redirects": "deny"
+  },
+  "vectors": [
+    {
+      "id": "ipv4-loopback",
+      "endpoint": "http://localhost/path",
+      "evidence": { "type": "cleartext", "ip": [127, 42, 0, 1], "port": 80 },
+      "expected": "allowed"
+    },
+    {
+      "id": "mapped-ipv4-loopback",
+      "endpoint": "http://localhost/path",
+      "evidence": { "type": "cleartext", "ip": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 255, 127, 0, 0, 1], "port": 80 },
+      "expected": "allowed"
+    },
+    {
+      "id": "ipv6-loopback",
+      "endpoint": "http://localhost/path",
+      "evidence": { "type": "cleartext", "ip": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1], "port": 80 },
+      "expected": "allowed"
+    },
+    {
+      "id": "connected-port-mismatch",
+      "endpoint": "http://localhost:8080/path",
+      "evidence": { "type": "cleartext", "ip": [127, 0, 0, 1], "port": 80 },
+      "expected": "evidenceMismatch"
+    },
+    {
+      "id": "private-default-deny",
+      "endpoint": "http://home.local/path",
+      "evidence": { "type": "cleartext", "ip": [192, 168, 1, 10], "port": 80 },
+      "expected": "privateCleartextDenied"
+    },
+    {
+      "id": "private-explicit-opt-in",
+      "endpoint": "http://home.local/path",
+      "allow_private_cleartext": true,
+      "evidence": { "type": "cleartext", "ip": [10, 0, 0, 2], "port": 80 },
+      "expected": "allowed"
+    },
+    {
+      "id": "link-local-default-deny",
+      "endpoint": "http://link.local/path",
+      "evidence": { "type": "cleartext", "ip": [169, 254, 0, 1], "port": 80, "interface_scope": 4 },
+      "expected": "linkLocalCleartextDenied"
+    },
+    {
+      "id": "link-local-unscoped",
+      "endpoint": "http://link.local/path",
+      "allow_link_local_cleartext": true,
+      "evidence": { "type": "cleartext", "ip": [254, 128, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1], "port": 80 },
+      "expected": "linkLocalScopeRequired"
+    },
+    {
+      "id": "link-local-scoped",
+      "endpoint": "http://link.local/path",
+      "allow_link_local_cleartext": true,
+      "evidence": { "type": "cleartext", "ip": [254, 128, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1], "port": 80, "interface_scope": 4 },
+      "expected": "allowed"
+    },
+    {
+      "id": "cgnat-denied",
+      "endpoint": "http://carrier.example/path",
+      "evidence": { "type": "cleartext", "ip": [100, 64, 0, 1], "port": 80 },
+      "expected": "cleartextDenied"
+    },
+    {
+      "id": "tls-matching-name",
+      "endpoint": "https://Example.COM/path",
+      "evidence": { "type": "tls", "server_name": "example.com" },
+      "expected": "allowed"
+    },
+    {
+      "id": "tls-wrong-name",
+      "endpoint": "https://example.com/path",
+      "evidence": { "type": "tls", "server_name": "other.example" },
+      "expected": "tlsIdentityMismatch"
+    },
+    {
+      "id": "missing-evidence",
+      "endpoint": "https://example.com/path",
+      "evidence": { "type": "missing" },
+      "expected": "missingEvidence"
+    }
+  ]
+}

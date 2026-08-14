@@ -1,0 +1,43 @@
+[package]
+name = "bondry-transport-net"
+description = "Default network and local-stream transports for Bondry"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+license.workspace = true
+
+[features]
+default = ["http", "tls"]
+http = [
+    "dep:bytes",
+    "dep:http",
+    "dep:http-body-util",
+    "dep:hyper",
+    "dep:hyper-util",
+    "dep:tokio",
+]
+tls = [
+    "http",
+    "dep:rustls",
+    "dep:rustls-platform-verifier",
+    "dep:tokio-rustls",
+]
+unix-socket = ["dep:bytes", "dep:nix", "dep:tokio"]
+
+[dependencies]
+bondry-transport = { version = "0.1.2", path = "../../contract/bondry-transport" }
+bytes = { workspace = true, optional = true }
+http = { workspace = true, optional = true }
+http-body-util = { workspace = true, optional = true }
+hyper = { workspace = true, features = ["client", "http1"], optional = true }
+hyper-util = { workspace = true, optional = true }
+nix = { workspace = true, optional = true }
+rustls = { workspace = true, optional = true }
+rustls-platform-verifier = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true }
+tokio-rustls = { workspace = true, optional = true }
+thiserror.workspace = true
+
+[lints]
+workspace = true
