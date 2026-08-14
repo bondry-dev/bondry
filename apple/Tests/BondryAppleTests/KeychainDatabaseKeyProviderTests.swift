@@ -254,6 +254,16 @@ private final class TestKeychainClient: KeychainClient, @unchecked Sendable {
     }
   }
 
+  func update(data: Data, for locator: KeychainItemLocator) -> OSStatus {
+    withLock {
+      guard items[locator] != nil else {
+        return errSecItemNotFound
+      }
+      items[locator] = data
+      return errSecSuccess
+    }
+  }
+
   func data(for configuration: KeychainDatabaseKeyConfiguration) -> Data? {
     withLock { items[KeychainItemLocator(configuration: configuration)] }
   }

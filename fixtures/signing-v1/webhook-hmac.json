@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "algorithm": "HMAC-SHA-256",
+  "canonical_form": "bondry-webhook-v1",
+  "vectors": [
+    {
+      "id": "json-body",
+      "secret_base64": "Y29ycmVjdCBob3JzZSBiYXR0ZXJ5IHN0YXBsZQ==",
+      "timestamp_unix_seconds": 1723723200,
+      "delivery_id": "delivery_01J5B6JY0MM6R6Y7G6X4ZZWQ5A",
+      "body_base64": "eyJ0ZW1wZXJhdHVyZSI6MjEuNX0=",
+      "canonical_base64": "Ym9uZHJ5LXdlYmhvb2stdjEKMTcyMzcyMzIwMAozNQpkZWxpdmVyeV8wMUo1QjZKWTBNTTZSNlk3RzZYNFpaV1E1QQoyMAp7InRlbXBlcmF0dXJlIjoyMS41fQ==",
+      "signature_hex": "7dcbe7102d99ec9cbd3b0fb55bff43db320fa4deb0ee453f2b41d7b587a4304e"
+    },
+    {
+      "id": "binary-body",
+      "secret_base64": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+      "timestamp_unix_seconds": 0,
+      "delivery_id": "delivery_00000000000000000000000000",
+      "body_base64": "AAoN/0EA",
+      "canonical_base64": "Ym9uZHJ5LXdlYmhvb2stdjEKMAozNQpkZWxpdmVyeV8wMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMAo2CgAKDf9BAA==",
+      "signature_hex": "5b24de433e7f5aceef8d58cafa944738e9fba4f43877be0fead1dcf6300da4af"
+    }
+  ]
+}
