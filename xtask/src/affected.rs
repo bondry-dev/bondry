@@ -181,6 +181,9 @@ pub fn compute(
             if is_layer(&package.directory, workspace.root(), "crates/ffi") {
                 result.apple = true;
             }
+            if has_apple_contract_mirror(&package.name) {
+                result.apple = true;
+            }
             seeds.insert(package.name.clone());
             continue;
         }
@@ -205,6 +208,10 @@ pub fn compute(
             .is_some_and(|package| is_l0_or_l1(&package.directory, workspace.root()))
     });
     Ok(result)
+}
+
+fn has_apple_contract_mirror(package: &str) -> bool {
+    matches!(package, "bondry-secrets" | "bondry-transport")
 }
 
 fn normalized_path(path: &Path) -> String {
@@ -331,6 +338,25 @@ mod tests {
         )?;
         assert_eq!(actual.packages, workspace().package_names());
         assert!(actual.layer_source);
+        Ok(())
+    }
+
+    #[test]
+    fn mirrored_contract_changes_schedule_apple_validation()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let workspace = Workspace::for_test(
+            &[("bondry-secrets", &[]), ("bondry-transport", &[])],
+            &[
+                ("bondry-secrets", "crates/contract/bondry-secrets"),
+                ("bondry-transport", "crates/contract/bondry-transport"),
+            ],
+        );
+        for path in [
+            "crates/contract/bondry-secrets/src/lib.rs",
+            "crates/contract/bondry-transport/src/lib.rs",
+        ] {
+            assert!(compute(&workspace, &[PathBuf::from(path)])?.apple);
+        }
         Ok(())
     }
 

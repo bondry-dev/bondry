@@ -383,7 +383,10 @@ impl<'ast> Visit<'ast> for ForbiddenPathVisitor {
 
 fn is_forbidden_source_path(path: &str) -> bool {
     [
+        "std::fs",
         "std::net",
+        "std::os::unix::net",
+        "std::thread::spawn",
         "tokio",
         "hyper",
         "hyper_util",
@@ -419,6 +422,20 @@ mod tests {
         let mut visitor = ForbiddenPathVisitor::default();
         visitor.visit_file(&syntax);
         assert!(visitor.forbidden.contains("tokio::spawn"));
+        Ok(())
+    }
+
+    #[test]
+    fn source_lint_catches_standard_library_io_and_threads()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let syntax = syn::parse_file(
+            "use std::{fs, os::unix::net::UnixStream}; fn run() { std::thread::spawn(|| {}); }",
+        )?;
+        let mut visitor = ForbiddenPathVisitor::default();
+        visitor.visit_file(&syntax);
+        assert!(visitor.forbidden.contains("std::fs"));
+        assert!(visitor.forbidden.contains("std::os::unix::net"));
+        assert!(visitor.forbidden.contains("std::thread::spawn"));
         Ok(())
     }
 }
