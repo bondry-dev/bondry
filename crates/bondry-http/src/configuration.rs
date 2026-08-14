@@ -292,3 +292,90 @@ pub enum ServerConfigurationError {
     #[error("cleartext non-loopback listening requires explicit acknowledgement")]
     CleartextNetworkExposure,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        MAX_BODY_BYTES, MAX_CONNECTIONS, MAX_REQUESTS_PER_MINUTE, MAX_TIMEOUT, RateLimits,
+        ServerConfiguration,
+    };
+    use crate::Authentication;
+    use bondry_core::{Principal, PrincipalId, PrincipalKind};
+    use std::time::Duration;
+
+    fn configuration() -> Result<ServerConfiguration, Box<dyn std::error::Error>> {
+        let principal = Principal::new(
+            PrincipalId::new("configuration_test")?,
+            PrincipalKind::Application,
+        );
+        Ok(ServerConfiguration::new(Authentication::disabled(
+            principal,
+        )))
+    }
+
+    #[test]
+    fn preserves_server_defaults() -> Result<(), Box<dyn std::error::Error>> {
+        let configuration = configuration()?;
+
+        assert!(configuration.bind_address.is_loopback());
+        assert_eq!(configuration.port, 0);
+        assert_eq!(configuration.max_body_bytes, 1_048_576);
+        assert_eq!(configuration.max_connections, 64);
+        assert_eq!(configuration.rate_limits.requests_per_minute(), 120);
+        assert_eq!(
+            configuration
+                .rate_limits
+                .authentication_failures_per_minute(),
+            30
+        );
+        assert_eq!(configuration.header_read_timeout, Duration::from_secs(5));
+        assert_eq!(configuration.request_timeout, Duration::from_secs(30));
+        assert_eq!(configuration.shutdown_grace_period, Duration::from_secs(2));
+        assert!(!configuration.allow_cleartext_network);
+        assert!(!configuration.allow_unauthenticated_network);
+        Ok(())
+    }
+
+    #[test]
+    fn preserves_configuration_ceilings() -> Result<(), Box<dyn std::error::Error>> {
+        assert_eq!(MAX_BODY_BYTES, 8 * 1_048_576);
+        assert_eq!(MAX_CONNECTIONS, 1_024);
+        assert_eq!(MAX_REQUESTS_PER_MINUTE, 60_000);
+        assert_eq!(MAX_TIMEOUT, Duration::from_secs(300));
+
+        assert!(configuration()?.with_max_body_bytes(MAX_BODY_BYTES).is_ok());
+        assert!(
+            configuration()?
+                .with_max_body_bytes(MAX_BODY_BYTES + 1)
+                .is_err()
+        );
+        assert!(
+            configuration()?
+                .with_max_connections(MAX_CONNECTIONS)
+                .is_ok()
+        );
+        assert!(
+            configuration()?
+                .with_max_connections(MAX_CONNECTIONS + 1)
+                .is_err()
+        );
+        assert!(RateLimits::new(MAX_REQUESTS_PER_MINUTE, MAX_REQUESTS_PER_MINUTE).is_ok());
+        assert!(RateLimits::new(MAX_REQUESTS_PER_MINUTE + 1, 1).is_err());
+        assert!(RateLimits::new(1, MAX_REQUESTS_PER_MINUTE + 1).is_err());
+        assert!(
+            configuration()?
+                .with_timeouts(MAX_TIMEOUT, MAX_TIMEOUT, MAX_TIMEOUT)
+                .is_ok()
+        );
+        assert!(
+            configuration()?
+                .with_timeouts(
+                    MAX_TIMEOUT + Duration::from_secs(1),
+                    MAX_TIMEOUT,
+                    MAX_TIMEOUT,
+                )
+                .is_err()
+        );
+        Ok(())
+    }
+}

@@ -120,7 +120,7 @@ fn starts_on_an_automatic_port_and_releases_it() -> Result<(), Box<dyn std::erro
 }
 
 #[test]
-fn serves_multiple_requests_over_one_connection() -> Result<(), Box<dyn std::error::Error>> {
+fn keeps_http_11_connections_alive_by_default() -> Result<(), Box<dyn std::error::Error>> {
     let server = start(authenticated_configuration())?;
     let mut stream = TcpStream::connect(server.local_address())?;
     stream.set_read_timeout(Some(Duration::from_secs(2)))?;
