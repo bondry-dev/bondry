@@ -1,0 +1,17 @@
+[package]
+name = "xtask"
+description = "Repository automation for Bondry"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+syn = { version = "3.0", features = ["full", "visit"] }
+
+[lints]
+workspace = true

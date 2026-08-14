@@ -11,8 +11,10 @@ publish = false
 [dependencies]
 bondry-core = { path = "../../crates/contract/bondry-core" }
 bondry-http-server = { path = "../../crates/engine/bondry-http-server" }
+bondry-local-server-ffi = { path = "../../crates/ffi/bondry-local-server-ffi" }
 bondry-mcp-proto = { path = "../../crates/proto/bondry-mcp-proto" }
 bondry-rest-proto = { path = "../../crates/proto/bondry-rest-proto" }
+bondry-runtime-ffi = { path = "../../crates/ffi/bondry-runtime-ffi" }
 serde_json.workspace = true
 
 [lints]

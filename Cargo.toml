@@ -9,6 +9,7 @@ members = [
     "crates/proto/bondry-rest-proto",
     "crates/store/bondry-store-sqlcipher",
     "itests/server-e2e",
+    "xtask",
 ]
 resolver = "3"
 
