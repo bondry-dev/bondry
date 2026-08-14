@@ -15,8 +15,8 @@ retains the HTTP, TLS, and connection-policy paths.
 | Rust | 1.90.0 (`aarch64-apple-darwin`) |
 | Profile | `release`: `opt-level=z`, fat LTO, 1 codegen unit, stripped debuginfo |
 | Baseline probe | 398,752 bytes |
-| HTTP + TLS probe | 1,700,336 bytes |
-| Linked delta | 1,301,584 bytes (1.24 MiB) |
+| HTTP + TLS probe | 1,700,480 bytes |
+| Linked delta | 1,301,728 bytes (1.24 MiB) |
 
 Reproduce the measurement from the workspace root:
 
