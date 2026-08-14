@@ -2,11 +2,17 @@ import Darwin
 import Foundation
 
 public struct BondrySecretReference: Equatable, Hashable, Sendable {
+  public static let maximumByteCount = 1_024
+
   public let rawValue: String
 
   public init(_ rawValue: String) throws {
     guard !rawValue.isEmpty else {
       throw BondrySecretProviderError.emptyReference
+    }
+    let byteCount = rawValue.utf8.count
+    guard byteCount <= Self.maximumByteCount else {
+      throw BondrySecretProviderError.invalidReferenceLength(byteCount)
     }
     self.rawValue = rawValue
   }

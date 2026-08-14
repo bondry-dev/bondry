@@ -5,17 +5,22 @@ use zeroize::Zeroizing;
 
 /// Maximum resolved secret size from the limits contract.
 pub const MAX_SECRET_BYTES: usize = 1024;
+/// Maximum UTF-8 encoded secret reference size from the limits contract.
+pub const MAX_SECRET_REF_BYTES: usize = 1024;
 
 /// A non-secret, host-defined locator for secret material.
 #[derive(Clone, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct SecretRef(String);
 
 impl SecretRef {
-    /// Creates a non-empty secret reference.
+    /// Creates a bounded, non-empty secret reference.
     pub fn new(value: impl Into<String>) -> Result<Self, SecretRefError> {
         let value = value.into();
         if value.is_empty() {
             return Err(SecretRefError::Empty);
+        }
+        if value.len() > MAX_SECRET_REF_BYTES {
+            return Err(SecretRefError::TooLong);
         }
         Ok(Self(value))
     }
@@ -39,6 +44,9 @@ pub enum SecretRefError {
     /// The reference is empty.
     #[error("a secret reference cannot be empty")]
     Empty,
+    /// The UTF-8 encoded reference exceeds 1 KiB.
+    #[error("a secret reference cannot exceed {MAX_SECRET_REF_BYTES} bytes")]
+    TooLong,
 }
 
 /// Resolved secret bytes that are cleared when dropped.
@@ -83,11 +91,27 @@ pub enum SecretValueError {
 
 #[cfg(test)]
 mod tests {
-    use super::{MAX_SECRET_BYTES, SecretRef, SecretRefError, SecretValue, SecretValueError};
+    use super::{
+        MAX_SECRET_BYTES, MAX_SECRET_REF_BYTES, SecretRef, SecretRefError, SecretValue,
+        SecretValueError,
+    };
 
     #[test]
     fn rejects_empty_reference() {
         assert_eq!(SecretRef::new(""), Err(SecretRefError::Empty));
+    }
+
+    #[test]
+    fn enforces_reference_byte_bound() {
+        assert!(SecretRef::new("a".repeat(MAX_SECRET_REF_BYTES)).is_ok());
+        assert_eq!(
+            SecretRef::new("a".repeat(MAX_SECRET_REF_BYTES + 1)),
+            Err(SecretRefError::TooLong)
+        );
+        assert_eq!(
+            SecretRef::new("é".repeat(MAX_SECRET_REF_BYTES / 2 + 1)),
+            Err(SecretRefError::TooLong)
+        );
     }
 
     #[test]
