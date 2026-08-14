@@ -6,6 +6,6 @@ mod http;
 mod unix;
 
 #[cfg(feature = "http")]
-pub use http::{NetHttpTransport, TransportConfigurationError};
+pub use http::{MAX_HTTP_POOL_PARTITIONS, NetHttpTransport, TransportConfigurationError};
 #[cfg(feature = "unix-socket")]
 pub use unix::UnixSocketTransport;
