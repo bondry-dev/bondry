@@ -15,7 +15,7 @@
 - 30 seconds for authentication, body collection, and adapter handling
 - 2 seconds for graceful shutdown
 
-HTTP keep-alive is disabled so an idle client cannot retain a connection slot indefinitely. Responses receive `Cache-Control: no-store` and `X-Content-Type-Options: nosniff` unless an adapter already supplied those headers.
+HTTP keep-alive is enabled. Each connection still has a bounded lifetime derived from the configured header and request deadlines, and the concurrent-connection limit bounds retained slots. Responses receive `Cache-Control: no-store` and `X-Content-Type-Options: nosniff` unless an adapter already supplied those headers.
 
 ## Authentication
 
