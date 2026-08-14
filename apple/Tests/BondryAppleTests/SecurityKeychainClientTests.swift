@@ -40,6 +40,16 @@ final class SecurityKeychainClientTests: XCTestCase {
     XCTAssertEqual(query.count, 8)
   }
 
+  func testBaseQueryIdentifiesItemWithoutReadOrMutationAttributes() {
+    let query = SecurityKeychainClient.baseQuery(for: locator)
+
+    XCTAssertEqual(query[kSecClass] as? String, kSecClassGenericPassword as String)
+    XCTAssertEqual(query[kSecAttrService] as? String, "dev.bondry.database")
+    XCTAssertEqual(query[kSecAttrAccount] as? String, "primary")
+    XCTAssertNil(query[kSecValueData])
+    XCTAssertNil(query[kSecReturnData])
+  }
+
   func testQueryOmitsAccessGroupWhenNotConfigured() throws {
     let configuration = try KeychainDatabaseKeyConfiguration(
       service: "dev.bondry.database",

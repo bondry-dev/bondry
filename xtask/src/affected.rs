@@ -172,7 +172,9 @@ pub fn compute(
             continue;
         }
         if normalized.starts_with("fixtures/") {
-            seeds.extend(fixture_consumers(workspace.root(), &normalized)?);
+            let mut consumers = fixture_consumers(workspace.root(), &normalized)?;
+            result.apple |= consumers.remove("apple");
+            seeds.extend(consumers);
             continue;
         }
         if let Some(package) = workspace.package_for_path(path) {

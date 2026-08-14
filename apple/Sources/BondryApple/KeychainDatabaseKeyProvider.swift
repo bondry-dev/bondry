@@ -89,11 +89,18 @@ struct KeychainItemLocator: Equatable, Hashable, Sendable {
     account = configuration.account
     accessGroup = configuration.accessGroup
   }
+
+  init(service: String, account: String, accessGroup: String?) {
+    self.service = service
+    self.account = account
+    self.accessGroup = accessGroup
+  }
 }
 
 protocol KeychainClient: Sendable {
   func copyData(for locator: KeychainItemLocator) -> KeychainReadResult
   func add(data: Data, for locator: KeychainItemLocator) -> OSStatus
+  func update(data: Data, for locator: KeychainItemLocator) -> OSStatus
 }
 
 protocol RandomByteGenerator: Sendable {

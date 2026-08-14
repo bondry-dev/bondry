@@ -23,6 +23,13 @@ struct SecurityKeychainClient: KeychainClient {
     SecItemAdd(Self.addQuery(data: data, for: locator) as CFDictionary, nil)
   }
 
+  func update(data: Data, for locator: KeychainItemLocator) -> OSStatus {
+    SecItemUpdate(
+      Self.baseQuery(for: locator) as CFDictionary,
+      [kSecValueData: data] as CFDictionary
+    )
+  }
+
   static func copyQuery(for locator: KeychainItemLocator) -> [CFString: Any] {
     var query = baseQuery(for: locator)
     query[kSecReturnData] = true
@@ -37,7 +44,7 @@ struct SecurityKeychainClient: KeychainClient {
     return query
   }
 
-  private static func baseQuery(for locator: KeychainItemLocator) -> [CFString: Any] {
+  static func baseQuery(for locator: KeychainItemLocator) -> [CFString: Any] {
     var query: [CFString: Any] = [
       kSecClass: kSecClassGenericPassword,
       kSecAttrService: locator.service,
