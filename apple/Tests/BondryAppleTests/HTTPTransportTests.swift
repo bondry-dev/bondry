@@ -101,6 +101,33 @@ final class HTTPTransportTests: XCTestCase {
     XCTAssertTrue(delegate.didRedirect)
   }
 
+  func testAbsoluteDeadlineDoesNotResetWhenWorkMakesProgress() async throws {
+    let clock = ContinuousClock()
+    let start = clock.now
+
+    do {
+      _ = try await withAbsoluteDeadline(.milliseconds(25)) {
+        for _ in 0..<100 {
+          try await Task.sleep(for: .milliseconds(5))
+        }
+        return true
+      }
+      XCTFail("expected the absolute deadline to expire")
+    } catch let error as BondryHTTPTransportError {
+      XCTAssertEqual(error, .deadlineExceeded)
+    }
+
+    XCTAssertLessThan(start.duration(to: clock.now), .milliseconds(200))
+  }
+
+  func testEncryptedConnectionPoolsArePartitionedByTrustPolicy() {
+    let pool = URLSessionPool(configuration: .ephemeral)
+    let defaultSession = pool.session(for: [])
+
+    XCTAssertTrue(defaultSession === pool.session(for: []))
+    XCTAssertFalse(defaultSession === pool.session(for: [Data([1, 2, 3])]))
+  }
+
   func testAdditionalTrustAnchorPreservesHostnameVerification() throws {
     let fixture = try JSONDecoder().decode(
       TLSFixture.self,
@@ -166,6 +193,29 @@ final class HTTPTransportTests: XCTestCase {
       }
       XCTAssertEqual(parsed?.statusCode, 200)
       XCTAssertEqual(parsed?.body, Data("ok".utf8))
+    }
+  }
+
+  func testParserContinuesPastInformationalResponses() throws {
+    let responseText =
+      "HTTP/1.1 100 Continue\r\nX-Interim: true\r\n\r\n"
+      + "HTTP/1.1 103 Early Hints\r\nLink: </style.css>\r\n\r\n"
+      + "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok"
+    let response = Data(responseText.utf8)
+    var parser = BoundedHTTP1ResponseParser(requestMethod: "POST", maximumBodyBytes: 4 * 1_024)
+
+    let parsed = try parser.consume(response, isComplete: true)
+
+    XCTAssertEqual(parsed?.statusCode, 200)
+    XCTAssertEqual(parsed?.body, Data("ok".utf8))
+  }
+
+  func testParserRejectsProtocolUpgradeWithoutReturningAnHTTPResponse() throws {
+    let response = Data("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n\r\n".utf8)
+    var parser = BoundedHTTP1ResponseParser(requestMethod: "GET", maximumBodyBytes: 4 * 1_024)
+
+    XCTAssertThrowsError(try parser.consume(response, isComplete: true)) { error in
+      XCTAssertEqual(error as? BondryHTTPTransportError, .invalidResponse)
     }
   }
 

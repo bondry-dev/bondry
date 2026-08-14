@@ -269,6 +269,9 @@ pub enum TransportError {
     /// The peer produced malformed HTTP.
     #[error("transport received an invalid response")]
     InvalidResponse,
+    /// A caller supplied a malformed protocol message.
+    #[error("transport message is invalid")]
+    InvalidMessage,
 }
 
 impl From<PolicyError> for TransportError {

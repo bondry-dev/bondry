@@ -6,6 +6,9 @@ use crate::{
     VerifiedConnection, http_transport::validate_headers,
 };
 
+const MAX_CONTROL_PAYLOAD_BYTES: usize = 125;
+const MAX_CLOSE_REASON_BYTES: usize = MAX_CONTROL_PAYLOAD_BYTES - size_of::<u16>();
+
 /// A bounded WebSocket handshake request.
 pub struct WebSocketRequest {
     endpoint: NetworkEndpoint,
@@ -74,22 +77,104 @@ impl WebSocketRequest {
     }
 }
 
+/// WebSocket application-message type.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum WebSocketMessageKind {
+    /// UTF-8 text.
+    Text,
+    /// Arbitrary binary data.
+    Binary,
+}
+
 /// An application message sent over WebSocket.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum WebSocketMessage {
-    /// UTF-8 text bytes.
-    Text(Bytes),
-    /// Arbitrary binary bytes.
-    Binary(Bytes),
+pub struct WebSocketMessage {
+    kind: WebSocketMessageKind,
+    payload: Bytes,
+}
+
+impl WebSocketMessage {
+    /// Creates a text message after validating UTF-8.
+    pub fn text(payload: Bytes) -> Result<Self, TransportError> {
+        std::str::from_utf8(&payload).map_err(|_| TransportError::InvalidMessage)?;
+        Ok(Self {
+            kind: WebSocketMessageKind::Text,
+            payload,
+        })
+    }
+
+    /// Creates a binary message.
+    #[must_use]
+    pub const fn binary(payload: Bytes) -> Self {
+        Self {
+            kind: WebSocketMessageKind::Binary,
+            payload,
+        }
+    }
+
+    /// Returns the message type.
+    #[must_use]
+    pub const fn kind(&self) -> WebSocketMessageKind {
+        self.kind
+    }
+
+    /// Returns the caller-bounded payload.
+    #[must_use]
+    pub const fn payload(&self) -> &Bytes {
+        &self.payload
+    }
+}
+
+/// A protocol-bounded WebSocket control-frame payload.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WebSocketControlPayload(Bytes);
+
+impl WebSocketControlPayload {
+    /// Creates a control payload within the RFC 6455 limit.
+    pub fn new(payload: Bytes) -> Result<Self, TransportError> {
+        if payload.len() > MAX_CONTROL_PAYLOAD_BYTES {
+            return Err(TransportError::InvalidMessage);
+        }
+        Ok(Self(payload))
+    }
+
+    /// Returns the validated payload.
+    #[must_use]
+    pub const fn as_bytes(&self) -> &Bytes {
+        &self.0
+    }
 }
 
 /// A WebSocket close frame.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WebSocketClose {
-    /// RFC 6455 close status.
-    pub code: u16,
-    /// Bounded UTF-8 reason bytes.
-    pub reason: Bytes,
+    code: u16,
+    reason: Bytes,
+}
+
+impl WebSocketClose {
+    /// Creates a close frame with a sendable status and bounded UTF-8 reason.
+    pub fn new(code: u16, reason: Bytes) -> Result<Self, TransportError> {
+        if !valid_close_code(code)
+            || reason.len() > MAX_CLOSE_REASON_BYTES
+            || std::str::from_utf8(&reason).is_err()
+        {
+            return Err(TransportError::InvalidMessage);
+        }
+        Ok(Self { code, reason })
+    }
+
+    /// Returns the close status.
+    #[must_use]
+    pub const fn code(&self) -> u16 {
+        self.code
+    }
+
+    /// Returns the bounded UTF-8 reason.
+    #[must_use]
+    pub const fn reason(&self) -> &Bytes {
+        &self.reason
+    }
 }
 
 /// One bounded event received from the peer.
@@ -98,9 +183,9 @@ pub enum WebSocketEvent {
     /// Application text or binary message.
     Message(WebSocketMessage),
     /// Ping control payload.
-    Ping(Bytes),
+    Ping(WebSocketControlPayload),
     /// Pong control payload.
-    Pong(Bytes),
+    Pong(WebSocketControlPayload),
     /// Peer close or end-of-stream.
     Close(Option<WebSocketClose>),
 }
@@ -126,7 +211,7 @@ pub trait WebSocketConnection: Send + Sync {
     /// Sends a bounded ping control payload.
     fn ping(
         &self,
-        payload: Bytes,
+        payload: WebSocketControlPayload,
         deadline: Deadline,
     ) -> TransportFuture<'_, Result<(), TransportError>>;
 
@@ -136,6 +221,10 @@ pub trait WebSocketConnection: Send + Sync {
         close: Option<WebSocketClose>,
         deadline: Deadline,
     ) -> TransportFuture<'_, Result<(), TransportError>>;
+}
+
+fn valid_close_code(code: u16) -> bool {
+    (1000..=4999).contains(&code) && !matches!(code, 1004..=1006 | 1015)
 }
 
 /// WebSocket transport independent from HTTP and local byte streams.
@@ -153,7 +242,9 @@ mod tests {
 
     use http::HeaderMap;
 
-    use super::WebSocketRequest;
+    use bytes::Bytes;
+
+    use super::{WebSocketClose, WebSocketControlPayload, WebSocketMessage, WebSocketRequest};
     use crate::{Deadline, EndpointPolicy, NetworkEndpoint, TransportError};
 
     fn endpoint(value: &str) -> NetworkEndpoint {
@@ -187,5 +278,17 @@ mod tests {
             ),
             Err(TransportError::UnsupportedEndpoint)
         ));
+    }
+
+    #[test]
+    fn rejects_invalid_message_and_control_payloads() {
+        assert!(WebSocketMessage::text(Bytes::from_static(b"valid")).is_ok());
+        assert!(WebSocketMessage::text(Bytes::from_static(&[0xff])).is_err());
+        assert!(WebSocketControlPayload::new(Bytes::from(vec![0; 125])).is_ok());
+        assert!(WebSocketControlPayload::new(Bytes::from(vec![0; 126])).is_err());
+        assert!(WebSocketClose::new(1000, Bytes::from(vec![b'a'; 123])).is_ok());
+        assert!(WebSocketClose::new(1005, Bytes::new()).is_err());
+        assert!(WebSocketClose::new(1000, Bytes::from(vec![b'a'; 124])).is_err());
+        assert!(WebSocketClose::new(1000, Bytes::from_static(&[0xff])).is_err());
     }
 }

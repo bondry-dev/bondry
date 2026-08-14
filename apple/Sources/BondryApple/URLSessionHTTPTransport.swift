@@ -2,7 +2,21 @@ import Foundation
 import Security
 
 struct URLSessionHTTPTransport: Sendable {
+  private let sessions: URLSessionPool
+
+  init(configuration: URLSessionConfiguration = .ephemeral) {
+    sessions = URLSessionPool(configuration: configuration)
+  }
+
   func send(_ request: BondryHTTPRequest) async throws -> BondryHTTPResponse {
+    try await withAbsoluteDeadline(request.timeout) {
+      try await sendBeforeDeadline(request)
+    }
+  }
+
+  private func sendBeforeDeadline(_ request: BondryHTTPRequest) async throws
+    -> BondryHTTPResponse
+  {
     var urlRequest = URLRequest(url: request.url)
     urlRequest.httpMethod = request.method
     urlRequest.httpBody = request.body
@@ -14,8 +28,7 @@ struct URLSessionHTTPTransport: Sendable {
     let delegate = URLSessionPolicyDelegate(
       additionalTrustAnchors: request.policy.additionalTrustAnchors
     )
-    let session = URLSession(configuration: .ephemeral)
-    defer { session.invalidateAndCancel() }
+    let session = sessions.session(for: request.policy.additionalTrustAnchors)
     do {
       let (bytes, response) = try await session.bytes(for: urlRequest, delegate: delegate)
       guard let response = response as? HTTPURLResponse else {
@@ -50,6 +63,8 @@ struct URLSessionHTTPTransport: Sendable {
       throw error
     } catch let error as URLError where error.code == .timedOut {
       throw BondryHTTPTransportError.deadlineExceeded
+    } catch let error as URLError where error.code == .cancelled {
+      throw CancellationError()
     } catch let error as URLError where Self.isTLSError(error.code) {
       throw BondryHTTPTransportError.tlsFailed
     } catch {
@@ -91,6 +106,51 @@ struct URLSessionHTTPTransport: Sendable {
       .serverCertificateNotYetValid,
       .serverCertificateUntrusted,
     ].contains(code)
+  }
+}
+
+func withAbsoluteDeadline<Result: Sendable>(
+  _ timeout: Duration,
+  operation: @escaping @Sendable () async throws -> Result
+) async throws -> Result {
+  try await withThrowingTaskGroup(of: Result.self) { group in
+    group.addTask(operation: operation)
+    group.addTask {
+      try await ContinuousClock().sleep(for: timeout)
+      throw BondryHTTPTransportError.deadlineExceeded
+    }
+    defer { group.cancelAll() }
+    guard let result = try await group.next() else {
+      throw BondryHTTPTransportError.connectionFailed
+    }
+    return result
+  }
+}
+
+final class URLSessionPool: @unchecked Sendable {
+  private let configuration: URLSessionConfiguration
+  private let lock = NSLock()
+  private var sessions: [[Data]: URLSession] = [:]
+
+  init(configuration: URLSessionConfiguration) {
+    self.configuration = configuration
+  }
+
+  deinit {
+    for session in sessions.values {
+      session.invalidateAndCancel()
+    }
+  }
+
+  func session(for additionalTrustAnchors: [Data]) -> URLSession {
+    lock.withLock {
+      if let session = sessions[additionalTrustAnchors] {
+        return session
+      }
+      let session = URLSession(configuration: configuration)
+      sessions[additionalTrustAnchors] = session
+      return session
+    }
   }
 }
 

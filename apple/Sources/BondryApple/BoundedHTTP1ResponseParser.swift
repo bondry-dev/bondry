@@ -28,8 +28,13 @@ struct BoundedHTTP1ResponseParser {
 
   mutating func consume(_ data: Data, isComplete: Bool) throws -> ParsedHTTPResponse? {
     buffer.append(data)
-    if framing == nil {
-      try parseHeadIfAvailable()
+    while framing == nil {
+      guard try parseHeadIfAvailable() else {
+        if isComplete {
+          throw BondryHTTPTransportError.invalidResponse
+        }
+        return nil
+      }
     }
     let response = try parseBodyIfAvailable()
     if response == nil, isComplete {
@@ -38,13 +43,13 @@ struct BoundedHTTP1ResponseParser {
     return response
   }
 
-  private mutating func parseHeadIfAvailable() throws {
+  private mutating func parseHeadIfAvailable() throws -> Bool {
     let delimiter = Data("\r\n\r\n".utf8)
     guard let range = buffer.range(of: delimiter) else {
       guard buffer.count <= BondryHTTPRequest.maximumHeaderBytes else {
         throw BondryHTTPTransportError.responseTooLarge
       }
-      return
+      return false
     }
     guard range.upperBound <= BondryHTTPRequest.maximumHeaderBytes else {
       throw BondryHTTPTransportError.responseTooLarge
@@ -77,6 +82,12 @@ struct BoundedHTTP1ResponseParser {
       throw BondryHTTPTransportError.invalidResponse
     }
     let parsedHeaders = try Self.parseHeaders(Array(lines.dropFirst()))
+    if (100...199).contains(status) {
+      guard status != 101 else {
+        throw BondryHTTPTransportError.invalidResponse
+      }
+      return true
+    }
     statusCode = status
     headers = parsedHeaders.list
     framing = try Self.framing(
@@ -85,6 +96,7 @@ struct BoundedHTTP1ResponseParser {
       fields: parsedHeaders.fields,
       maximumBodyBytes: maximumBodyBytes
     )
+    return true
   }
 
   private mutating func parseBodyIfAvailable() throws -> ParsedHTTPResponse? {

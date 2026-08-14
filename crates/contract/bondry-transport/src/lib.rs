@@ -24,8 +24,8 @@ pub use policy::{
     classify_ip,
 };
 pub use websocket::{
-    WebSocketClose, WebSocketConnection, WebSocketEvent, WebSocketMessage, WebSocketRequest,
-    WebSocketTransport,
+    WebSocketClose, WebSocketConnection, WebSocketControlPayload, WebSocketEvent, WebSocketMessage,
+    WebSocketMessageKind, WebSocketRequest, WebSocketTransport,
 };
 
 /// A transport future tied to the transport or stream that created it.
