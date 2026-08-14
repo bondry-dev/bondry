@@ -42,11 +42,11 @@ Adapters translate external protocols into core invocations. Each adapter is res
 
 An adapter passes only a trusted principal into the core. Network adapters authenticate credentials before this boundary. Platform adapters may instead rely on an operating-system-owned invocation path and a principal selected by the host. Raw bearer tokens, cookies, passkeys, security-key responses, and other credentials must not cross this boundary.
 
-REST and MCP share `bondry-http` without sharing protocol translation or authorization grants. The optional `BondryLocalServer` product authenticates and rate-limits before removing credentials and handing a bounded request to an adapter. Applications that use only `Bondry` or `BondryAppIntents` do not link the HTTP, REST, or MCP implementation. `BondryAppIntents` exposes Apple Shortcuts through a host-selected local system principal and the dedicated `shortcuts` adapter identifier.
+REST and MCP share `bondry-http-server` without sharing protocol translation or authorization grants. The server owns transport concerns and invokes the pure `bondry-rest-proto` and `bondry-mcp-proto` request/response interfaces. The optional `BondryLocalServer` product authenticates and rate-limits before removing credentials and handing a bounded request to a protocol. Applications that use only `Bondry` or `BondryAppIntents` do not link the HTTP, REST, or MCP implementation. `BondryAppIntents` exposes Apple Shortcuts through a host-selected local system principal and the dedicated `shortcuts` adapter identifier.
 
-`bondry-rest` exposes authorized descriptors and generic capability invocation under `/api/v1`. It relies on the shared dispatcher for exact grants, input validation, handler execution, and audit outcomes.
+`bondry-rest-proto` exposes authorized descriptors and generic capability invocation under `/api/v1`. It relies on the shared dispatcher for exact grants, input validation, handler execution, and audit outcomes.
 
-`bondry-mcp` exposes the same capability model as MCP tools under `/mcp`. MCP `2026-07-28` is the primary stateless protocol, while `2025-11-25` initialization remains available for legacy clients. The adapter owns protocol negotiation, routing metadata, discovery, tool translation, and JSON-RPC error mapping without changing the core capability contract.
+`bondry-mcp-proto` exposes the same capability model as MCP tools under `/mcp`. MCP `2026-07-28` is the primary stateless protocol, while `2025-11-25` initialization remains available for legacy clients. The protocol owns negotiation, routing metadata, discovery, tool translation, and JSON-RPC error mapping without changing the core capability contract.
 
 ## Host Applications
 

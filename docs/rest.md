@@ -1,6 +1,6 @@
 # REST Adapter
 
-`bondry-rest` exposes authorized Bondry capabilities through a generic, versioned JSON API. It runs on `bondry-http`, so authentication, origin checks, rate limits, body limits, credential redaction, and server lifecycle remain shared with other HTTP adapters.
+`bondry-rest-proto` exposes authorized Bondry capabilities through a generic, versioned JSON API. It is a pure request/response protocol mounted by `bondry-http-server`, which owns authentication, origin checks, rate limits, body limits, credential redaction, and server lifecycle.
 
 The adapter identifier defaults to `rest`. A capability is visible and invocable only when policy grants the authenticated principal that exact adapter and capability combination.
 
@@ -46,4 +46,4 @@ The invocation identifier also appears in errors produced after dispatch begins 
 | `503` | `audit_unavailable` | Required audit recording failed |
 | `503` | `identifier_generation_unavailable` | Secure invocation identifier generation failed |
 
-Authentication, request size, rate limit, origin, and timeout failures are produced by `bondry-http` before the adapter receives a request.
+Authentication, request size, rate limit, origin, and timeout failures are produced by `bondry-http-server` before the protocol receives a request.

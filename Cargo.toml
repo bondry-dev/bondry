@@ -1,13 +1,13 @@
 [workspace]
 members = [
-    "crates/bondry-auth",
-    "crates/bondry-core",
-    "crates/bondry-runtime-ffi",
-    "crates/bondry-http",
-    "crates/bondry-local-server-ffi",
-    "crates/bondry-mcp",
-    "crates/bondry-rest",
-    "crates/bondry-store-sqlcipher",
+    "crates/contract/bondry-auth",
+    "crates/contract/bondry-core",
+    "crates/engine/bondry-http-server",
+    "crates/ffi/bondry-local-server-ffi",
+    "crates/ffi/bondry-runtime-ffi",
+    "crates/proto/bondry-mcp-proto",
+    "crates/proto/bondry-rest-proto",
+    "crates/store/bondry-store-sqlcipher",
     "itests/server-e2e",
 ]
 resolver = "3"

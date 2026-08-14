@@ -1,0 +1,22 @@
+[package]
+name = "bondry-core"
+description = "Protocol-neutral automation dispatch and policy primitives"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+license.workspace = true
+
+[dependencies]
+base64.workspace = true
+getrandom.workspace = true
+jsonschema.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+futures = "0.3"
+
+[lints]
+workspace = true

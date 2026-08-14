@@ -9,10 +9,10 @@ license.workspace = true
 publish = false
 
 [dependencies]
-bondry-core = { path = "../../crates/bondry-core" }
-bondry-http = { path = "../../crates/bondry-http" }
-bondry-mcp = { path = "../../crates/bondry-mcp" }
-bondry-rest = { path = "../../crates/bondry-rest" }
+bondry-core = { path = "../../crates/contract/bondry-core" }
+bondry-http-server = { path = "../../crates/engine/bondry-http-server" }
+bondry-mcp-proto = { path = "../../crates/proto/bondry-mcp-proto" }
+bondry-rest-proto = { path = "../../crates/proto/bondry-rest-proto" }
 serde_json.workspace = true
 
 [lints]

@@ -1,6 +1,6 @@
 # MCP Adapter
 
-`bondry-mcp` exposes authorized Bondry capabilities as MCP tools at the exact `/mcp` path. It runs on `bondry-http`, so authentication, origin checks, rate limits, body limits, credential removal, and server lifecycle are shared with the REST adapter.
+`bondry-mcp-proto` exposes authorized Bondry capabilities as MCP tools at the exact `/mcp` path. It is a pure request/response protocol mounted by `bondry-http-server`, which owns authentication, origin checks, rate limits, body limits, credential removal, and server lifecycle.
 
 The adapter identifier defaults to `mcp`. A tool is visible and invocable only when policy grants the authenticated principal that exact adapter and capability combination.
 

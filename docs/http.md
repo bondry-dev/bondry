@@ -1,6 +1,6 @@
 # Local HTTP
 
-`bondry-http` provides one reusable HTTP/1.1 runtime for local protocol adapters. REST and MCP can be installed independently as adapters while sharing transport authentication, origin validation, rate limiting, body bounds, timeouts, connection limits, and shutdown ownership.
+`bondry-http-server` provides one reusable HTTP/1.1 runtime for local protocols. REST and MCP can be mounted independently while sharing transport authentication, origin validation, rate limiting, body bounds, timeouts, connection limits, and shutdown ownership.
 
 ## Security Defaults
 
@@ -35,6 +35,6 @@ Hosts should keep the default loopback bind. If network access is required, a ho
 
 Authenticated requests use an independent sliding window for each principal. Rejected authentication attempts use a separate sliding window for each peer IP address, limiting credential guessing without forcing all valid local clients to share one quota. Rate-limited responses include `Retry-After`.
 
-## Adapter Boundary
+## Protocol Boundary
 
-The runtime selects an enabled adapter by path before authentication. A disabled or unknown route therefore remains a `404` rather than presenting an authentication challenge. Once authenticated, the adapter receives a bounded in-memory body, the authenticated principal, and the peer address. Protocol parsing, method handling, content negotiation, and error mapping remain adapter responsibilities.
+The runtime selects an enabled protocol by path before authentication. A disabled or unknown route therefore remains a `404` rather than presenting an authentication challenge. Once authenticated, the pure protocol handler receives a bounded in-memory request and the authenticated principal. Protocol parsing, method handling, content negotiation, and error mapping remain protocol responsibilities.

@@ -11,9 +11,9 @@ use bondry_core::{
     AdapterId, AutomationService, CapabilityDescriptor, CapabilityDiscoveryError, DenialReason,
     DispatchError, DispatchFuture, Invocation, Principal, PrincipalId, PrincipalKind,
 };
-use bondry_http::{Authentication, HttpAdapter, LocalHttpServer, ServerConfiguration};
-use bondry_mcp::{McpAdapter, McpServerInfo};
-use bondry_rest::RestAdapter;
+use bondry_http_server::{Authentication, LocalHttpServer, MountedProtocol, ServerConfiguration};
+use bondry_mcp_proto::{McpAdapter, McpServerInfo};
+use bondry_rest_proto::RestAdapter;
 use serde_json::Value;
 
 const REST_REQUEST: &str = include_str!("../../../fixtures/protocol-v1/rest/root.request.http");
@@ -50,10 +50,9 @@ fn serves_rest_and_mcp_through_one_runtime() -> Result<(), Box<dyn std::error::E
         service,
         McpServerInfo::new("phase-zero", "0.1.2")?.with_title("Phase Zero")?,
     )?;
-    let adapters: Vec<Arc<dyn HttpAdapter>> = vec![Arc::new(rest), Arc::new(mcp)];
     let server = LocalHttpServer::start(
         ServerConfiguration::new(Authentication::disabled(principal)),
-        adapters,
+        vec![MountedProtocol::Rest(rest), MountedProtocol::Mcp(mcp)],
     )?;
 
     let rest_request = REST_REQUEST.replace('\n', "\r\n");

@@ -1,0 +1,17 @@
+[package]
+name = "bondry-rest-proto"
+description = "Generic REST capability adapter for Bondry"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+license.workspace = true
+
+[dependencies]
+bondry-core = { path = "../../contract/bondry-core" }
+bytes.workspace = true
+http.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

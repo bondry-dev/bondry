@@ -96,7 +96,9 @@ dependencies = [
 name = "bondry-core"
 version = "0.1.2"
 dependencies = [
+ "base64",
  "futures",
+ "getrandom 0.4.3",
  "jsonschema",
  "serde",
  "serde_json",
@@ -104,13 +106,14 @@ dependencies = [
 ]
 
 [[package]]
-name = "bondry-http"
+name = "bondry-http-server"
 version = "0.1.2"
 dependencies = [
  "base64",
  "bondry-core",
+ "bondry-mcp-proto",
+ "bondry-rest-proto",
  "bytes",
- "getrandom 0.4.3",
  "http",
  "http-body-util",
  "hyper",
@@ -125,9 +128,9 @@ name = "bondry-local-server-ffi"
 version = "0.1.2"
 dependencies = [
  "bondry-core",
- "bondry-http",
- "bondry-mcp",
- "bondry-rest",
+ "bondry-http-server",
+ "bondry-mcp-proto",
+ "bondry-rest-proto",
  "bondry-runtime-ffi",
  "serde",
  "serde_json",
@@ -136,12 +139,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "bondry-mcp"
+name = "bondry-mcp-proto"
 version = "0.1.2"
 dependencies = [
  "base64",
  "bondry-core",
- "bondry-http",
  "bytes",
  "http",
  "serde_json",
@@ -149,13 +151,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "bondry-rest"
+name = "bondry-rest-proto"
 version = "0.1.2"
 dependencies = [
  "bondry-core",
- "bondry-http",
  "bytes",
- "futures",
  "http",
  "serde_json",
 ]
@@ -177,9 +177,9 @@ name = "bondry-server-e2e"
 version = "0.1.2"
 dependencies = [
  "bondry-core",
- "bondry-http",
- "bondry-mcp",
- "bondry-rest",
+ "bondry-http-server",
+ "bondry-mcp-proto",
+ "bondry-rest-proto",
  "serde_json",
 ]
 
