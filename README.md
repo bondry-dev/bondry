@@ -31,6 +31,8 @@ cargo fmt --all --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-features
 cargo xtask gate
+cargo audit
+cargo deny check
 swift format lint --recursive --strict Package.swift apple/Package.swift apple/Distribution/Package.release.swift apple/Sources apple/Tests apple/IntegrationTests/KeychainProbe/Sources
 swift test --package-path apple
 shellcheck apple/scripts/*.sh

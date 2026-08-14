@@ -9,7 +9,7 @@ license.workspace = true
 
 [dependencies]
 base64.workspace = true
-bondry-core = { path = "../bondry-core" }
+bondry-core = { version = "0.1.2", path = "../bondry-core" }
 getrandom.workspace = true
 sha2.workspace = true
 subtle.workspace = true

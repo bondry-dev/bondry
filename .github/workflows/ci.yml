@@ -18,40 +18,178 @@ env:
   RUST_BACKTRACE: "1"
 
 jobs:
-  rust:
-    name: Rust
+  changes:
+    name: Compute affected set
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      apple: ${{ steps.affected.outputs.apple }}
+      full: ${{ steps.affected.outputs.full }}
+      has_packages: ${{ steps.affected.outputs.has_packages }}
+      layer_source: ${{ steps.affected.outputs.layer_source }}
+      manifests: ${{ steps.affected.outputs.manifests }}
+      package_args: ${{ steps.affected.outputs.package_args }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+      - name: Install Rust
+        run: rustup toolchain install 1.90.0 --profile minimal
+      - name: Compute affected set
+        id: affected
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          set -eu
+          case "$BASE_SHA" in
+            "" | 0000000000000000000000000000000000000000) BASE_SHA=HEAD^ ;;
+          esac
+          cargo +1.90.0 xtask affected \
+            --base "$BASE_SHA" \
+            --head "$GITHUB_SHA" \
+            --github-output "$GITHUB_OUTPUT"
+
+  format:
+    name: Rust formatting
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Install Rust
+        run: rustup toolchain install 1.90.0 --profile minimal --component rustfmt
+      - name: Check formatting
+        run: cargo +1.90.0 fmt --all --check
+
+  affected-rust:
+    name: Affected Rust
+    if: github.event_name == 'pull_request' && needs.changes.outputs.has_packages == 'true'
+    needs: changes
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - name: Check out repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - name: Install Rust
-        run: rustup toolchain install 1.90.0 --profile minimal --component clippy,rustfmt
-      - name: Check formatting
-        run: cargo +1.90.0 fmt --all --check
-      - name: Lint
+        run: rustup toolchain install 1.90.0 --profile minimal --component clippy
+      - name: Restore Rust cache
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: |
+            ~/.cargo/bin/cargo-nextest
+            ~/.cargo/git
+            ~/.cargo/registry
+            target
+          key: ${{ runner.os }}-rust-1.90.0-nextest-0.9.128-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-rust-1.90.0-nextest-0.9.128-
+      - name: Install nextest
+        run: |
+          cargo nextest --version 2>/dev/null | grep -F 'cargo-nextest 0.9.128' > /dev/null || \
+            cargo +1.90.0 install cargo-nextest --locked --version 0.9.128
+      - name: Test affected packages
+        env:
+          PACKAGE_ARGS: ${{ needs.changes.outputs.package_args }}
+        run: |
+          read -r -a selected_packages <<< "$PACKAGE_ARGS"
+          cargo +1.90.0 nextest run --all-features --locked "${selected_packages[@]}"
+      - name: Lint affected packages
+        env:
+          PACKAGE_ARGS: ${{ needs.changes.outputs.package_args }}
+        run: |
+          read -r -a selected_packages <<< "$PACKAGE_ARGS"
+          cargo +1.90.0 clippy --all-targets --all-features --locked "${selected_packages[@]}" -- -D warnings
+
+  full-rust:
+    name: Full Rust
+    if: github.event_name != 'pull_request'
+    needs: changes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Install Rust
+        run: rustup toolchain install 1.90.0 --profile minimal --component clippy
+      - name: Restore Rust cache
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: |
+            ~/.cargo/bin/cargo-nextest
+            ~/.cargo/git
+            ~/.cargo/registry
+            target
+          key: ${{ runner.os }}-rust-1.90.0-nextest-0.9.128-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-rust-1.90.0-nextest-0.9.128-
+      - name: Install nextest
+        run: |
+          cargo nextest --version 2>/dev/null | grep -F 'cargo-nextest 0.9.128' > /dev/null || \
+            cargo +1.90.0 install cargo-nextest --locked --version 0.9.128
+      - name: Test workspace
+        run: cargo +1.90.0 nextest run --workspace --all-features --locked
+      - name: Lint workspace
         run: cargo +1.90.0 clippy --workspace --all-targets --all-features --locked -- -D warnings
-      - name: Test
-        run: cargo +1.90.0 test --workspace --all-features --locked
       - name: Build documentation
         env:
           RUSTDOCFLAGS: -D warnings
         run: cargo +1.90.0 doc --workspace --all-features --no-deps --locked
 
-  msrv:
-    name: Rust 1.85 MSRV
+  architecture:
+    name: Architecture gates
+    if: >-
+      needs.changes.outputs.manifests == 'true' ||
+      needs.changes.outputs.layer_source == 'true'
+    needs: changes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Install Rust
+        run: rustup toolchain install 1.90.0 --profile minimal
+      - name: Run architecture gates
+        run: cargo +1.90.0 xtask gate
+
+  dependencies:
+    name: Dependency policy
+    if: needs.changes.outputs.manifests == 'true'
+    needs: changes
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - name: Check out repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - name: Install Rust
-        run: rustup toolchain install 1.85.0 --profile minimal
-      - name: Check workspace
-        run: cargo +1.85.0 check --workspace --all-targets --all-features --locked
+        run: rustup toolchain install 1.90.0 --profile minimal
+      - name: Restore dependency-tool cache
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: |
+            ~/.cargo/advisory-db
+            ~/.cargo/bin/cargo-audit
+            ~/.cargo/bin/cargo-deny
+            ~/.cargo/git
+            ~/.cargo/registry
+          key: ${{ runner.os }}-rust-1.90.0-audit-0.22.2-deny-0.20.2-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-rust-1.90.0-audit-0.22.2-deny-0.20.2-
+      - name: Install dependency tools
+        run: |
+          cargo audit --version 2>/dev/null | grep -F '0.22.2' > /dev/null || \
+            cargo +1.90.0 install cargo-audit --locked --version 0.22.2
+          cargo deny --version 2>/dev/null | grep -F 'cargo-deny 0.20.2' > /dev/null || \
+            cargo +1.90.0 install cargo-deny --locked --version 0.20.2
+      - name: Audit advisories
+        run: cargo audit
+      - name: Check dependency policy
+        run: cargo deny check
 
   apple:
     name: Apple
+    if: needs.changes.outputs.apple == 'true'
+    needs: changes
     runs-on: macos-26
     timeout-minutes: 45
     steps:
@@ -76,6 +214,16 @@ jobs:
             aarch64-apple-ios-sim \
             x86_64-apple-ios
           cargo install --locked --version 0.9.1 --features cli cargo-about
+      - name: Restore Apple Rust cache
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: |
+            ~/.cargo/git
+            ~/.cargo/registry
+            target
+          key: ${{ runner.os }}-rust-1.90.0-apple-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-rust-1.90.0-apple-
       - name: Verify Apple build tools
         run: |
           set -eu

@@ -76,6 +76,8 @@ jobs:
             aarch64-apple-ios-sim \
             x86_64-apple-ios
           cargo install --locked --version 0.9.1 --features cli cargo-about
+          cargo install cargo-audit --locked --version 0.22.2
+          cargo install cargo-deny --locked --version 0.20.2
       - name: Verify release tools
         run: |
           set -eu
@@ -84,6 +86,8 @@ jobs:
             awk \
             cargo \
             cargo-about \
+            cargo-audit \
+            cargo-deny \
             cmp \
             cp \
             gh \
@@ -120,8 +124,11 @@ jobs:
         run: |
           actionlint .github/workflows/*.yml
           cargo fmt --all --check
+          cargo xtask gate
           cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
           cargo test --workspace --all-features --locked
+          cargo audit
+          cargo deny check
           swift format lint --recursive --strict Package.swift apple/Package.swift apple/Distribution/Package.release.swift apple/Sources apple/Tests apple/IntegrationTests/KeychainProbe/Sources
           swift test --package-path apple
           shellcheck .github/scripts/*.sh apple/scripts/*.sh

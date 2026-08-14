@@ -11,9 +11,9 @@ license.workspace = true
 crate-type = ["rlib", "staticlib"]
 
 [dependencies]
-bondry-auth = { path = "../../contract/bondry-auth" }
-bondry-core = { path = "../../contract/bondry-core" }
-bondry-store-sqlcipher = { path = "../../store/bondry-store-sqlcipher" }
+bondry-auth = { version = "0.1.2", path = "../../contract/bondry-auth" }
+bondry-core = { version = "0.1.2", path = "../../contract/bondry-core" }
+bondry-store-sqlcipher = { version = "0.1.2", path = "../../store/bondry-store-sqlcipher" }
 serde.workspace = true
 serde_json.workspace = true
 
