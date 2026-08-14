@@ -3,6 +3,7 @@ import Security
 
 public enum BondrySecretProviderError: Error, Equatable, Sendable {
   case emptyReference
+  case invalidReferenceLength(Int)
   case invalidConfiguration
   case invalidSecretLength(Int)
   case secretNotFound

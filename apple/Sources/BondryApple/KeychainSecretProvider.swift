@@ -12,20 +12,22 @@ public struct KeychainSecretProvider: Sendable {
   }
 
   public func resolve(_ reference: BondrySecretReference) throws -> BondryResolvedSecret {
-    try state.withLock {
+    try state.withLock(for: locator(for: reference)) {
       try load(reference)
     }
   }
 
+  /// Stores a secret from the single process authorized to mutate this locator.
   public func store(_ secret: Data, for reference: BondrySecretReference) throws {
     let material = try BondryResolvedSecret(current: secret)
-    try state.withLock {
+    try state.withLock(for: locator(for: reference)) {
       try write(material, for: reference)
     }
   }
 
+  /// Rotates a secret from the single process authorized to mutate this locator.
   public func rotate(to secret: Data, for reference: BondrySecretReference) throws {
-    try state.withLock {
+    try state.withLock(for: locator(for: reference)) {
       let existing = try load(reference)
       let current = try BondrySecretBytes(validating: secret)
       let rotated = BondryResolvedSecret(current: current, previous: existing.current)
@@ -33,8 +35,9 @@ public struct KeychainSecretProvider: Sendable {
     }
   }
 
+  /// Retires a previous secret from the single process authorized to mutate this locator.
   public func retirePrevious(for reference: BondrySecretReference) throws {
-    try state.withLock {
+    try state.withLock(for: locator(for: reference)) {
       let existing = try load(reference)
       try update(BondryResolvedSecret(current: existing.current), for: reference)
     }
@@ -114,16 +117,31 @@ public struct KeychainSecretProvider: Sendable {
 
 private final class KeychainSecretProviderState: @unchecked Sendable {
   let keychain: any KeychainClient
-  private let lock = NSLock()
 
   init(keychain: any KeychainClient) {
     self.keychain = keychain
   }
 
-  func withLock<T>(_ operation: () throws -> T) rethrows -> T {
+  func withLock<T>(
+    for locator: KeychainItemLocator,
+    _ operation: () throws -> T
+  ) rethrows -> T {
+    let lock = KeychainSecretLockRegistry.lock(for: locator)
     lock.lock()
     defer { lock.unlock() }
     return try operation()
+  }
+}
+
+enum KeychainSecretLockRegistry {
+  private static let stripeCount = 64
+  private static let locks = (0..<stripeCount).map { _ in NSLock() }
+
+  static func lock(for locator: KeychainItemLocator) -> NSLock {
+    var hasher = Hasher()
+    locator.hash(into: &hasher)
+    let index = UInt(bitPattern: hasher.finalize()) % UInt(stripeCount)
+    return locks[Int(index)]
   }
 }
 

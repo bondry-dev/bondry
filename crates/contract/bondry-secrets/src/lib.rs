@@ -7,7 +7,10 @@ mod signature;
 
 pub use canonical::{WebhookSigningInput, canonical_webhook_bytes};
 pub use provider::{ResolvedSecret, SecretProvider, SecretProviderError};
-pub use secret::{MAX_SECRET_BYTES, SecretRef, SecretRefError, SecretValue, SecretValueError};
+pub use secret::{
+    MAX_SECRET_BYTES, MAX_SECRET_REF_BYTES, SecretRef, SecretRefError, SecretValue,
+    SecretValueError,
+};
 pub use signature::{
     HmacSignature, HmacSignatureError, constant_time_eq, sign_webhook, verify_webhook,
 };
