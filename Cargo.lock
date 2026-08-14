@@ -173,6 +173,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "bondry-server-e2e"
+version = "0.1.2"
+dependencies = [
+ "bondry-core",
+ "bondry-http",
+ "bondry-mcp",
+ "bondry-rest",
+ "serde_json",
+]
+
+[[package]]
 name = "bondry-store-sqlcipher"
 version = "0.1.2"
 dependencies = [

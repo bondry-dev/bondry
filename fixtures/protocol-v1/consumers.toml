@@ -1,0 +1,2 @@
+version = 1
+consumers = ["bondry-rest", "bondry-mcp", "bondry-server-e2e"]
