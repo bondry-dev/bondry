@@ -136,6 +136,44 @@ jobs:
           RUSTDOCFLAGS: -D warnings
         run: cargo +1.90.0 doc --workspace --all-features --no-deps --locked
 
+  transport-features:
+    name: Transport feature matrix
+    if: >-
+      github.event_name != 'pull_request' ||
+      needs.changes.outputs.full == 'true' ||
+      contains(needs.changes.outputs.package_args, '-p bondry-transport-net')
+    needs: changes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Install Rust
+        run: rustup toolchain install 1.90.0 --profile minimal
+      - name: Restore Rust cache
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: |
+            ~/.cargo/git
+            ~/.cargo/registry
+            target
+          key: ${{ runner.os }}-rust-1.90.0-transport-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-rust-1.90.0-transport-
+      - name: Test supported feature combinations
+        run: |
+          cargo +1.90.0 test --locked -p bondry-transport-net --no-default-features --features http
+          cargo +1.90.0 test --locked -p bondry-transport-net --no-default-features --features http,tls
+          cargo +1.90.0 test --locked -p bondry-transport-net --no-default-features --features http,unix-socket
+          cargo +1.90.0 test --locked -p bondry-transport-net --no-default-features --features http,tls,unix-socket
+      - name: Verify HTTP-only dependency closure
+        run: |
+          cargo +1.90.0 tree --locked -p bondry-transport-net --no-default-features --features http > target/transport-http-tree.txt
+          if grep -E 'rustls|ring|tungstenite' target/transport-http-tree.txt; then
+            echo 'HTTP-only transport contains a TLS or WebSocket dependency' >&2
+            exit 1
+          fi
+
   architecture:
     name: Architecture gates
     if: >-

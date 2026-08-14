@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "vectors": [
+    {
+      "id": "invalid-status",
+      "response_base64": "SFRUUC8xLjEgWFlaIEJyb2tlbg0KQ29udGVudC1MZW5ndGg6IDANCg0K",
+      "expected": "invalidResponse"
+    },
+    {
+      "id": "conflicting-content-length",
+      "response_base64": "SFRUUC8xLjEgMjAwIE9LDQpDb250ZW50LUxlbmd0aDogMQ0KQ29udGVudC1MZW5ndGg6IDINCg0KYQ==",
+      "expected": "invalidResponse"
+    },
+    {
+      "id": "truncated-body",
+      "response_base64": "SFRUUC8xLjEgMjAwIE9LDQpDb250ZW50LUxlbmd0aDogNQ0KDQphYg==",
+      "expected": "invalidResponse"
+    },
+    {
+      "id": "invalid-chunk-size",
+      "response_base64": "SFRUUC8xLjEgMjAwIE9LDQpUcmFuc2Zlci1FbmNvZGluZzogY2h1bmtlZA0KDQpaWg0KYm9keQ0KMA0KDQo=",
+      "expected": "invalidResponse"
+    }
+  ]
+}

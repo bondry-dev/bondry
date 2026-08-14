@@ -15,7 +15,7 @@ bondry-rest-proto = { version = "0.1.2", path = "../../proto/bondry-rest-proto" 
 bytes.workspace = true
 http.workspace = true
 http-body-util.workspace = true
-hyper.workspace = true
+hyper = { workspace = true, features = ["http1", "server"] }
 hyper-util.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
