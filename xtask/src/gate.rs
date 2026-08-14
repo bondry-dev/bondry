@@ -306,13 +306,24 @@ fn rust_files(directory: &Path) -> Result<Vec<PathBuf>, Box<dyn Error>> {
             let path = entry.path();
             if path.is_dir() {
                 pending.push(path);
-            } else if path.extension().is_some_and(|extension| extension == "rs") {
+            } else if path.extension().is_some_and(|extension| extension == "rs")
+                && !is_test_source(directory, &path)
+            {
                 files.push(path);
             }
         }
     }
     files.sort();
     Ok(files)
+}
+
+fn is_test_source(source_root: &Path, path: &Path) -> bool {
+    path.file_name().is_some_and(|name| name == "tests.rs")
+        || path.strip_prefix(source_root).is_ok_and(|relative| {
+            relative
+                .components()
+                .any(|component| component.as_os_str() == "tests")
+        })
 }
 
 fn relative_display(root: &Path, path: &Path) -> String {
