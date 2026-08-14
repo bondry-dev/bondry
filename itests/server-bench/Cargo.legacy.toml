@@ -1,0 +1,28 @@
+[package]
+name = "bondry-server-bench"
+description = "Reproducible REST and MCP performance harness for Bondry"
+version = "0.1.2"
+edition = "2024"
+rust-version = "1.85"
+publish = false
+
+[dependencies]
+bondry-core = { path = "../../crates/bondry-core" }
+bondry-http = { path = "../../crates/bondry-http" }
+bondry-mcp = { path = "../../crates/bondry-mcp" }
+bondry-rest = { path = "../../crates/bondry-rest" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+stats_alloc = "0.1.10"
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(bondry_legacy_layout)'] }
+
+[workspace]
+
+[profile.release]
+opt-level = "z"
+lto = "fat"
+codegen-units = 1
+strip = "debuginfo"
+panic = "unwind"

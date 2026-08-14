@@ -1,0 +1,21 @@
+[package]
+name = "bondry-server-bench"
+description = "Reproducible REST and MCP performance harness for Bondry"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+bondry-core = { path = "../../crates/contract/bondry-core" }
+bondry-http-server = { path = "../../crates/engine/bondry-http-server" }
+bondry-mcp-proto = { path = "../../crates/proto/bondry-mcp-proto" }
+bondry-rest-proto = { path = "../../crates/proto/bondry-rest-proto" }
+serde.workspace = true
+serde_json.workspace = true
+stats_alloc.workspace = true
+
+[lints]
+workspace = true
