@@ -186,6 +186,48 @@ jobs:
       - name: Check dependency policy
         run: cargo deny check
 
+  performance-smoke:
+    name: REST/MCP performance smoke
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+      - name: Install Rust
+        run: rustup toolchain install 1.90.0 --profile minimal
+      - name: Restore Rust cache
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: |
+            ~/.cargo/git
+            ~/.cargo/registry
+            target
+          key: ${{ runner.os }}-rust-1.90.0-performance-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-rust-1.90.0-performance-
+      - name: Run paired performance smoke
+        env:
+          BONDRY_BENCH_CONNECTIONS: "8"
+          BONDRY_BENCH_REQUESTS: "5000"
+          BONDRY_BENCH_WARMUP: "500"
+        run: scripts/run-phase-0-performance.sh baseline
+      - name: Report performance drift
+        run: |
+          scripts/check-performance-smoke.sh \
+            target/phase-0-performance/results/baseline-v0.1.2-opt-z-lto-fat-cgu-1.json \
+            target/phase-0-performance/results/current-opt-z-lto-fat-cgu-1.json
+      - name: Upload performance report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: rest-mcp-performance-smoke-${{ github.sha }}
+          path: target/phase-0-performance/results/*.json
+          if-no-files-found: ignore
+          retention-days: 30
+
   apple:
     name: Apple
     if: needs.changes.outputs.apple == 'true'
