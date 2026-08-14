@@ -27,7 +27,8 @@ public struct KeychainSecretProvider: Sendable {
   public func rotate(to secret: Data, for reference: BondrySecretReference) throws {
     try state.withLock {
       let existing = try load(reference)
-      let rotated = try BondryResolvedSecret(current: secret, previous: existing.current)
+      let current = try BondrySecretBytes(validating: secret)
+      let rotated = BondryResolvedSecret(current: current, previous: existing.current)
       try update(rotated, for: reference)
     }
   }
@@ -41,7 +42,8 @@ public struct KeychainSecretProvider: Sendable {
 
   private func load(_ reference: BondrySecretReference) throws -> BondryResolvedSecret {
     switch state.keychain.copyData(for: locator(for: reference)) {
-    case .found(let data):
+    case .found(var data):
+      defer { data.zeroize() }
       return try SecretEnvelope.decode(data)
     case .missing:
       throw BondrySecretProviderError.secretNotFound
@@ -57,7 +59,8 @@ public struct KeychainSecretProvider: Sendable {
     for reference: BondrySecretReference
   ) throws {
     let locator = locator(for: reference)
-    let data = SecretEnvelope.encode(material)
+    var data = SecretEnvelope.encode(material)
+    defer { data.zeroize() }
     let status = state.keychain.add(data: data, for: locator)
     if status == errSecSuccess {
       return
@@ -73,10 +76,9 @@ public struct KeychainSecretProvider: Sendable {
     _ material: BondryResolvedSecret,
     for reference: BondrySecretReference
   ) throws {
-    let status = state.keychain.update(
-      data: SecretEnvelope.encode(material),
-      for: locator(for: reference)
-    )
+    var data = SecretEnvelope.encode(material)
+    defer { data.zeroize() }
+    let status = state.keychain.update(data: data, for: locator(for: reference))
     if status == errSecSuccess {
       return
     }
@@ -130,11 +132,11 @@ private enum SecretEnvelope {
 
   static func encode(_ material: BondryResolvedSecret) -> Data {
     var result = Data([version])
-    appendLength(material.current.count, to: &result)
-    result.append(material.current)
-    appendLength(material.previous?.count ?? 0, to: &result)
+    appendLength(material.current.byteCount, to: &result)
+    material.current.withUnsafeBytes { result.append(contentsOf: $0) }
+    appendLength(material.previous?.byteCount ?? 0, to: &result)
     if let previous = material.previous {
-      result.append(previous)
+      previous.withUnsafeBytes { result.append(contentsOf: $0) }
     }
     return result
   }
@@ -143,12 +145,17 @@ private enum SecretEnvelope {
     var cursor = data.startIndex
     guard readByte(from: data, cursor: &cursor) == version,
       let currentLength = readLength(from: data, cursor: &cursor),
-      let current = readData(length: currentLength, from: data, cursor: &cursor),
+      let currentValue = readData(length: currentLength, from: data, cursor: &cursor),
       let previousLength = readLength(from: data, cursor: &cursor)
     else {
       throw BondrySecretProviderError.corruptStoredSecret
     }
-    let previous: Data?
+    var current = currentValue
+    var previous: Data?
+    defer {
+      current.zeroize()
+      previous?.zeroize()
+    }
     if previousLength == 0 {
       previous = nil
     } else {
@@ -201,5 +208,11 @@ private enum SecretEnvelope {
     }
     defer { cursor = end }
     return data[cursor..<end]
+  }
+}
+
+extension Data {
+  fileprivate mutating func zeroize() {
+    resetBytes(in: startIndex..<endIndex)
   }
 }

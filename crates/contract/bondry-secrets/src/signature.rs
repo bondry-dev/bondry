@@ -5,7 +5,7 @@ use sha2::Sha256;
 use subtle::{Choice, ConstantTimeEq};
 use thiserror::Error;
 
-use crate::{ResolvedSecret, SecretValue, WebhookSigningInput, canonical_webhook_bytes};
+use crate::{ResolvedSecret, SecretValue, WebhookSigningInput};
 
 const HMAC_SHA256_BYTES: usize = 32;
 const HMAC_SHA256_HEX_BYTES: usize = HMAC_SHA256_BYTES * 2;
@@ -73,7 +73,7 @@ pub fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
 /// Signs a Bondry webhook with the provider's current secret.
 #[must_use]
 pub fn sign_webhook(secret: &SecretValue, input: WebhookSigningInput<'_>) -> HmacSignature {
-    sign(secret, &canonical_webhook_bytes(input))
+    sign(secret, input)
 }
 
 /// Verifies against both rotation-overlap values without an early return.
@@ -83,11 +83,10 @@ pub fn verify_webhook(
     input: WebhookSigningInput<'_>,
     candidate: &HmacSignature,
 ) -> bool {
-    let canonical = canonical_webhook_bytes(input);
-    let current = sign(secrets.current_value(), &canonical);
+    let current = sign(secrets.current_value(), input);
     let mut matched = current.0.ct_eq(&candidate.0);
     if let Some(previous) = secrets.previous_value() {
-        let previous = sign(previous, &canonical);
+        let previous = sign(previous, input);
         matched |= previous.0.ct_eq(&candidate.0);
     } else {
         matched |= Choice::from(0);
@@ -95,11 +94,31 @@ pub fn verify_webhook(
     bool::from(matched)
 }
 
-fn sign(secret: &SecretValue, input: &[u8]) -> HmacSignature {
+fn sign(secret: &SecretValue, input: WebhookSigningInput<'_>) -> HmacSignature {
     let mut mac = HmacSha256::new_from_slice(secret.expose())
         .unwrap_or_else(|_| unreachable!("HMAC accepts every key length admitted by SecretValue"));
-    mac.update(input);
+    update_webhook_mac(&mut mac, input);
     HmacSignature(mac.finalize().into_bytes().into())
+}
+
+fn update_webhook_mac(mac: &mut HmacSha256, input: WebhookSigningInput<'_>) {
+    let timestamp = input.timestamp_unix_seconds.to_string();
+    let delivery_id_length = input.delivery_id.len().to_string();
+    let body_length = input.body.len().to_string();
+    for component in [
+        b"bondry-webhook-v1\n".as_slice(),
+        timestamp.as_bytes(),
+        b"\n",
+        delivery_id_length.as_bytes(),
+        b"\n",
+        input.delivery_id,
+        b"\n",
+        body_length.as_bytes(),
+        b"\n",
+        input.body,
+    ] {
+        mac.update(component);
+    }
 }
 
 fn decode_nibble(value: u8) -> Option<u8> {

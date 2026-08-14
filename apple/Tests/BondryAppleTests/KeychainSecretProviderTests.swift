@@ -16,7 +16,7 @@ final class KeychainSecretProviderTests: XCTestCase {
 
     try provider.store(Data("current".utf8), for: reference)
 
-    XCTAssertEqual(
+    assertSecret(
       try provider.resolve(reference),
       try BondryResolvedSecret(current: Data("current".utf8))
     )
@@ -29,7 +29,7 @@ final class KeychainSecretProviderTests: XCTestCase {
 
     try provider.rotate(to: Data("second".utf8), for: reference)
 
-    XCTAssertEqual(
+    assertSecret(
       try provider.resolve(reference),
       try BondryResolvedSecret(
         current: Data("second".utf8),
@@ -46,7 +46,7 @@ final class KeychainSecretProviderTests: XCTestCase {
 
     try provider.retirePrevious(for: reference)
 
-    XCTAssertEqual(
+    assertSecret(
       try provider.resolve(reference),
       try BondryResolvedSecret(current: Data("second".utf8))
     )
@@ -89,6 +89,14 @@ final class KeychainSecretProviderTests: XCTestCase {
     }
   }
 
+  func testResolvedSecretsAreRedactedFromDebugAndReflection() throws {
+    let secret = try BondryResolvedSecret(current: Data("visible-in-test".utf8))
+
+    XCTAssertFalse(String(reflecting: secret).contains("visible-in-test"))
+    XCTAssertFalse(String(reflecting: secret.current).contains("visible-in-test"))
+    XCTAssertEqual(String(reflecting: secret), "BondryResolvedSecret([REDACTED])")
+  }
+
   private func makeProvider(_ keychain: SecretTestKeychainClient) -> KeychainSecretProvider {
     KeychainSecretProvider(configuration: configuration, keychain: keychain)
   }
@@ -99,6 +107,27 @@ final class KeychainSecretProviderTests: XCTestCase {
       account: reference.rawValue,
       accessGroup: configuration.accessGroup
     )
+  }
+
+  private func assertSecret(
+    _ actual: BondryResolvedSecret,
+    _ expected: BondryResolvedSecret,
+    file: StaticString = #filePath,
+    line: UInt = #line
+  ) {
+    XCTAssertEqual(actual.current.copiedData, expected.current.copiedData, file: file, line: line)
+    XCTAssertEqual(
+      actual.previous?.copiedData,
+      expected.previous?.copiedData,
+      file: file,
+      line: line
+    )
+  }
+}
+
+extension BondrySecretBytes {
+  fileprivate var copiedData: Data {
+    withUnsafeBytes { Data($0) }
   }
 }
 
