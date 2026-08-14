@@ -348,15 +348,15 @@ impl HttpClient {
             if self.line == "\r\n" {
                 break;
             }
-            if let Some((name, value)) = self.line.split_once(':')
-                && name.eq_ignore_ascii_case("content-length")
-            {
-                content_length = Some(
-                    value
-                        .trim()
-                        .parse::<usize>()
-                        .map_err(|_| io::Error::other("invalid content length"))?,
-                );
+            if let Some((name, value)) = self.line.split_once(':') {
+                if name.eq_ignore_ascii_case("content-length") {
+                    content_length = Some(
+                        value
+                            .trim()
+                            .parse::<usize>()
+                            .map_err(|_| io::Error::other("invalid content length"))?,
+                    );
+                }
             }
         }
         let content_length =
