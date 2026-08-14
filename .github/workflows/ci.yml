@@ -330,7 +330,7 @@ jobs:
           shellcheck .github/scripts/*.sh apple/scripts/*.sh
           sh .github/scripts/test-install-homebrew-tools.sh
       - name: Check Swift formatting
-        run: swift format lint --recursive --strict Package.swift apple/Package.swift apple/Distribution/Package.release.swift apple/Sources apple/Tests apple/IntegrationTests/KeychainProbe/Sources
+        run: swift format lint --recursive --strict Package.swift apple/Package.swift apple/Fuzz/Package.swift apple/Distribution/Package.release.swift apple/Fuzz/Sources apple/Sources apple/Tests apple/IntegrationTests/KeychainProbe/Sources
       - name: Test Rust on Apple
         run: cargo test --workspace --all-features --locked
       - name: Test Swift

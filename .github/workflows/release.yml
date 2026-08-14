@@ -129,7 +129,7 @@ jobs:
           cargo test --workspace --all-features --locked
           cargo audit
           cargo deny check
-          swift format lint --recursive --strict Package.swift apple/Package.swift apple/Distribution/Package.release.swift apple/Sources apple/Tests apple/IntegrationTests/KeychainProbe/Sources
+          swift format lint --recursive --strict Package.swift apple/Package.swift apple/Fuzz/Package.swift apple/Distribution/Package.release.swift apple/Fuzz/Sources apple/Sources apple/Tests apple/IntegrationTests/KeychainProbe/Sources
           swift test --package-path apple
           shellcheck .github/scripts/*.sh apple/scripts/*.sh
       - name: Build release artifact
