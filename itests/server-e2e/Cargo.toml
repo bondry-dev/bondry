@@ -1,0 +1,19 @@
+[package]
+name = "bondry-server-e2e"
+description = "End-to-end characterization tests for the Bondry local server"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+bondry-core = { path = "../../crates/bondry-core" }
+bondry-http = { path = "../../crates/bondry-http" }
+bondry-mcp = { path = "../../crates/bondry-mcp" }
+bondry-rest = { path = "../../crates/bondry-rest" }
+serde_json.workspace = true
+
+[lints]
+workspace = true

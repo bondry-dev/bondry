@@ -1,0 +1,7 @@
+{
+  "version": "v1",
+  "resources": {
+    "capabilities": "/api/v1/capabilities",
+    "invoke": "/api/v1/capabilities/{capabilityId}"
+  }
+}
