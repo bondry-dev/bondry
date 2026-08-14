@@ -171,7 +171,12 @@ mod tests {
                     EndpointPolicy::default(),
                 )?)
                 .await;
-            assert_eq!(result.err(), Some(TransportError::InvalidResponse));
+            assert_eq!(
+                result.err(),
+                Some(TransportError::InvalidResponse),
+                "{}",
+                vector.id
+            );
             server.await??;
         }
         Ok(())
@@ -184,6 +189,7 @@ mod tests {
 
     #[derive(Deserialize)]
     struct MalformedVector {
+        id: String,
         response_base64: String,
     }
 

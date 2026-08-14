@@ -16,6 +16,8 @@ use tokio::{
     time::{Instant, timeout_at},
 };
 
+const READ_BUFFER_BYTES: usize = 64 * 1024;
+
 /// Unix-domain socket transport with filesystem and kernel peer verification.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct UnixSocketTransport;
@@ -54,7 +56,7 @@ impl LocalByteStream for TokioUnixStream {
             if max_bytes == 0 {
                 return Err(LocalTransportError::InvalidReadBound);
             }
-            let mut buffer = vec![0_u8; max_bytes];
+            let mut buffer = vec![0_u8; max_bytes.min(READ_BUFFER_BYTES)];
             let read = timeout_at(Instant::from_std(deadline.instant()), async {
                 self.stream
                     .lock()
@@ -175,4 +177,36 @@ fn peer_credentials(stream: &UnixStream) -> Result<(u32, u32), LocalTransportErr
 )))]
 fn peer_credentials(_stream: &UnixStream) -> Result<(u32, u32), LocalTransportError> {
     Err(LocalTransportError::UnsupportedEndpoint)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::{Duration, Instant as StdInstant};
+
+    use bondry_transport::{Deadline, LocalByteStream as _};
+    use tokio::io::AsyncWriteExt as _;
+
+    use super::{Mutex, TokioUnixStream, UnixStream};
+
+    #[tokio::test]
+    async fn caller_read_bound_cannot_force_an_unbounded_allocation() {
+        let (stream, mut peer) = UnixStream::pair()
+            .unwrap_or_else(|error| unreachable!("create Unix stream pair: {error}"));
+        peer.write_all(b"bounded")
+            .await
+            .unwrap_or_else(|error| unreachable!("write fixture bytes: {error}"));
+        let stream = TokioUnixStream {
+            stream: Mutex::new(stream),
+        };
+
+        let bytes = stream
+            .read(
+                usize::MAX,
+                Deadline::at(StdInstant::now() + Duration::from_secs(1)),
+            )
+            .await
+            .unwrap_or_else(|error| unreachable!("read fixture bytes: {error}"));
+
+        assert_eq!(bytes, b"bounded".as_slice());
+    }
 }

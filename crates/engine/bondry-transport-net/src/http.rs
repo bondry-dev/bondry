@@ -228,6 +228,11 @@ where
             .send_request(request)
             .await
             .map_err(|_| TransportError::InvalidResponse)?;
+        if response.headers().contains_key(header::TRANSFER_ENCODING)
+            && response.headers().contains_key(header::CONTENT_LENGTH)
+        {
+            return Err(TransportError::InvalidResponse);
+        }
         if response.status().is_redirection() {
             return Err(TransportError::Policy(
                 bondry_transport::PolicyError::RedirectDenied,

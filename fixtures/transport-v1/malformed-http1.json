@@ -20,6 +20,26 @@
       "id": "invalid-chunk-size",
       "response_base64": "SFRUUC8xLjEgMjAwIE9LDQpUcmFuc2Zlci1FbmNvZGluZzogY2h1bmtlZA0KDQpaWg0KYm9keQ0KMA0KDQo=",
       "expected": "invalidResponse"
+    },
+    {
+      "id": "content-length-and-transfer-encoding",
+      "response_base64": "SFRUUC8xLjEgMjAwIE9LDQpDb250ZW50LUxlbmd0aDogMQ0KVHJhbnNmZXItRW5jb2Rpbmc6IGNodW5rZWQNCg0KMQ0KYQ0KMA0KDQo=",
+      "expected": "invalidResponse"
+    },
+    {
+      "id": "obs-fold",
+      "response_base64": "SFRUUC8xLjEgMjAwIE9LDQpYLVRlc3Q6IGZpcnN0DQogc2Vjb25kDQpDb250ZW50LUxlbmd0aDogMA0KDQo=",
+      "expected": "invalidResponse"
+    },
+    {
+      "id": "content-length-overflow",
+      "response_base64": "SFRUUC8xLjEgMjAwIE9LDQpDb250ZW50LUxlbmd0aDogOTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5DQoNCg==",
+      "expected": "invalidResponse"
+    },
+    {
+      "id": "invalid-header-control",
+      "response_base64": "SFRUUC8xLjEgMjAwIE9LDQpYLVRlc3Q6IGJhZAB2YWx1ZQ0KQ29udGVudC1MZW5ndGg6IDANCg0K",
+      "expected": "invalidResponse"
     }
   ]
 }
