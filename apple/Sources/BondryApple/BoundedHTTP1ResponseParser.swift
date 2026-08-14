@@ -272,3 +272,31 @@ extension UInt8 {
       || "!#$%&'*+-.^_`|~".utf8.contains(self)
   }
 }
+
+@_spi(BondryFuzzing)
+public func fuzzBoundedHTTP1ResponseParser(_ input: Data) {
+  let methods = ["GET", "HEAD", "POST"]
+  let selector = input.first ?? 0
+  let method = methods[Int(selector) % methods.count]
+  let payload = input
+  var parser = BoundedHTTP1ResponseParser(
+    requestMethod: method,
+    maximumBodyBytes: BondryHTTPRequest.maximumBodyBytes
+  )
+
+  do {
+    if selector & 1 == 0 || payload.isEmpty {
+      _ = try parser.consume(payload, isComplete: true)
+      return
+    }
+    let chunkSize = 1 + Int(payload.dropFirst().first ?? selector)
+    var offset = payload.startIndex
+    while offset < payload.endIndex {
+      let end =
+        payload.index(offset, offsetBy: chunkSize, limitedBy: payload.endIndex)
+        ?? payload.endIndex
+      _ = try parser.consume(Data(payload[offset..<end]), isComplete: end == payload.endIndex)
+      offset = end
+    }
+  } catch {}
+}
