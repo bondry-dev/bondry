@@ -4,15 +4,27 @@ use thiserror::Error;
 
 use crate::NetworkEndpoint;
 
+/// Maximum number of additional roots carried by one route.
+pub const MAX_ADDITIONAL_TRUST_ANCHORS: usize = 8;
+/// Maximum DER size for one additional root.
+pub const MAX_ADDITIONAL_TRUST_ANCHOR_BYTES: usize = 16 * 1024;
+/// Maximum aggregate DER size for a route's additional roots.
+pub const MAX_ADDITIONAL_TRUST_ANCHOR_AGGREGATE_BYTES: usize = 64 * 1024;
+
 /// DER-encoded root certificate added for one route.
-#[derive(Clone, Eq, PartialEq)]
+#[derive(Clone, Eq, Hash, PartialEq)]
 pub struct AdditionalTrustAnchor(Vec<u8>);
 
 impl AdditionalTrustAnchor {
     /// Wraps an additional root certificate for transport validation.
-    #[must_use]
-    pub fn from_der(der: Vec<u8>) -> Self {
-        Self(der)
+    pub fn from_der(der: Vec<u8>) -> Result<Self, TrustAnchorError> {
+        if der.is_empty() {
+            return Err(TrustAnchorError::Empty);
+        }
+        if der.len() > MAX_ADDITIONAL_TRUST_ANCHOR_BYTES {
+            return Err(TrustAnchorError::TooLong);
+        }
+        Ok(Self(der))
     }
 
     /// Returns the DER bytes consumed by a TLS implementation.
@@ -20,6 +32,17 @@ impl AdditionalTrustAnchor {
     pub fn as_der(&self) -> &[u8] {
         &self.0
     }
+}
+
+/// An invalid additional trust anchor.
+#[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
+pub enum TrustAnchorError {
+    /// An empty value cannot encode a certificate.
+    #[error("an additional trust anchor cannot be empty")]
+    Empty,
+    /// One DER value exceeds the route limit.
+    #[error("an additional trust anchor cannot exceed 16 KiB")]
+    TooLong,
 }
 
 impl fmt::Debug for AdditionalTrustAnchor {
@@ -32,7 +55,7 @@ impl fmt::Debug for AdditionalTrustAnchor {
 }
 
 /// Redirect behavior for network transports.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
 #[non_exhaustive]
 pub enum RedirectPolicy {
     /// Never follow a redirect.
@@ -41,8 +64,9 @@ pub enum RedirectPolicy {
 }
 
 /// Route-owned network policy enforced against the established connection.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
 pub struct EndpointPolicy {
+    allow_hostname_loopback_cleartext: bool,
     allow_private_cleartext: bool,
     allow_link_local_cleartext: bool,
     redirects: RedirectPolicy,
@@ -50,6 +74,13 @@ pub struct EndpointPolicy {
 }
 
 impl EndpointPolicy {
+    /// Explicitly permits a hostname to resolve to a verified loopback peer.
+    #[must_use]
+    pub const fn allowing_hostname_loopback_cleartext(mut self) -> Self {
+        self.allow_hostname_loopback_cleartext = true;
+        self
+    }
+
     /// Explicitly permits cleartext connections to RFC 1918 and IPv6 ULA peers.
     #[must_use]
     pub const fn allowing_private_cleartext(mut self) -> Self {
@@ -65,10 +96,23 @@ impl EndpointPolicy {
     }
 
     /// Adds a root without changing any other certificate verification rule.
-    #[must_use]
-    pub fn with_additional_trust_anchor(mut self, anchor: AdditionalTrustAnchor) -> Self {
+    pub fn with_additional_trust_anchor(
+        mut self,
+        anchor: AdditionalTrustAnchor,
+    ) -> Result<Self, EndpointPolicyError> {
+        if self.additional_trust_anchors.len() == MAX_ADDITIONAL_TRUST_ANCHORS {
+            return Err(EndpointPolicyError::TooManyTrustAnchors);
+        }
+        let aggregate_bytes = self
+            .additional_trust_anchors
+            .iter()
+            .map(|existing| existing.as_der().len())
+            .sum::<usize>();
+        if aggregate_bytes + anchor.as_der().len() > MAX_ADDITIONAL_TRUST_ANCHOR_AGGREGATE_BYTES {
+            return Err(EndpointPolicyError::TrustAnchorsTooLarge);
+        }
         self.additional_trust_anchors.push(anchor);
-        self
+        Ok(self)
     }
 
     /// Returns the additional route roots.
@@ -112,7 +156,16 @@ impl EndpointPolicy {
             return Err(PolicyError::EvidenceMismatch);
         }
         match classify_ip(peer.ip()) {
-            IpAddressClass::Loopback => Ok(VerifiedConnection { evidence }),
+            IpAddressClass::Loopback if loopback_intent(endpoint.host()) => {
+                Ok(VerifiedConnection { evidence })
+            }
+            IpAddressClass::Loopback
+                if self.allow_hostname_loopback_cleartext
+                    && !looks_like_ip_literal(endpoint.host()) =>
+            {
+                Ok(VerifiedConnection { evidence })
+            }
+            IpAddressClass::Loopback => Err(PolicyError::LoopbackIntentRequired),
             IpAddressClass::Private if self.allow_private_cleartext => {
                 Ok(VerifiedConnection { evidence })
             }
@@ -134,6 +187,17 @@ impl EndpointPolicy {
     pub const fn verify_redirect(&self, _target: &NetworkEndpoint) -> Result<(), PolicyError> {
         Err(PolicyError::RedirectDenied)
     }
+}
+
+/// An invalid route-owned endpoint policy.
+#[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
+pub enum EndpointPolicyError {
+    /// The route exceeds the trust-anchor count limit.
+    #[error("an endpoint policy cannot contain more than 8 additional trust anchors")]
+    TooManyTrustAnchors,
+    /// The route exceeds the aggregate trust-anchor size limit.
+    #[error("an endpoint policy cannot contain more than 64 KiB of additional trust anchors")]
+    TrustAnchorsTooLarge,
 }
 
 /// An IP address represented without socket APIs in the contract layer.
@@ -309,6 +373,9 @@ pub enum PolicyError {
     /// TLS authenticated a different identity.
     #[error("authenticated TLS identity does not match the endpoint")]
     TlsIdentityMismatch,
+    /// A loopback peer was reached without explicit loopback intent.
+    #[error("cleartext loopback requires explicit endpoint intent")]
+    LoopbackIntentRequired,
     /// A private cleartext peer requires explicit route opt-in.
     #[error("private-network cleartext is not allowed")]
     PrivateCleartextDenied,
@@ -400,13 +467,54 @@ fn server_names_match(endpoint: &str, verified: &str) -> bool {
         .eq_ignore_ascii_case(verified.trim_end_matches('.'))
 }
 
+fn loopback_intent(host: &str) -> bool {
+    let host = unbracketed_host(host);
+    let hostname = host.strip_suffix('.').unwrap_or(host);
+    if !hostname.ends_with('.') && hostname.eq_ignore_ascii_case("localhost") {
+        return true;
+    }
+    if host == "::1" {
+        return true;
+    }
+    canonical_ipv4(host).is_some_and(|address| address[0] == 127)
+}
+
+fn looks_like_ip_literal(host: &str) -> bool {
+    let host = unbracketed_host(host);
+    host.contains(':')
+        || host
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || byte == b'.')
+}
+
+fn unbracketed_host(host: &str) -> &str {
+    host.strip_prefix('[')
+        .and_then(|value| value.strip_suffix(']'))
+        .unwrap_or(host)
+}
+
+fn canonical_ipv4(host: &str) -> Option<[u8; 4]> {
+    let mut address = [0_u8; 4];
+    let mut parts = host.split('.');
+    for octet in &mut address {
+        let part = parts.next()?;
+        if part.is_empty() || (part.len() > 1 && part.starts_with('0')) {
+            return None;
+        }
+        *octet = part.parse().ok()?;
+    }
+    parts.next().is_none().then_some(address)
+}
+
 #[cfg(test)]
 mod tests {
     use serde::Deserialize;
 
     use super::{
-        ConnectionEvidence, EndpointPolicy, IpAddress, IpAddressClass, PeerAddress, PolicyError,
-        TlsConnectionEvidence, classify_ip,
+        AdditionalTrustAnchor, ConnectionEvidence, EndpointPolicy, EndpointPolicyError, IpAddress,
+        IpAddressClass, MAX_ADDITIONAL_TRUST_ANCHOR_AGGREGATE_BYTES,
+        MAX_ADDITIONAL_TRUST_ANCHOR_BYTES, MAX_ADDITIONAL_TRUST_ANCHORS, PeerAddress, PolicyError,
+        TlsConnectionEvidence, TrustAnchorError, classify_ip,
     };
     use crate::NetworkEndpoint;
 
@@ -436,6 +544,8 @@ mod tests {
     #[derive(Deserialize)]
     struct Fixture {
         endpoint: String,
+        #[serde(default)]
+        allow_hostname_loopback_cleartext: bool,
         #[serde(default)]
         allow_private_cleartext: bool,
         #[serde(default)]
@@ -475,6 +585,9 @@ mod tests {
         assert_eq!(bundle.host_transport_contract.redirects, "deny");
         for fixture in bundle.vectors {
             let mut policy = EndpointPolicy::default();
+            if fixture.allow_hostname_loopback_cleartext {
+                policy = policy.allowing_hostname_loopback_cleartext();
+            }
             if fixture.allow_private_cleartext {
                 policy = policy.allowing_private_cleartext();
             }
@@ -490,6 +603,7 @@ mod tests {
                 Err(PolicyError::LinkLocalCleartextDenied) => "linkLocalCleartextDenied",
                 Err(PolicyError::LinkLocalScopeRequired) => "linkLocalScopeRequired",
                 Err(PolicyError::TlsIdentityMismatch) => "tlsIdentityMismatch",
+                Err(PolicyError::LoopbackIntentRequired) => "loopbackIntentRequired",
                 Err(PolicyError::MissingEvidence) => "missingEvidence",
                 Err(PolicyError::CleartextDenied) => "cleartextDenied",
                 Err(error) => unreachable!("unexpected fixture result: {error}"),
@@ -560,14 +674,47 @@ mod tests {
     }
 
     #[test]
-    fn authorizes_cleartext_only_from_actual_peer_evidence() {
+    fn requires_loopback_intent_and_actual_peer_evidence() {
         let loopback =
             ConnectionEvidence::Cleartext(PeerAddress::new(IpAddress::V4([127, 0, 0, 2]), 80));
+        assert_eq!(
+            EndpointPolicy::default()
+                .verify_connection(&endpoint("http://untrusted.example/path"), loopback.clone()),
+            Err(PolicyError::LoopbackIntentRequired)
+        );
+        assert_eq!(
+            EndpointPolicy::default()
+                .verify_connection(&endpoint("http://localhost../path"), loopback.clone()),
+            Err(PolicyError::LoopbackIntentRequired)
+        );
         assert!(
             EndpointPolicy::default()
-                .verify_connection(&endpoint("http://untrusted.example/path"), loopback)
+                .allowing_hostname_loopback_cleartext()
+                .verify_connection(&endpoint("http://untrusted.example/path"), loopback.clone())
                 .is_ok()
         );
+        for target in [
+            "http://localhost/path",
+            "http://LOCALHOST./path",
+            "http://127.42.0.1/path",
+            "http://[::1]/path",
+        ] {
+            assert!(
+                EndpointPolicy::default()
+                    .verify_connection(&endpoint(target), loopback.clone())
+                    .is_ok(),
+                "{target}"
+            );
+        }
+        for target in ["http://127.0.0.01/path", "http://8.8.8.8/path"] {
+            assert_eq!(
+                EndpointPolicy::default()
+                    .allowing_hostname_loopback_cleartext()
+                    .verify_connection(&endpoint(target), loopback.clone()),
+                Err(PolicyError::LoopbackIntentRequired),
+                "{target}"
+            );
+        }
         assert_eq!(
             EndpointPolicy::default().verify_connection(
                 &endpoint("http://localhost/path"),
@@ -584,6 +731,51 @@ mod tests {
                 ConnectionEvidence::Cleartext(PeerAddress::new(IpAddress::V4([127, 0, 0, 1]), 80,))
             ),
             Err(PolicyError::EvidenceMismatch)
+        );
+    }
+
+    #[test]
+    fn enforces_additional_trust_anchor_bounds() {
+        assert_eq!(
+            AdditionalTrustAnchor::from_der(Vec::new()),
+            Err(TrustAnchorError::Empty)
+        );
+        assert_eq!(
+            AdditionalTrustAnchor::from_der(vec![0; MAX_ADDITIONAL_TRUST_ANCHOR_BYTES + 1]),
+            Err(TrustAnchorError::TooLong)
+        );
+
+        let anchor = || {
+            AdditionalTrustAnchor::from_der(vec![0; MAX_ADDITIONAL_TRUST_ANCHOR_BYTES])
+                .unwrap_or_else(|error| unreachable!("bounded fixture: {error}"))
+        };
+        let mut policy = EndpointPolicy::default();
+        for _ in 0..MAX_ADDITIONAL_TRUST_ANCHOR_AGGREGATE_BYTES / MAX_ADDITIONAL_TRUST_ANCHOR_BYTES
+        {
+            policy = policy
+                .with_additional_trust_anchor(anchor())
+                .unwrap_or_else(|error| unreachable!("bounded fixture policy: {error}"));
+        }
+        assert_eq!(
+            policy.with_additional_trust_anchor(anchor()),
+            Err(EndpointPolicyError::TrustAnchorsTooLarge)
+        );
+
+        let mut policy = EndpointPolicy::default();
+        for _ in 0..MAX_ADDITIONAL_TRUST_ANCHORS {
+            policy = policy
+                .with_additional_trust_anchor(
+                    AdditionalTrustAnchor::from_der(vec![1])
+                        .unwrap_or_else(|error| unreachable!("bounded fixture: {error}")),
+                )
+                .unwrap_or_else(|error| unreachable!("bounded fixture policy: {error}"));
+        }
+        assert_eq!(
+            policy.with_additional_trust_anchor(
+                AdditionalTrustAnchor::from_der(vec![1])
+                    .unwrap_or_else(|error| unreachable!("bounded fixture: {error}"))
+            ),
+            Err(EndpointPolicyError::TooManyTrustAnchors)
         );
     }
 

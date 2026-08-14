@@ -21,9 +21,35 @@
     },
     {
       "id": "ipv6-loopback",
-      "endpoint": "http://localhost/path",
+      "endpoint": "http://[::1]/path",
       "evidence": { "type": "cleartext", "ip": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1], "port": 80 },
       "expected": "allowed"
+    },
+    {
+      "id": "ipv4-literal-loopback",
+      "endpoint": "http://127.42.0.1/path",
+      "evidence": { "type": "cleartext", "ip": [127, 0, 0, 1], "port": 80 },
+      "expected": "allowed"
+    },
+    {
+      "id": "hostname-loopback-default-deny",
+      "endpoint": "http://untrusted.example/path",
+      "evidence": { "type": "cleartext", "ip": [127, 0, 0, 1], "port": 80 },
+      "expected": "loopbackIntentRequired"
+    },
+    {
+      "id": "hostname-loopback-explicit-opt-in",
+      "endpoint": "http://untrusted.example/path",
+      "allow_hostname_loopback_cleartext": true,
+      "evidence": { "type": "cleartext", "ip": [127, 0, 0, 1], "port": 80 },
+      "expected": "allowed"
+    },
+    {
+      "id": "public-literal-cannot-use-hostname-opt-in",
+      "endpoint": "http://8.8.8.8/path",
+      "allow_hostname_loopback_cleartext": true,
+      "evidence": { "type": "cleartext", "ip": [127, 0, 0, 1], "port": 80 },
+      "expected": "loopbackIntentRequired"
     },
     {
       "id": "connected-port-mismatch",

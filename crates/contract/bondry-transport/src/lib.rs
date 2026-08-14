@@ -10,18 +10,19 @@ use std::{future::Future, pin::Pin, time::Instant};
 
 pub use endpoint::{EndpointError, MAX_NETWORK_ENDPOINT_BYTES, NetworkEndpoint, NetworkScheme};
 pub use http_transport::{
-    HttpLimits, HttpRequest, HttpRequestParts, HttpResponse, HttpTransport,
-    MAX_HTTP_REQUEST_BODY_BYTES, MAX_HTTP_RESPONSE_BODY_BYTES, MAX_HTTP_RESPONSE_HEADER_BYTES,
-    MAX_HTTP_RESPONSE_HEADERS, MIN_HTTP_RESPONSE_BODY_BYTES, TransportError,
+    HttpLimits, HttpRequest, HttpRequestParts, HttpResponse, HttpTransport, MAX_HTTP_HEADER_BYTES,
+    MAX_HTTP_HEADERS, MAX_HTTP_REQUEST_BODY_BYTES, MAX_HTTP_RESPONSE_BODY_BYTES,
+    MIN_HTTP_RESPONSE_BODY_BYTES, TransportError,
 };
 pub use local::{
     LocalByteStream, LocalByteStreamTransport, LocalConnection, LocalEndpoint, LocalEndpointPolicy,
     LocalPeerEvidence, LocalTransportError, UnixSocketPolicy, VerifiedLocalConnection,
 };
 pub use policy::{
-    AdditionalTrustAnchor, ConnectionEvidence, EndpointPolicy, IpAddress, IpAddressClass,
-    PeerAddress, PolicyError, RedirectPolicy, TlsConnectionEvidence, VerifiedConnection,
-    classify_ip,
+    AdditionalTrustAnchor, ConnectionEvidence, EndpointPolicy, EndpointPolicyError, IpAddress,
+    IpAddressClass, MAX_ADDITIONAL_TRUST_ANCHOR_AGGREGATE_BYTES, MAX_ADDITIONAL_TRUST_ANCHOR_BYTES,
+    MAX_ADDITIONAL_TRUST_ANCHORS, PeerAddress, PolicyError, RedirectPolicy, TlsConnectionEvidence,
+    TrustAnchorError, VerifiedConnection, classify_ip,
 };
 pub use websocket::{
     WebSocketClose, WebSocketConnection, WebSocketControlPayload, WebSocketEvent, WebSocketMessage,

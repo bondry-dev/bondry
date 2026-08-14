@@ -8,6 +8,7 @@ public enum BondryHTTPTransportError: Error, Equatable, Sendable {
   case missingConnectionEvidence
   case connectionEvidenceMismatch
   case tlsIdentityMismatch
+  case loopbackIntentRequired
   case privateCleartextDenied
   case linkLocalCleartextDenied
   case linkLocalScopeRequired
@@ -17,6 +18,7 @@ public enum BondryHTTPTransportError: Error, Equatable, Sendable {
   case connectionFailed
   case tlsFailed
   case invalidResponse
+  case invalidAdditionalTrustAnchors
 }
 
 public enum BondryIPAddress: Equatable, Sendable {
@@ -53,22 +55,50 @@ public enum BondryConnectionEvidence: Equatable, Sendable {
 }
 
 public struct BondryEndpointPolicy: Equatable, Sendable, CustomDebugStringConvertible {
+  public static let maximumAdditionalTrustAnchors = 8
+  public static let maximumAdditionalTrustAnchorBytes = 16 * 1_024
+  public static let maximumAdditionalTrustAnchorAggregateBytes = 64 * 1_024
+
+  public let allowHostnameLoopbackCleartext: Bool
   public let allowPrivateCleartext: Bool
   public let allowLinkLocalCleartext: Bool
   public let additionalTrustAnchors: [Data]
 
   public init(
+    allowHostnameLoopbackCleartext: Bool = false,
+    allowPrivateCleartext: Bool = false,
+    allowLinkLocalCleartext: Bool = false
+  ) {
+    self.allowHostnameLoopbackCleartext = allowHostnameLoopbackCleartext
+    self.allowPrivateCleartext = allowPrivateCleartext
+    self.allowLinkLocalCleartext = allowLinkLocalCleartext
+    additionalTrustAnchors = []
+  }
+
+  public init(
+    allowHostnameLoopbackCleartext: Bool = false,
     allowPrivateCleartext: Bool = false,
     allowLinkLocalCleartext: Bool = false,
-    additionalTrustAnchors: [Data] = []
-  ) {
+    additionalTrustAnchors: [Data]
+  ) throws {
+    guard additionalTrustAnchors.count <= Self.maximumAdditionalTrustAnchors,
+      additionalTrustAnchors.allSatisfy({
+        !$0.isEmpty && $0.count <= Self.maximumAdditionalTrustAnchorBytes
+      }),
+      additionalTrustAnchors.reduce(0, { $0 + $1.count })
+        <= Self.maximumAdditionalTrustAnchorAggregateBytes
+    else {
+      throw BondryHTTPTransportError.invalidAdditionalTrustAnchors
+    }
+    self.allowHostnameLoopbackCleartext = allowHostnameLoopbackCleartext
     self.allowPrivateCleartext = allowPrivateCleartext
     self.allowLinkLocalCleartext = allowLinkLocalCleartext
     self.additionalTrustAnchors = additionalTrustAnchors
   }
 
   public var debugDescription: String {
-    "BondryEndpointPolicy(allowPrivateCleartext: \(allowPrivateCleartext), "
+    "BondryEndpointPolicy(allowHostnameLoopbackCleartext: "
+      + "\(allowHostnameLoopbackCleartext), allowPrivateCleartext: \(allowPrivateCleartext), "
       + "allowLinkLocalCleartext: \(allowLinkLocalCleartext), "
       + "additionalTrustAnchors: \(additionalTrustAnchors.count))"
   }
@@ -107,8 +137,12 @@ public struct BondryEndpointPolicy: Equatable, Sendable, CustomDebugStringConver
       throw BondryHTTPTransportError.connectionEvidenceMismatch
     }
     switch address.addressClass {
-    case .loopback:
+    case .loopback where Self.hasLoopbackIntent(host):
       return
+    case .loopback where allowHostnameLoopbackCleartext && !Self.looksLikeIPLiteral(host):
+      return
+    case .loopback:
+      throw BondryHTTPTransportError.loopbackIntentRequired
     case .privateNetwork where allowPrivateCleartext:
       return
     case .privateNetwork:
@@ -129,6 +163,47 @@ public struct BondryEndpointPolicy: Equatable, Sendable, CustomDebugStringConver
       .caseInsensitiveCompare(
         verified.trimmingCharacters(in: CharacterSet(charactersIn: "."))
       ) == .orderedSame
+  }
+
+  private static func hasLoopbackIntent(_ host: String) -> Bool {
+    let host = unbracketedHost(host)
+    let hostname = host.hasSuffix(".") ? String(host.dropLast()) : host
+    if !hostname.hasSuffix("."), hostname.caseInsensitiveCompare("localhost") == .orderedSame {
+      return true
+    }
+    if host == "::1" {
+      return true
+    }
+    return canonicalIPv4(host)?.first == 127
+  }
+
+  private static func looksLikeIPLiteral(_ host: String) -> Bool {
+    let host = unbracketedHost(host)
+    return host.contains(":")
+      || host.utf8.allSatisfy { (0x30...0x39).contains($0) || $0 == 0x2e }
+  }
+
+  private static func unbracketedHost(_ host: String) -> String {
+    guard host.first == "[", host.last == "]" else {
+      return host
+    }
+    return String(host.dropFirst().dropLast())
+  }
+
+  private static func canonicalIPv4(_ host: String) -> [UInt8]? {
+    let parts = host.split(separator: ".", omittingEmptySubsequences: false)
+    guard parts.count == 4 else {
+      return nil
+    }
+    var address: [UInt8] = []
+    address.reserveCapacity(4)
+    for part in parts {
+      guard !part.isEmpty, !(part.count > 1 && part.first == "0"), let octet = UInt8(part) else {
+        return nil
+      }
+      address.append(octet)
+    }
+    return address
   }
 }
 
