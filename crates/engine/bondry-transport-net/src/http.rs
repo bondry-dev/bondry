@@ -217,8 +217,8 @@ where
     *request.headers_mut() = headers;
 
     let mut builder = http1::Builder::new();
-    builder.max_headers(bondry_transport::MAX_HTTP_RESPONSE_HEADERS);
-    builder.max_buf_size(bondry_transport::MAX_HTTP_RESPONSE_HEADER_BYTES);
+    builder.max_headers(bondry_transport::MAX_HTTP_HEADERS);
+    builder.max_buf_size(bondry_transport::MAX_HTTP_HEADER_BYTES);
     let (mut sender, connection) = builder
         .handshake(TokioIo::new(io))
         .await

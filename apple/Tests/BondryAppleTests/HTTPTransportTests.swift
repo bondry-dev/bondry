@@ -21,6 +21,7 @@ final class HTTPTransportTests: XCTestCase {
 
     for vector in bundle.vectors {
       let policy = BondryEndpointPolicy(
+        allowHostnameLoopbackCleartext: vector.allowHostnameLoopbackCleartext ?? false,
         allowPrivateCleartext: vector.allowPrivateCleartext ?? false,
         allowLinkLocalCleartext: vector.allowLinkLocalCleartext ?? false
       )
@@ -69,6 +70,24 @@ final class HTTPTransportTests: XCTestCase {
         XCTAssertEqual(error as? BondryHTTPTransportError, .unsupportedEndpoint)
       }
     }
+    XCTAssertThrowsError(
+      try BondryHTTPRequest(
+        method: "GET",
+        url: try XCTUnwrap(URL(string: "http://localhost/")),
+        headers: (0...BondryHTTPRequest.maximumHeaders).map { ("X-Bound-\($0)", "value") }
+      )
+    ) { error in
+      XCTAssertEqual(error as? BondryHTTPTransportError, .requestTooLarge)
+    }
+    XCTAssertThrowsError(
+      try BondryHTTPRequest(
+        method: "GET",
+        url: try XCTUnwrap(URL(string: "http://localhost/")),
+        headers: [("X-Bound", String(repeating: "a", count: 16 * 1_024))]
+      )
+    ) { error in
+      XCTAssertEqual(error as? BondryHTTPTransportError, .requestTooLarge)
+    }
   }
 
   func testEncryptedTransportDelegateDisablesRedirects() throws {
@@ -99,6 +118,33 @@ final class HTTPTransportTests: XCTestCase {
 
     XCTAssertNil(capture.request)
     XCTAssertTrue(delegate.didRedirect)
+  }
+
+  func testAdditionalTrustAnchorBounds() throws {
+    XCTAssertNoThrow(
+      try BondryEndpointPolicy(
+        additionalTrustAnchors: Array(repeating: Data([1]), count: 8)
+      )
+    )
+    XCTAssertThrowsError(
+      try BondryEndpointPolicy(
+        additionalTrustAnchors: Array(repeating: Data([1]), count: 9)
+      )
+    )
+    XCTAssertThrowsError(
+      try BondryEndpointPolicy(additionalTrustAnchors: [Data()])
+    )
+    XCTAssertThrowsError(
+      try BondryEndpointPolicy(additionalTrustAnchors: [Data(repeating: 0, count: 16 * 1_024 + 1)])
+    )
+    XCTAssertThrowsError(
+      try BondryEndpointPolicy(
+        additionalTrustAnchors: Array(
+          repeating: Data(repeating: 0, count: 9 * 1_024),
+          count: 8
+        )
+      )
+    )
   }
 
   func testAbsoluteDeadlineDoesNotResetWhenWorkMakesProgress() async throws {
@@ -309,6 +355,7 @@ private struct HostTransportContractFixture: Decodable {
 private struct TransportPolicyFixture: Decodable {
   let id: String
   let endpoint: String
+  let allowHostnameLoopbackCleartext: Bool?
   let allowPrivateCleartext: Bool?
   let allowLinkLocalCleartext: Bool?
   let evidenceValue: TransportEvidenceFixture
@@ -336,6 +383,7 @@ private struct TransportPolicyFixture: Decodable {
   enum CodingKeys: String, CodingKey {
     case id
     case endpoint
+    case allowHostnameLoopbackCleartext = "allow_hostname_loopback_cleartext"
     case allowPrivateCleartext = "allow_private_cleartext"
     case allowLinkLocalCleartext = "allow_link_local_cleartext"
     case evidenceValue = "evidence"
@@ -398,6 +446,8 @@ extension BondryHTTPTransportError {
       return "cleartextDenied"
     case .tlsIdentityMismatch:
       return "tlsIdentityMismatch"
+    case .loopbackIntentRequired:
+      return "loopbackIntentRequired"
     case .missingConnectionEvidence:
       return "missingEvidence"
     default:

@@ -11,10 +11,10 @@ use crate::{
 
 /// Maximum request body from the egress limits contract.
 pub const MAX_HTTP_REQUEST_BODY_BYTES: usize = 256 * 1024;
-/// Fixed maximum response head size.
-pub const MAX_HTTP_RESPONSE_HEADER_BYTES: usize = 16 * 1024;
-/// Fixed maximum response header count.
-pub const MAX_HTTP_RESPONSE_HEADERS: usize = 64;
+/// Fixed maximum aggregate header size for requests and responses.
+pub const MAX_HTTP_HEADER_BYTES: usize = 16 * 1024;
+/// Fixed maximum header count for requests and responses.
+pub const MAX_HTTP_HEADERS: usize = 64;
 /// Minimum configurable response body size.
 pub const MIN_HTTP_RESPONSE_BODY_BYTES: usize = 4 * 1024;
 /// Maximum configurable response body size.
@@ -86,7 +86,7 @@ impl HttpRequest {
         if body.len() > MAX_HTTP_REQUEST_BODY_BYTES {
             return Err(TransportError::RequestTooLarge);
         }
-        validate_headers(&headers)?;
+        validate_headers(&headers, TransportError::RequestTooLarge)?;
         Ok(Self {
             method,
             endpoint,
@@ -181,7 +181,7 @@ impl HttpResponse {
         connection: VerifiedConnection,
         limits: HttpLimits,
     ) -> Result<Self, TransportError> {
-        validate_headers(&headers)?;
+        validate_headers(&headers, TransportError::ResponseTooLarge)?;
         if body.len() > limits.max_response_body_bytes() {
             return Err(TransportError::ResponseTooLarge);
         }
@@ -280,9 +280,12 @@ impl From<PolicyError> for TransportError {
     }
 }
 
-pub(crate) fn validate_headers(headers: &HeaderMap) -> Result<(), TransportError> {
-    if headers.len() > MAX_HTTP_RESPONSE_HEADERS {
-        return Err(TransportError::ResponseTooLarge);
+pub(crate) fn validate_headers(
+    headers: &HeaderMap,
+    overflow: TransportError,
+) -> Result<(), TransportError> {
+    if headers.len() > MAX_HTTP_HEADERS {
+        return Err(overflow);
     }
     let bytes = headers.iter().fold(0_usize, |total, (name, value)| {
         total
@@ -290,8 +293,8 @@ pub(crate) fn validate_headers(headers: &HeaderMap) -> Result<(), TransportError
             .saturating_add(value.as_bytes().len())
             .saturating_add(4)
     });
-    if bytes > MAX_HTTP_RESPONSE_HEADER_BYTES {
-        return Err(TransportError::ResponseTooLarge);
+    if bytes > MAX_HTTP_HEADER_BYTES {
+        return Err(overflow);
     }
     Ok(())
 }
@@ -301,11 +304,11 @@ mod tests {
     use std::time::{Duration, Instant};
 
     use bytes::Bytes;
-    use http::{HeaderMap, Method};
+    use http::{HeaderMap, HeaderName, HeaderValue, Method};
 
     use super::{
-        HttpLimits, HttpRequest, MAX_HTTP_REQUEST_BODY_BYTES, MAX_HTTP_RESPONSE_BODY_BYTES,
-        TransportError,
+        HttpLimits, HttpRequest, MAX_HTTP_HEADERS, MAX_HTTP_REQUEST_BODY_BYTES,
+        MAX_HTTP_RESPONSE_BODY_BYTES, TransportError,
     };
     use crate::{Deadline, EndpointPolicy, NetworkEndpoint};
 
@@ -349,6 +352,25 @@ mod tests {
             HttpLimits::new(MAX_HTTP_RESPONSE_BODY_BYTES + 1),
             Err(TransportError::InvalidLimits)
         );
+
+        let mut headers = HeaderMap::new();
+        for index in 0..=MAX_HTTP_HEADERS {
+            let name = HeaderName::from_bytes(format!("x-bound-{index}").as_bytes())
+                .unwrap_or_else(|error| unreachable!("valid fixture header: {error}"));
+            headers.insert(name, HeaderValue::from_static("value"));
+        }
+        assert!(matches!(
+            HttpRequest::new(
+                Method::GET,
+                endpoint("https://example.com"),
+                headers,
+                Bytes::new(),
+                deadline,
+                EndpointPolicy::default(),
+                HttpLimits::default(),
+            ),
+            Err(TransportError::RequestTooLarge)
+        ));
     }
 
     #[test]

@@ -85,8 +85,8 @@ mod tests {
 
         let (port, server) = tls_server(&certificate).await?;
         let policy = EndpointPolicy::default().with_additional_trust_anchor(
-            AdditionalTrustAnchor::from_der(certificate.root.clone()),
-        );
+            AdditionalTrustAnchor::from_der(certificate.root.clone())?,
+        )?;
         let response = transport
             .send(request(
                 &format!("https://localhost:{port}/trusted"),

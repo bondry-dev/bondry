@@ -36,7 +36,7 @@ impl WebSocketRequest {
         if max_message_bytes == 0 {
             return Err(TransportError::InvalidLimits);
         }
-        validate_headers(&headers)?;
+        validate_headers(&headers, TransportError::RequestTooLarge)?;
         Ok(Self {
             endpoint,
             headers,
