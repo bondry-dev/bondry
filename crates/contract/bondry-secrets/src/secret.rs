@@ -47,13 +47,14 @@ pub struct SecretValue(Zeroizing<Vec<u8>>);
 impl SecretValue {
     /// Wraps non-empty secret material within the limits contract.
     pub fn new(bytes: Vec<u8>) -> Result<Self, SecretValueError> {
+        let bytes = Zeroizing::new(bytes);
         if bytes.is_empty() {
             return Err(SecretValueError::Empty);
         }
         if bytes.len() > MAX_SECRET_BYTES {
             return Err(SecretValueError::TooLong);
         }
-        Ok(Self(Zeroizing::new(bytes)))
+        Ok(Self(bytes))
     }
 
     /// Exposes the secret to the cryptographic operation that consumes it.
