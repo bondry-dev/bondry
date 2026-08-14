@@ -91,6 +91,7 @@ create_xcframework() {
     header=$4
     module_map=$5
     module_name=$6
+    licenses=$7
     staging_directory="$artifact_directory/staging/$framework_name"
     headers_root="$staging_directory/Headers"
     headers_directory="$headers_root/$module_name"
@@ -130,18 +131,30 @@ create_xcframework() {
 
     cp "$bondry_root/LICENSE" "$xcframework/LICENSE"
     cp "$bondry_root/THIRD_PARTY_NOTICES.md" "$xcframework/THIRD_PARTY_NOTICES.md"
-    cp "$artifact_directory/THIRD_PARTY_LICENSES.txt" "$xcframework/THIRD_PARTY_LICENSES.txt"
+    cp "$licenses" "$xcframework/THIRD_PARTY_LICENSES.txt"
 }
 
-cargo about generate \
-    --config "$bondry_root/apple/Distribution/about.toml" \
-    --fail \
-    --locked \
-    --manifest-path "$bondry_root/Cargo.toml" \
-    --offline \
-    --output-file "$artifact_directory/THIRD_PARTY_LICENSES.txt" \
-    --workspace \
-    "$bondry_root/apple/Distribution/ThirdPartyLicenses.hbs"
+generate_licenses() {
+    manifest=$1
+    output=$2
+    cargo about generate \
+        --config "$bondry_root/apple/Distribution/about.toml" \
+        --fail \
+        --locked \
+        --manifest-path "$manifest" \
+        --offline \
+        --output-file "$output" \
+        "$bondry_root/apple/Distribution/ThirdPartyLicenses.hbs"
+}
+
+runtime_licenses="$artifact_directory/BondryRuntime-THIRD_PARTY_LICENSES.txt"
+local_server_licenses="$artifact_directory/BondryLocalServer-THIRD_PARTY_LICENSES.txt"
+generate_licenses \
+    "$bondry_root/crates/ffi/bondry-runtime-ffi/Cargo.toml" \
+    "$runtime_licenses"
+generate_licenses \
+    "$bondry_root/crates/ffi/bondry-local-server-ffi/Cargo.toml" \
+    "$local_server_licenses"
 
 create_xcframework \
     BondryRuntime \
@@ -149,14 +162,16 @@ create_xcframework \
     libbondry_runtime.a \
     bondry.h \
     BondryRuntime.modulemap \
-    CBondryRuntime
+    CBondryRuntime \
+    "$runtime_licenses"
 create_xcframework \
     BondryLocalServer \
     libbondry_local_server_ffi.a \
     libbondry_local_server.a \
     bondry_local_server.h \
     BondryLocalServer.modulemap \
-    CBondryLocalServer
+    CBondryLocalServer \
+    "$local_server_licenses"
 
 "$script_directory/verify-xcframework.sh" \
     "$artifact_directory/BondryRuntime.xcframework" \
