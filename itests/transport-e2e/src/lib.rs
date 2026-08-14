@@ -6,7 +6,10 @@ mod tests {
         error::Error,
         fs,
         os::unix::fs::{MetadataExt as _, PermissionsExt as _},
-        sync::Arc,
+        sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        },
         time::{Duration, Instant},
     };
 
@@ -25,7 +28,8 @@ mod tests {
     use tempfile::tempdir;
     use tokio::{
         io::{AsyncRead, AsyncReadExt as _, AsyncWrite, AsyncWriteExt as _},
-        net::{TcpListener, UnixListener},
+        net::{TcpListener, TcpStream, UnixListener},
+        sync::Barrier,
     };
     use tokio_rustls::TlsAcceptor;
 
@@ -105,6 +109,45 @@ mod tests {
             .await;
         assert_eq!(wrong_identity.err(), Some(TransportError::TlsFailed));
         let _ = server.await?;
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn reuses_connections_within_one_origin_policy_partition() -> Result<(), Box<dyn Error>> {
+        let (port, accepted, server) = pooled_http_server(vec![2]).await?;
+        let transport = NetHttpTransport::new()?;
+        let endpoint = format!("http://localhost:{port}/reuse");
+
+        for _ in 0..2 {
+            let response = transport
+                .send(request(&endpoint, EndpointPolicy::default())?)
+                .await?;
+            assert_eq!(response.status(), http::StatusCode::NO_CONTENT);
+        }
+
+        server.await??;
+        assert_eq!(accepted.load(Ordering::Relaxed), 1);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn isolates_connections_across_endpoint_policies() -> Result<(), Box<dyn Error>> {
+        let (port, accepted, server) = pooled_http_server(vec![1, 1]).await?;
+        let transport = NetHttpTransport::new()?;
+        let endpoint = format!("http://localhost:{port}/isolation");
+
+        transport
+            .send(request(&endpoint, EndpointPolicy::default())?)
+            .await?;
+        transport
+            .send(request(
+                &endpoint,
+                EndpointPolicy::default().allowing_hostname_loopback_cleartext(),
+            )?)
+            .await?;
+
+        server.await??;
+        assert_eq!(accepted.load(Ordering::Relaxed), 2);
         Ok(())
     }
 
@@ -220,6 +263,66 @@ mod tests {
             respond(stream, &response).await
         });
         Ok((port, server))
+    }
+
+    async fn pooled_http_server(
+        requests_per_connection: Vec<usize>,
+    ) -> Result<
+        (
+            u16,
+            Arc<AtomicUsize>,
+            tokio::task::JoinHandle<Result<(), std::io::Error>>,
+        ),
+        std::io::Error,
+    > {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await?;
+        let port = listener.local_addr()?.port();
+        let accepted = Arc::new(AtomicUsize::new(0));
+        let server_accepted = Arc::clone(&accepted);
+        let server = tokio::spawn(async move {
+            let barrier = Arc::new(Barrier::new(requests_per_connection.len() + 1));
+            let mut handlers = Vec::new();
+            for request_count in requests_per_connection {
+                let (mut stream, _) = listener.accept().await?;
+                server_accepted.fetch_add(1, Ordering::Relaxed);
+                let barrier = Arc::clone(&barrier);
+                handlers.push(tokio::spawn(async move {
+                    respond_keep_alive(&mut stream, request_count).await?;
+                    barrier.wait().await;
+                    Ok::<_, std::io::Error>(())
+                }));
+            }
+            barrier.wait().await;
+            for handler in handlers {
+                handler.await.map_err(std::io::Error::other)??;
+            }
+            Ok(())
+        });
+        Ok((port, accepted, server))
+    }
+
+    async fn respond_keep_alive(
+        stream: &mut TcpStream,
+        request_count: usize,
+    ) -> Result<(), std::io::Error> {
+        for _ in 0..request_count {
+            let mut request = Vec::new();
+            loop {
+                let mut chunk = [0_u8; 1024];
+                let read = stream.read(&mut chunk).await?;
+                if read == 0 {
+                    return Err(std::io::Error::from(std::io::ErrorKind::UnexpectedEof));
+                }
+                request.extend_from_slice(&chunk[..read]);
+                if request.windows(4).any(|window| window == b"\r\n\r\n") {
+                    break;
+                }
+            }
+            stream
+                .write_all(b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n")
+                .await?;
+        }
+        Ok(())
     }
 
     struct TestCertificate {
