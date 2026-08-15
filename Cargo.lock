@@ -126,6 +126,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "bondry-egress-e2e"
+version = "0.1.2"
+dependencies = [
+ "bondry-delivery-store",
+ "bondry-egress",
+ "bondry-egress-runtime",
+ "bondry-egress-webhook",
+ "bondry-secrets",
+ "bondry-transport",
+ "bondry-transport-net",
+ "bytes",
+ "tokio",
+]
+
+[[package]]
 name = "bondry-egress-ffi"
 version = "0.1.2"
 dependencies = [

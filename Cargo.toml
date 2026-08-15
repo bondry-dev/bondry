@@ -18,6 +18,7 @@ members = [
     "crates/store/bondry-store-sqlcipher",
     "itests/server-bench",
     "itests/server-e2e",
+    "itests/egress-e2e",
     "itests/transport-e2e",
     "xtask",
 ]

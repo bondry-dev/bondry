@@ -1,0 +1,23 @@
+[package]
+name = "bondry-egress-e2e"
+description = "End-to-end tests for Bondry egress"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+bondry-delivery-store = { path = "../../crates/contract/bondry-delivery-store" }
+bondry-egress = { path = "../../crates/egress/bondry-egress" }
+bondry-egress-runtime = { path = "../../crates/engine/bondry-egress-runtime", features = ["network-io"] }
+bondry-egress-webhook = { path = "../../crates/egress/bondry-egress-webhook" }
+bondry-secrets = { path = "../../crates/contract/bondry-secrets" }
+bondry-transport = { path = "../../crates/contract/bondry-transport" }
+bondry-transport-net = { path = "../../crates/engine/bondry-transport-net" }
+bytes.workspace = true
+tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "time"] }
+
+[lints]
+workspace = true

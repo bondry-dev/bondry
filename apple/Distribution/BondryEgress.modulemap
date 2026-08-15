@@ -1,0 +1,4 @@
+module CBondryEgress {
+  header "bondry_egress.h"
+  export *
+}

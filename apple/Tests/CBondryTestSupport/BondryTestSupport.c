@@ -1,5 +1,6 @@
 #include "BondryTestSupport.h"
 #include "bondry.h"
+#include "bondry_egress.h"
 #include "bondry_local_server.h"
 
 #include <stdlib.h>
@@ -11,6 +12,11 @@ struct BondryStoreHandle {
 
 struct BondryServerHandle {
     uint8_t marker;
+};
+
+struct BondryEgressHandle {
+    BondryHTTPTransportV1 transport;
+    BondrySecretProviderV1 secrets;
 };
 
 static uint32_t abi_version = BONDRY_ABI_VERSION_V1;
@@ -73,6 +79,17 @@ static BondryCapabilityInvokeV1 capability_invoke = NULL;
 static BondryCapabilityReleaseV1 capability_release = NULL;
 static const BondryStoreHandle *capability_store = NULL;
 static int capability_registered = 0;
+static uint32_t egress_abi_version = BONDRY_EGRESS_ABI_VERSION_V1;
+static size_t egress_start_count = 0;
+static size_t egress_stop_count = 0;
+static size_t egress_register_count = 0;
+static size_t egress_emit_count = 0;
+static size_t captured_egress_configuration_length = 0;
+static uint8_t captured_egress_configuration[65536];
+static size_t captured_egress_route_length = 0;
+static uint8_t captured_egress_route[131072];
+static size_t captured_egress_delivery_id_length = 0;
+static uint8_t captured_egress_delivery_id[BONDRY_IDENTIFIER_CAPACITY_V1];
 
 static void clear_capability(void) {
     if (capability_registered && capability_release != NULL) {
@@ -218,6 +235,17 @@ void bondry_test_reset(void) {
     server_stop_count = 0;
     captured_server_configuration_length = 0;
     memset(captured_server_configuration, 0, sizeof(captured_server_configuration));
+    egress_abi_version = BONDRY_EGRESS_ABI_VERSION_V1;
+    egress_start_count = 0;
+    egress_stop_count = 0;
+    egress_register_count = 0;
+    egress_emit_count = 0;
+    captured_egress_configuration_length = 0;
+    memset(captured_egress_configuration, 0, sizeof(captured_egress_configuration));
+    captured_egress_route_length = 0;
+    memset(captured_egress_route, 0, sizeof(captured_egress_route));
+    captured_egress_delivery_id_length = 0;
+    memset(captured_egress_delivery_id, 0, sizeof(captured_egress_delivery_id));
 }
 
 void bondry_test_set_abi_version(uint32_t version) {
@@ -266,6 +294,10 @@ void bondry_test_set_null_server_handle(int enabled) {
 
 void bondry_test_set_invalid_server_address(int enabled) {
     return_invalid_server_address = enabled;
+}
+
+void bondry_test_set_egress_abi_version(uint32_t version) {
+    egress_abi_version = version;
 }
 
 size_t bondry_test_open_count(void) {
@@ -352,6 +384,40 @@ uint8_t bondry_test_server_configuration_byte(size_t index) {
     return index < sizeof(captured_server_configuration)
         ? captured_server_configuration[index]
         : 0;
+}
+
+size_t bondry_test_egress_start_count(void) {
+    return egress_start_count;
+}
+
+size_t bondry_test_egress_stop_count(void) {
+    return egress_stop_count;
+}
+
+size_t bondry_test_egress_register_count(void) {
+    return egress_register_count;
+}
+
+size_t bondry_test_egress_emit_count(void) {
+    return egress_emit_count;
+}
+
+size_t bondry_test_egress_configuration_length(void) {
+    return captured_egress_configuration_length;
+}
+
+uint8_t bondry_test_egress_configuration_byte(size_t index) {
+    return index < sizeof(captured_egress_configuration)
+        ? captured_egress_configuration[index]
+        : 0;
+}
+
+size_t bondry_test_egress_route_length(void) {
+    return captured_egress_route_length;
+}
+
+uint8_t bondry_test_egress_route_byte(size_t index) {
+    return index < sizeof(captured_egress_route) ? captured_egress_route[index] : 0;
 }
 
 size_t bondry_test_path_length(void) {
@@ -545,6 +611,217 @@ BondryStatus bondry_server_stop_v1(BondryServerHandle *server) {
         free(server);
     }
     return server_stop_status;
+}
+
+uint32_t bondry_egress_abi_version_v1(void) {
+    return egress_abi_version;
+}
+
+BondryStatus bondry_egress_start_v1(
+    const BondryStoreHandle *store,
+    const uint8_t *runtime_configuration_json,
+    size_t runtime_configuration_json_length,
+    const BondryHTTPTransportV1 *transport,
+    const BondrySecretProviderV1 *secrets,
+    BondryEgressHandle **out_egress
+) {
+    egress_start_count += 1;
+    capture_bytes(
+        captured_egress_configuration,
+        sizeof(captured_egress_configuration),
+        &captured_egress_configuration_length,
+        runtime_configuration_json,
+        runtime_configuration_json_length
+    );
+    if (out_egress != NULL) {
+        *out_egress = NULL;
+    }
+    if (store == NULL || runtime_configuration_json == NULL || transport == NULL ||
+        secrets == NULL || out_egress == NULL) {
+        return BONDRY_STATUS_NULL_POINTER;
+    }
+    if (transport->retain == NULL || transport->release == NULL || transport->send == NULL ||
+        secrets->retain == NULL || secrets->release == NULL || secrets->resolve == NULL) {
+        return BONDRY_STATUS_INVALID_ARGUMENT;
+    }
+    BondryEgressHandle *egress = malloc(sizeof(*egress));
+    if (egress == NULL) {
+        return BONDRY_STATUS_INTERNAL_FAILURE;
+    }
+    egress->transport = *transport;
+    egress->secrets = *secrets;
+    egress->transport.context = transport->retain(transport->context);
+    if (egress->transport.context == NULL) {
+        free(egress);
+        return BONDRY_STATUS_EGRESS_START_FAILED;
+    }
+    egress->secrets.context = secrets->retain(secrets->context);
+    if (egress->secrets.context == NULL) {
+        transport->release(egress->transport.context);
+        free(egress);
+        return BONDRY_STATUS_EGRESS_START_FAILED;
+    }
+    *out_egress = egress;
+    return BONDRY_STATUS_OK;
+}
+
+BondryStatus bondry_egress_stop_v1(BondryEgressHandle *egress) {
+    if (egress != NULL) {
+        egress_stop_count += 1;
+        egress->transport.release(egress->transport.context);
+        egress->secrets.release(egress->secrets.context);
+        free(egress);
+    }
+    return BONDRY_STATUS_OK;
+}
+
+BondryStatus bondry_egress_route_register_v1(
+    const BondryEgressHandle *egress,
+    const uint8_t *configuration_json,
+    size_t configuration_json_length
+) {
+    egress_register_count += 1;
+    capture_bytes(
+        captured_egress_route,
+        sizeof(captured_egress_route),
+        &captured_egress_route_length,
+        configuration_json,
+        configuration_json_length
+    );
+    return egress == NULL || configuration_json == NULL
+        ? BONDRY_STATUS_NULL_POINTER
+        : BONDRY_STATUS_OK;
+}
+
+static BondryStatus egress_route_operation(
+    const BondryEgressHandle *egress,
+    const uint8_t *route_id,
+    size_t route_id_length
+) {
+    if (egress == NULL || route_id == NULL) {
+        return BONDRY_STATUS_NULL_POINTER;
+    }
+    return route_id_length == 0 ? BONDRY_STATUS_INVALID_LENGTH : BONDRY_STATUS_OK;
+}
+
+BondryStatus bondry_egress_route_enable_v1(
+    const BondryEgressHandle *egress,
+    const uint8_t *route_id,
+    size_t route_id_length
+) {
+    return egress_route_operation(egress, route_id, route_id_length);
+}
+
+BondryStatus bondry_egress_route_disable_v1(
+    const BondryEgressHandle *egress,
+    const uint8_t *route_id,
+    size_t route_id_length
+) {
+    return egress_route_operation(egress, route_id, route_id_length);
+}
+
+BondryStatus bondry_egress_route_unregister_v1(
+    const BondryEgressHandle *egress,
+    const uint8_t *route_id,
+    size_t route_id_length
+) {
+    return egress_route_operation(egress, route_id, route_id_length);
+}
+
+BondryStatus bondry_egress_routes_json_v1(
+    const BondryEgressHandle *egress,
+    uint8_t *output_json,
+    size_t capacity,
+    size_t *out_length
+) {
+    static const char output[] =
+        "[{\"id\":\"alerts\",\"enabled\":true,\"kind\":\"webhook\","
+        "\"target\":\"https://example.com/hook\"}]";
+    const size_t length = sizeof(output) - 1;
+    if (egress == NULL || out_length == NULL) {
+        return BONDRY_STATUS_NULL_POINTER;
+    }
+    *out_length = length;
+    if (output_json == NULL && capacity == 0) {
+        return BONDRY_STATUS_OK;
+    }
+    if (output_json == NULL) {
+        return BONDRY_STATUS_NULL_POINTER;
+    }
+    if (capacity < length) {
+        return BONDRY_STATUS_BUFFER_TOO_SMALL;
+    }
+    memcpy(output_json, output, length);
+    return BONDRY_STATUS_OK;
+}
+
+BondryStatus bondry_egress_emit_v1(
+    const BondryEgressHandle *egress,
+    const uint8_t *route_id,
+    size_t route_id_length,
+    const uint8_t *delivery_id,
+    size_t delivery_id_length,
+    const uint8_t *payload_json,
+    size_t payload_json_length
+) {
+    egress_emit_count += 1;
+    capture_bytes(
+        captured_egress_delivery_id,
+        sizeof(captured_egress_delivery_id),
+        &captured_egress_delivery_id_length,
+        delivery_id,
+        delivery_id_length
+    );
+    if (egress == NULL || route_id == NULL || delivery_id == NULL || payload_json == NULL) {
+        return BONDRY_STATUS_NULL_POINTER;
+    }
+    if (route_id_length == 0 || delivery_id_length == 0 || payload_json_length == 0) {
+        return BONDRY_STATUS_INVALID_LENGTH;
+    }
+    if (route_id_length >= BONDRY_IDENTIFIER_CAPACITY_V1 ||
+        delivery_id_length >= BONDRY_IDENTIFIER_CAPACITY_V1) {
+        return BONDRY_STATUS_INVALID_ARGUMENT;
+    }
+    return BONDRY_STATUS_OK;
+}
+
+BondryStatus bondry_egress_delivery_status_v1(
+    const BondryEgressHandle *egress,
+    const uint8_t *delivery_id,
+    size_t delivery_id_length,
+    uint8_t *out_found,
+    BondryEgressDeliveryStatusV1 *out_status
+) {
+    if (egress == NULL || delivery_id == NULL || out_found == NULL || out_status == NULL) {
+        return BONDRY_STATUS_NULL_POINTER;
+    }
+    memset(out_status, 0, sizeof(*out_status));
+    if (delivery_id_length >= BONDRY_IDENTIFIER_CAPACITY_V1) {
+        return BONDRY_STATUS_INVALID_ARGUMENT;
+    }
+    if (delivery_id_length != captured_egress_delivery_id_length ||
+        memcmp(delivery_id, captured_egress_delivery_id, delivery_id_length) != 0) {
+        *out_found = 0;
+        return BONDRY_STATUS_OK;
+    }
+    *out_found = 1;
+    write_string(out_status->route_id, sizeof(out_status->route_id), "alerts");
+    capture_bytes(
+        out_status->delivery_id,
+        sizeof(out_status->delivery_id),
+        &delivery_id_length,
+        delivery_id,
+        delivery_id_length
+    );
+    out_status->accepted_at_unix_ms = 1000;
+    out_status->updated_at_unix_ms = 1001;
+    out_status->attempts = 1;
+    out_status->state = BONDRY_DELIVERY_STATE_TERMINAL_V1;
+    out_status->outcome = BONDRY_DELIVERY_OUTCOME_DELIVERED_V1;
+    out_status->failure = BONDRY_DELIVERY_FAILURE_NONE_V1;
+    out_status->result_category = BONDRY_DELIVERY_RESULT_SUCCEEDED_V1;
+    out_status->result_bytes = 0;
+    return BONDRY_STATUS_OK;
 }
 
 BondryStatus bondry_client_create_v1(

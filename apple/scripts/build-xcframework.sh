@@ -33,6 +33,8 @@ for target in $required_targets; do
     fi
 done
 
+apple_strip=$(xcrun --find strip)
+
 cargo fetch --locked --manifest-path "$bondry_root/Cargo.toml"
 
 mkdir -p "$artifact_directory" "$cargo_target_directory"
@@ -41,12 +43,15 @@ cargo_target_directory=$(CDPATH='' cd -- "$cargo_target_directory" && pwd)
 rm -rf \
     "$artifact_directory/BondryRuntime.xcframework" \
     "$artifact_directory/BondryLocalServer.xcframework" \
+    "$artifact_directory/BondryEgress.xcframework" \
     "$artifact_directory/staging"
 rm -f \
     "$artifact_directory/BondryRuntime.xcframework.zip" \
     "$artifact_directory/BondryRuntime.xcframework.zip.sha256" \
     "$artifact_directory/BondryLocalServer.xcframework.zip" \
-    "$artifact_directory/BondryLocalServer.xcframework.zip.sha256"
+    "$artifact_directory/BondryLocalServer.xcframework.zip.sha256" \
+    "$artifact_directory/BondryEgress.xcframework.zip" \
+    "$artifact_directory/BondryEgress.xcframework.zip.sha256"
 
 export CARGO_TARGET_DIR="$cargo_target_directory"
 rust_sysroot=$(rustc --print sysroot)
@@ -81,7 +86,12 @@ for target in $required_targets; do
             --manifest-path "$bondry_root/Cargo.toml" \
             --package bondry-runtime-ffi \
             --package bondry-local-server-ffi \
+            --package bondry-egress-ffi \
             --target "$target"
+    "$apple_strip" -x \
+        "$cargo_target_directory/$target/release/libbondry_runtime_ffi.a" \
+        "$cargo_target_directory/$target/release/libbondry_local_server_ffi.a" \
+        "$cargo_target_directory/$target/release/libbondry_egress_ffi.a"
 done
 
 create_xcframework() {
@@ -149,12 +159,16 @@ generate_licenses() {
 
 runtime_licenses="$artifact_directory/BondryRuntime-THIRD_PARTY_LICENSES.txt"
 local_server_licenses="$artifact_directory/BondryLocalServer-THIRD_PARTY_LICENSES.txt"
+egress_licenses="$artifact_directory/BondryEgress-THIRD_PARTY_LICENSES.txt"
 generate_licenses \
     "$bondry_root/crates/ffi/bondry-runtime-ffi/Cargo.toml" \
     "$runtime_licenses"
 generate_licenses \
     "$bondry_root/crates/ffi/bondry-local-server-ffi/Cargo.toml" \
     "$local_server_licenses"
+generate_licenses \
+    "$bondry_root/crates/ffi/bondry-egress-ffi/Cargo.toml" \
+    "$egress_licenses"
 
 create_xcframework \
     BondryRuntime \
@@ -172,13 +186,23 @@ create_xcframework \
     BondryLocalServer.modulemap \
     CBondryLocalServer \
     "$local_server_licenses"
+create_xcframework \
+    BondryEgress \
+    libbondry_egress_ffi.a \
+    libbondry_egress.a \
+    bondry_egress.h \
+    BondryEgress.modulemap \
+    CBondryEgress \
+    "$egress_licenses"
 
 "$script_directory/verify-xcframework.sh" \
     "$artifact_directory/BondryRuntime.xcframework" \
-    "$artifact_directory/BondryLocalServer.xcframework"
+    "$artifact_directory/BondryLocalServer.xcframework" \
+    "$artifact_directory/BondryEgress.xcframework"
 
 archive_timestamp=$(date -u -r "$source_date_epoch" '+%Y%m%d%H%M.%S')
-for framework_name in BondryRuntime BondryLocalServer; do
+aggregate_archive_size=0
+for framework_name in BondryRuntime BondryLocalServer BondryEgress; do
     xcframework="$artifact_directory/$framework_name.xcframework"
     archive="$xcframework.zip"
     find "$xcframework" -exec touch -h -t "$archive_timestamp" {} +
@@ -190,6 +214,17 @@ for framework_name in BondryRuntime BondryLocalServer; do
     )
     unzip -tq "$archive"
     swift package compute-checksum "$archive" > "$archive.sha256"
+    archive_size=$(stat -f %z "$archive")
+    aggregate_archive_size=$((aggregate_archive_size + archive_size))
+    if [ "$framework_name" = BondryEgress ] && [ "$archive_size" -gt 41943040 ]; then
+        printf 'BondryEgress archive exceeds 40 MiB: %s bytes.\n' "$archive_size" >&2
+        exit 1
+    fi
     printf '%s: %s\n' "$framework_name" "$archive"
     printf 'Checksum: %s\n' "$(sed -n '1p' "$archive.sha256")"
 done
+if [ "$aggregate_archive_size" -gt 262144000 ]; then
+    printf 'Aggregate Apple archives exceed 250 MiB: %s bytes.\n' \
+        "$aggregate_archive_size" >&2
+    exit 1
+fi

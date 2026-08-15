@@ -17,6 +17,7 @@ let package = Package(
     .library(name: "BondryApple", targets: ["BondryApple"]),
     .library(name: "BondryAppIntents", targets: ["BondryAppIntents"]),
     .library(name: "BondryLocalServer", targets: ["BondryLocalServer"]),
+    .library(name: "BondryEgress", targets: ["BondryEgress"]),
   ],
   targets: [
     .binaryTarget(
@@ -28,6 +29,11 @@ let package = Package(
       name: "CBondryLocalServer",
       url: "\(releaseBaseURL)/BondryLocalServer.xcframework.zip",
       checksum: "__BONDRY_LOCAL_SERVER_CHECKSUM__"
+    ),
+    .binaryTarget(
+      name: "CBondryEgress",
+      url: "\(releaseBaseURL)/BondryEgress.xcframework.zip",
+      checksum: "__BONDRY_EGRESS_CHECKSUM__"
     ),
     .target(
       name: "BondryApple",
@@ -48,6 +54,11 @@ let package = Package(
       name: "BondryLocalServer",
       dependencies: ["Bondry", "CBondryLocalServer"],
       path: "apple/Sources/BondryLocalServer"
+    ),
+    .target(
+      name: "BondryEgress",
+      dependencies: ["Bondry", "BondryApple", "CBondryEgress"],
+      path: "apple/Sources/BondryEgress"
     ),
     .target(
       name: "BondryAppIntents",

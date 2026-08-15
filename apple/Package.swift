@@ -13,6 +13,7 @@ let package = Package(
     .library(name: "BondryApple", targets: ["BondryApple"]),
     .library(name: "BondryAppIntents", targets: ["BondryAppIntents"]),
     .library(name: "BondryLocalServer", targets: ["BondryLocalServer"]),
+    .library(name: "BondryEgress", targets: ["BondryEgress"]),
   ],
   targets: [
     .target(
@@ -21,6 +22,10 @@ let package = Package(
     ),
     .target(
       name: "CBondryLocalServer",
+      publicHeadersPath: "include"
+    ),
+    .target(
+      name: "CBondryEgress",
       publicHeadersPath: "include"
     ),
     .target(
@@ -41,13 +46,17 @@ let package = Package(
       dependencies: ["Bondry", "CBondryLocalServer"]
     ),
     .target(
+      name: "BondryEgress",
+      dependencies: ["Bondry", "BondryApple", "CBondryEgress"]
+    ),
+    .target(
       name: "BondryAppIntents",
       dependencies: ["Bondry"],
       linkerSettings: [.linkedFramework("AppIntents")]
     ),
     .target(
       name: "CBondryTestSupport",
-      dependencies: ["CBondryRuntime", "CBondryLocalServer"],
+      dependencies: ["CBondryRuntime", "CBondryLocalServer", "CBondryEgress"],
       path: "Tests/CBondryTestSupport",
       publicHeadersPath: "include"
     ),
@@ -67,6 +76,12 @@ let package = Package(
         "BondryLocalServer",
         "CBondryLocalServer",
         "CBondryTestSupport",
+      ]
+    ),
+    .testTarget(
+      name: "BondryEgressTests",
+      dependencies: [
+        "Bondry", "BondryApple", "BondryEgress", "CBondryEgress", "CBondryTestSupport",
       ]
     ),
     .testTarget(

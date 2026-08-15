@@ -52,10 +52,11 @@ impl EgressRuntime {
         let thread = thread::Builder::new()
             .name("bondry-egress".to_owned())
             .spawn(move || {
-                let runtime = match tokio::runtime::Builder::new_current_thread()
-                    .enable_time()
-                    .build()
-                {
+                let mut builder = tokio::runtime::Builder::new_current_thread();
+                builder.enable_time();
+                #[cfg(feature = "network-io")]
+                builder.enable_io();
+                let runtime = match builder.build() {
                     Ok(runtime) => runtime,
                     Err(_) => {
                         let _ = startup_sender.send(Err(RuntimeStartupSignal::Runtime));
