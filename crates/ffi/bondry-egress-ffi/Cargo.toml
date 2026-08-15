@@ -1,0 +1,39 @@
+[package]
+name = "bondry-egress-ffi"
+description = "Versioned C ABI for Bondry egress"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["rlib", "staticlib"]
+
+[dependencies]
+base64.workspace = true
+bondry-delivery-store = { version = "0.1.2", path = "../../contract/bondry-delivery-store" }
+bondry-egress = { version = "0.1.2", path = "../../egress/bondry-egress" }
+bondry-egress-runtime = { version = "0.1.2", path = "../../engine/bondry-egress-runtime" }
+bondry-egress-webhook = { version = "0.1.2", path = "../../egress/bondry-egress-webhook" }
+bondry-secrets = { version = "0.1.2", path = "../../contract/bondry-secrets" }
+bondry-transport = { version = "0.1.2", path = "../../contract/bondry-transport" }
+bytes.workspace = true
+http.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+bondry-runtime-ffi = { version = "0.1.2", path = "../bondry-runtime-ffi" }
+tempfile.workspace = true
+
+[lints.rust]
+missing_docs = "warn"
+unsafe_code = "allow"
+unsafe_op_in_unsafe_fn = "deny"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+expect_used = "deny"
+panic = "deny"
+unwrap_used = "deny"
