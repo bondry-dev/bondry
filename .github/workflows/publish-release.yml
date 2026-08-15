@@ -24,6 +24,10 @@ on:
         description: SwiftPM checksum of BondryEgress
         required: true
         type: string
+      webhook_ingress_checksum:
+        description: SwiftPM checksum of BondryWebhookIngress
+        required: true
+        type: string
       release_commit:
         description: Commit referenced by the release tag
         required: true
@@ -72,6 +76,7 @@ jobs:
         env:
           LOCAL_SERVER_CHECKSUM: ${{ inputs.local_server_checksum }}
           EGRESS_CHECKSUM: ${{ inputs.egress_checksum }}
+          WEBHOOK_INGRESS_CHECKSUM: ${{ inputs.webhook_ingress_checksum }}
           PREPARATION_RUN_ID: ${{ inputs.preparation_run_id }}
           RELEASE_COMMIT: ${{ inputs.release_commit }}
           RUNTIME_CHECKSUM: ${{ inputs.runtime_checksum }}
@@ -90,7 +95,8 @@ jobs:
             printf 'Preparation run ID must be a positive integer.\n' >&2
             exit 1
           fi
-          if ! printf '%s\n%s\n%s\n' "$RUNTIME_CHECKSUM" "$LOCAL_SERVER_CHECKSUM" "$EGRESS_CHECKSUM" \
+          if ! printf '%s\n%s\n%s\n%s\n' \
+            "$RUNTIME_CHECKSUM" "$LOCAL_SERVER_CHECKSUM" "$EGRESS_CHECKSUM" "$WEBHOOK_INGRESS_CHECKSUM" \
             | awk 'length != 64 || !/^[0-9a-f]+$/ { invalid = 1 } END { exit invalid }'; then
             printf 'Each checksum must contain 64 lowercase hexadecimal characters.\n' >&2
             exit 1
@@ -132,6 +138,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           LOCAL_SERVER_CHECKSUM: ${{ inputs.local_server_checksum }}
           EGRESS_CHECKSUM: ${{ inputs.egress_checksum }}
+          WEBHOOK_INGRESS_CHECKSUM: ${{ inputs.webhook_ingress_checksum }}
           PREPARATION_RUN_ID: ${{ inputs.preparation_run_id }}
           RELEASE_COMMIT: ${{ inputs.release_commit }}
           RUNTIME_CHECKSUM: ${{ inputs.runtime_checksum }}
@@ -141,6 +148,7 @@ jobs:
           runtime_archive="$RUNNER_TEMP/release/BondryRuntime.xcframework.zip"
           local_server_archive="$RUNNER_TEMP/release/BondryLocalServer.xcframework.zip"
           egress_archive="$RUNNER_TEMP/release/BondryEgress.xcframework.zip"
+          webhook_ingress_archive="$RUNNER_TEMP/release/BondryWebhookIngress.xcframework.zip"
           metadata="$RUNNER_TEMP/release/release-metadata.json"
           run_data=$(gh run view "$PREPARATION_RUN_ID" \
             --json conclusion,event,headBranch,headSha,workflowName)
@@ -159,6 +167,7 @@ jobs:
             --arg runtime_checksum "$RUNTIME_CHECKSUM" \
             --arg local_server_checksum "$LOCAL_SERVER_CHECKSUM" \
             --arg egress_checksum "$EGRESS_CHECKSUM" \
+            --arg webhook_ingress_checksum "$WEBHOOK_INGRESS_CHECKSUM" \
             --arg source_commit "$source_commit" \
             --arg release_commit "$RELEASE_COMMIT" \
             --arg preparation_run_id "$PREPARATION_RUN_ID" \
@@ -166,6 +175,7 @@ jobs:
              .runtime_checksum == $runtime_checksum and
              .local_server_checksum == $local_server_checksum and
              .egress_checksum == $egress_checksum and
+             .webhook_ingress_checksum == $webhook_ingress_checksum and
              .source_commit == $source_commit and
              .release_commit == $release_commit and
              .preparation_run_id == $preparation_run_id' \
@@ -176,12 +186,15 @@ jobs:
           recorded_runtime_checksum=$(sed -n '1p' "$runtime_archive.sha256")
           recorded_local_server_checksum=$(sed -n '1p' "$local_server_archive.sha256")
           recorded_egress_checksum=$(sed -n '1p' "$egress_archive.sha256")
+          recorded_webhook_ingress_checksum=$(sed -n '1p' "$webhook_ingress_archive.sha256")
           actual_runtime_checksum=$(swift package compute-checksum "$runtime_archive")
           actual_local_server_checksum=$(swift package compute-checksum "$local_server_archive")
           actual_egress_checksum=$(swift package compute-checksum "$egress_archive")
+          actual_webhook_ingress_checksum=$(swift package compute-checksum "$webhook_ingress_archive")
           sha256_runtime_checksum=$(shasum -a 256 "$runtime_archive" | awk '{ print $1 }')
           sha256_local_server_checksum=$(shasum -a 256 "$local_server_archive" | awk '{ print $1 }')
           sha256_egress_checksum=$(shasum -a 256 "$egress_archive" | awk '{ print $1 }')
+          sha256_webhook_ingress_checksum=$(shasum -a 256 "$webhook_ingress_archive" | awk '{ print $1 }')
           if [ "$recorded_runtime_checksum" != "$RUNTIME_CHECKSUM" ] || \
              [ "$actual_runtime_checksum" != "$RUNTIME_CHECKSUM" ] || \
              [ "$sha256_runtime_checksum" != "$RUNTIME_CHECKSUM" ] || \
@@ -190,7 +203,10 @@ jobs:
              [ "$sha256_local_server_checksum" != "$LOCAL_SERVER_CHECKSUM" ] || \
              [ "$recorded_egress_checksum" != "$EGRESS_CHECKSUM" ] || \
              [ "$actual_egress_checksum" != "$EGRESS_CHECKSUM" ] || \
-             [ "$sha256_egress_checksum" != "$EGRESS_CHECKSUM" ]; then
+             [ "$sha256_egress_checksum" != "$EGRESS_CHECKSUM" ] || \
+             [ "$recorded_webhook_ingress_checksum" != "$WEBHOOK_INGRESS_CHECKSUM" ] || \
+             [ "$actual_webhook_ingress_checksum" != "$WEBHOOK_INGRESS_CHECKSUM" ] || \
+             [ "$sha256_webhook_ingress_checksum" != "$WEBHOOK_INGRESS_CHECKSUM" ]; then
             printf 'A prepared release artifact checksum does not match the manifest.\n' >&2
             exit 1
           fi
@@ -199,12 +215,14 @@ jobs:
             "$RUNTIME_CHECKSUM" \
             "$LOCAL_SERVER_CHECKSUM" \
             "$EGRESS_CHECKSUM" \
+            "$WEBHOOK_INGRESS_CHECKSUM" \
             "$RUNNER_TEMP/Package.swift"
           cmp Package.swift "$RUNNER_TEMP/Package.swift"
           swift package dump-package > /dev/null
           unzip -tq "$runtime_archive"
           unzip -tq "$local_server_archive"
           unzip -tq "$egress_archive"
+          unzip -tq "$webhook_ingress_archive"
           release_state=$(gh release view "v$VERSION" --json isDraft --jq .isDraft 2>/dev/null || printf 'missing')
           case "$release_state" in
             true | missing)
@@ -227,7 +245,8 @@ jobs:
           for archive in \
             "$RUNNER_TEMP/release/BondryRuntime.xcframework.zip" \
             "$RUNNER_TEMP/release/BondryLocalServer.xcframework.zip" \
-            "$RUNNER_TEMP/release/BondryEgress.xcframework.zip"
+            "$RUNNER_TEMP/release/BondryEgress.xcframework.zip" \
+            "$RUNNER_TEMP/release/BondryWebhookIngress.xcframework.zip"
           do
             attestation="$archive.attestation.json"
             gh attestation verify \
@@ -248,6 +267,7 @@ jobs:
             ${{ runner.temp }}/release/BondryRuntime.xcframework.zip
             ${{ runner.temp }}/release/BondryLocalServer.xcframework.zip
             ${{ runner.temp }}/release/BondryEgress.xcframework.zip
+            ${{ runner.temp }}/release/BondryWebhookIngress.xcframework.zip
       - name: Upload draft release
         if: steps.release.outputs.published != 'true'
         uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
@@ -264,6 +284,8 @@ jobs:
             ${{ runner.temp }}/release/BondryLocalServer.xcframework.zip.sha256
             ${{ runner.temp }}/release/BondryEgress.xcframework.zip
             ${{ runner.temp }}/release/BondryEgress.xcframework.zip.sha256
+            ${{ runner.temp }}/release/BondryWebhookIngress.xcframework.zip
+            ${{ runner.temp }}/release/BondryWebhookIngress.xcframework.zip.sha256
           fail_on_unmatched_files: true
           preserve_order: true
       - name: Publish draft release
@@ -293,7 +315,9 @@ jobs:
                 "BondryLocalServer.xcframework.zip",
                 "BondryLocalServer.xcframework.zip.sha256",
                 "BondryRuntime.xcframework.zip",
-                "BondryRuntime.xcframework.zip.sha256"
+                "BondryRuntime.xcframework.zip.sha256",
+                "BondryWebhookIngress.xcframework.zip",
+                "BondryWebhookIngress.xcframework.zip.sha256"
               ]
             ' > /dev/null; then
             printf 'The published release metadata or assets are incomplete.\n' >&2
@@ -309,7 +333,9 @@ jobs:
             BondryLocalServer.xcframework.zip \
             BondryLocalServer.xcframework.zip.sha256 \
             BondryEgress.xcframework.zip \
-            BondryEgress.xcframework.zip.sha256
+            BondryEgress.xcframework.zip.sha256 \
+            BondryWebhookIngress.xcframework.zip \
+            BondryWebhookIngress.xcframework.zip.sha256
           do
             cmp "$RUNNER_TEMP/release/$asset" "$published_directory/$asset"
           done

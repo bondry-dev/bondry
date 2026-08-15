@@ -47,6 +47,7 @@ rm -rf \
     "$artifact_directory/BondryRuntime.xcframework" \
     "$artifact_directory/BondryLocalServer.xcframework" \
     "$artifact_directory/BondryEgress.xcframework" \
+    "$artifact_directory/BondryWebhookIngress.xcframework" \
     "$artifact_directory/staging"
 rm -f \
     "$artifact_directory/BondryRuntime.xcframework.zip" \
@@ -54,7 +55,9 @@ rm -f \
     "$artifact_directory/BondryLocalServer.xcframework.zip" \
     "$artifact_directory/BondryLocalServer.xcframework.zip.sha256" \
     "$artifact_directory/BondryEgress.xcframework.zip" \
-    "$artifact_directory/BondryEgress.xcframework.zip.sha256"
+    "$artifact_directory/BondryEgress.xcframework.zip.sha256" \
+    "$artifact_directory/BondryWebhookIngress.xcframework.zip" \
+    "$artifact_directory/BondryWebhookIngress.xcframework.zip.sha256"
 
 export CARGO_TARGET_DIR="$cargo_target_directory"
 rust_sysroot=$(rustc --print sysroot)
@@ -75,13 +78,15 @@ deduplicate_static_addon() {
     prerequisite=$1
     addon=$2
     target=$3
-    working_directory="$artifact_directory/staging/deduplication/$target"
+    label=$4
+    working_directory="$artifact_directory/staging/deduplication/$label/$target"
     prerequisite_directory="$working_directory/prerequisite"
     addon_directory="$working_directory/addon"
     prerequisite_members="$working_directory/prerequisite-members.txt"
     addon_members="$working_directory/addon-members.txt"
     shared_members="$working_directory/shared-members.txt"
 
+    rm -rf "$working_directory"
     mkdir -p "$prerequisite_directory" "$addon_directory"
     "$apple_ar" -t "$prerequisite" | LC_ALL=C sort > "$prerequisite_members"
     "$apple_ar" -t "$addon" | LC_ALL=C sort > "$addon_members"
@@ -110,15 +115,16 @@ deduplicate_static_addon() {
         if ! cmp -s \
             "$prerequisite_directory/$member" \
             "$addon_directory/$member"; then
-            printf 'Shared archive member differs between runtime and egress: %s (%s)\n' \
-                "$member" "$target" >&2
+            printf 'Shared archive member differs in %s: %s (%s)\n' \
+                "$label" "$member" "$target" >&2
             exit 1
         fi
         set -- "$@" "$member"
         shared_count=$((shared_count + 1))
     done < "$shared_members"
     if [ "$shared_count" -eq 0 ]; then
-        printf 'Runtime and egress have no shared archive members: %s\n' "$target" >&2
+        printf 'Static add-on has no shared archive members: %s (%s)\n' \
+            "$label" "$target" >&2
         exit 1
     fi
     "$apple_ar" -d "$addon" "$@"
@@ -127,11 +133,12 @@ deduplicate_static_addon() {
     if LC_ALL=C comm -12 "$prerequisite_members" "$addon_members" \
         | grep -Fvx '__.SYMDEF SORTED' \
         | grep -q .; then
-        printf 'BondryEgress still contains runtime-owned objects: %s\n' "$target" >&2
+        printf '%s still contains prerequisite-owned objects: %s\n' \
+            "$label" "$target" >&2
         exit 1
     fi
-    printf 'Deduplicated %s runtime-owned objects from BondryEgress (%s).\n' \
-        "$shared_count" "$target"
+    printf 'Deduplicated %s prerequisite-owned objects from %s (%s).\n' \
+        "$shared_count" "$label" "$target"
 }
 
 for target in $required_targets; do
@@ -153,26 +160,41 @@ for target in $required_targets; do
             --package bondry-runtime-ffi \
             --package bondry-local-server-ffi \
             --package bondry-egress-ffi \
+            --package bondry-webhook-ingress-ffi \
             --target "$target"
     "$apple_strip" -x \
         "$cargo_target_directory/$target/release/libbondry_runtime_ffi.a" \
         "$cargo_target_directory/$target/release/libbondry_local_server_ffi.a" \
-        "$cargo_target_directory/$target/release/libbondry_egress_ffi.a"
+        "$cargo_target_directory/$target/release/libbondry_egress_ffi.a" \
+        "$cargo_target_directory/$target/release/libbondry_webhook_ingress_ffi.a"
     "$apple_ranlib" -D \
         "$cargo_target_directory/$target/release/libbondry_runtime_ffi.a" \
         "$cargo_target_directory/$target/release/libbondry_local_server_ffi.a" \
-        "$cargo_target_directory/$target/release/libbondry_egress_ffi.a"
+        "$cargo_target_directory/$target/release/libbondry_egress_ffi.a" \
+        "$cargo_target_directory/$target/release/libbondry_webhook_ingress_ffi.a"
     target_library_directory="$packaged_library_directory/$target"
     mkdir -p "$target_library_directory"
     cp \
         "$cargo_target_directory/$target/release/libbondry_runtime_ffi.a" \
         "$cargo_target_directory/$target/release/libbondry_local_server_ffi.a" \
         "$cargo_target_directory/$target/release/libbondry_egress_ffi.a" \
+        "$cargo_target_directory/$target/release/libbondry_webhook_ingress_ffi.a" \
         "$target_library_directory/"
     deduplicate_static_addon \
         "$target_library_directory/libbondry_runtime_ffi.a" \
         "$target_library_directory/libbondry_egress_ffi.a" \
-        "$target"
+        "$target" \
+        BondryEgress
+    deduplicate_static_addon \
+        "$target_library_directory/libbondry_runtime_ffi.a" \
+        "$target_library_directory/libbondry_webhook_ingress_ffi.a" \
+        "$target" \
+        BondryWebhookIngress-runtime
+    deduplicate_static_addon \
+        "$target_library_directory/libbondry_local_server_ffi.a" \
+        "$target_library_directory/libbondry_webhook_ingress_ffi.a" \
+        "$target" \
+        BondryWebhookIngress-server
 done
 
 create_xcframework() {
@@ -245,6 +267,7 @@ generate_licenses() {
 runtime_licenses="$artifact_directory/BondryRuntime-THIRD_PARTY_LICENSES.txt"
 local_server_licenses="$artifact_directory/BondryLocalServer-THIRD_PARTY_LICENSES.txt"
 egress_licenses="$artifact_directory/BondryEgress-THIRD_PARTY_LICENSES.txt"
+ingress_licenses="$artifact_directory/BondryWebhookIngress-THIRD_PARTY_LICENSES.txt"
 generate_licenses \
     "$bondry_root/crates/ffi/bondry-runtime-ffi/Cargo.toml" \
     "$runtime_licenses"
@@ -254,6 +277,9 @@ generate_licenses \
 generate_licenses \
     "$bondry_root/crates/ffi/bondry-egress-ffi/Cargo.toml" \
     "$egress_licenses"
+generate_licenses \
+    "$bondry_root/crates/ffi/bondry-webhook-ingress-ffi/Cargo.toml" \
+    "$ingress_licenses"
 
 create_xcframework \
     BondryRuntime \
@@ -279,15 +305,24 @@ create_xcframework \
     BondryEgress.modulemap \
     CBondryEgress \
     "$egress_licenses"
+create_xcframework \
+    BondryWebhookIngress \
+    libbondry_webhook_ingress_ffi.a \
+    libbondry_webhook_ingress.a \
+    bondry_webhook_ingress.h \
+    BondryWebhookIngress.modulemap \
+    CBondryWebhookIngress \
+    "$ingress_licenses"
 
 "$script_directory/verify-xcframework.sh" \
     "$artifact_directory/BondryRuntime.xcframework" \
     "$artifact_directory/BondryLocalServer.xcframework" \
-    "$artifact_directory/BondryEgress.xcframework"
+    "$artifact_directory/BondryEgress.xcframework" \
+    "$artifact_directory/BondryWebhookIngress.xcframework"
 
 archive_timestamp=$(date -u -r "$source_date_epoch" '+%Y%m%d%H%M.%S')
 aggregate_archive_size=0
-for framework_name in BondryRuntime BondryLocalServer BondryEgress; do
+for framework_name in BondryRuntime BondryLocalServer BondryEgress BondryWebhookIngress; do
     xcframework="$artifact_directory/$framework_name.xcframework"
     archive="$xcframework.zip"
     find "$xcframework" -exec touch -h -t "$archive_timestamp" {} +
@@ -303,6 +338,11 @@ for framework_name in BondryRuntime BondryLocalServer BondryEgress; do
     aggregate_archive_size=$((aggregate_archive_size + archive_size))
     if [ "$framework_name" = BondryEgress ] && [ "$archive_size" -gt 41943040 ]; then
         printf 'BondryEgress archive exceeds 40 MiB: %s bytes.\n' "$archive_size" >&2
+        exit 1
+    fi
+    if [ "$framework_name" = BondryWebhookIngress ] && [ "$archive_size" -gt 31457280 ]; then
+        printf 'BondryWebhookIngress archive exceeds 30 MiB: %s bytes.\n' \
+            "$archive_size" >&2
         exit 1
     fi
     printf '%s: %s\n' "$framework_name" "$archive"

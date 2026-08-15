@@ -1,8 +1,8 @@
 #!/bin/sh
 set -eu
 
-if [ "$#" -ne 5 ]; then
-    printf 'Usage: %s <version> <runtime-checksum> <local-server-checksum> <egress-checksum> <output>\n' "$0" >&2
+if [ "$#" -ne 6 ]; then
+    printf 'Usage: %s <version> <runtime-checksum> <local-server-checksum> <egress-checksum> <webhook-ingress-checksum> <output>\n' "$0" >&2
     exit 64
 fi
 
@@ -10,7 +10,8 @@ version=$1
 runtime_checksum=$2
 local_server_checksum=$3
 egress_checksum=$4
-output=$5
+webhook_ingress_checksum=$5
+output=$6
 
 if ! printf '%s\n' "$version" | awk -F. '
     function component(value) { return value == "0" || value ~ /^[1-9][0-9]*$/ }
@@ -21,7 +22,12 @@ if ! printf '%s\n' "$version" | awk -F. '
     exit 1
 fi
 
-for checksum in "$runtime_checksum" "$local_server_checksum" "$egress_checksum"; do
+for checksum in \
+    "$runtime_checksum" \
+    "$local_server_checksum" \
+    "$egress_checksum" \
+    "$webhook_ingress_checksum"
+do
     if ! printf '%s\n' "$checksum" | awk 'length == 64 && /^[0-9a-f]+$/ { valid = 1 } END { exit !valid }'; then
         printf 'Each checksum must contain 64 lowercase hexadecimal characters.\n' >&2
         exit 1
@@ -36,9 +42,10 @@ sed \
     -e "s/__BONDRY_RUNTIME_CHECKSUM__/$runtime_checksum/g" \
     -e "s/__BONDRY_LOCAL_SERVER_CHECKSUM__/$local_server_checksum/g" \
     -e "s/__BONDRY_EGRESS_CHECKSUM__/$egress_checksum/g" \
+    -e "s/__BONDRY_WEBHOOK_INGRESS_CHECKSUM__/$webhook_ingress_checksum/g" \
     "$template" > "$output"
 
-if grep -E -q '__BONDRY_(VERSION|RUNTIME_CHECKSUM|LOCAL_SERVER_CHECKSUM|EGRESS_CHECKSUM)__' "$output"; then
+if grep -E -q '__BONDRY_(VERSION|RUNTIME_CHECKSUM|LOCAL_SERVER_CHECKSUM|EGRESS_CHECKSUM|WEBHOOK_INGRESS_CHECKSUM)__' "$output"; then
     printf 'The rendered package contains unresolved placeholders.\n' >&2
     exit 1
 fi
