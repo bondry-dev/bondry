@@ -258,6 +258,7 @@ dependencies = [
  "bondry-mcp-proto",
  "bondry-rest-proto",
  "bondry-runtime-ffi",
+ "http",
  "serde",
  "serde_json",
  "tempfile",
