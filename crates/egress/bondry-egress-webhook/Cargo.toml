@@ -1,0 +1,23 @@
+[package]
+name = "bondry-egress-webhook"
+description = "Sans-I/O webhook delivery kind for Bondry egress"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+license.workspace = true
+
+[dependencies]
+bondry-delivery-store = { version = "0.1.2", path = "../../contract/bondry-delivery-store" }
+bondry-egress = { version = "0.1.2", path = "../bondry-egress" }
+bondry-secrets = { version = "0.1.2", path = "../../contract/bondry-secrets" }
+bondry-transport = { version = "0.1.2", path = "../../contract/bondry-transport" }
+http.workspace = true
+thiserror.workspace = true
+zeroize.workspace = true
+
+[dev-dependencies]
+bytes.workspace = true
+
+[lints]
+workspace = true

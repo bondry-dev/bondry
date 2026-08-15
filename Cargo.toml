@@ -6,6 +6,7 @@ members = [
     "crates/contract/bondry-secrets",
     "crates/contract/bondry-transport",
     "crates/egress/bondry-egress",
+    "crates/egress/bondry-egress-webhook",
     "crates/engine/bondry-http-server",
     "crates/engine/bondry-transport-net",
     "crates/ffi/bondry-local-server-ffi",
