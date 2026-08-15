@@ -34,12 +34,15 @@ for target in $required_targets; do
 done
 
 apple_strip=$(xcrun --find strip)
+apple_ar=$(xcrun --find ar)
+apple_ranlib=$(xcrun --find ranlib)
 
 cargo fetch --locked --manifest-path "$bondry_root/Cargo.toml"
 
 mkdir -p "$artifact_directory" "$cargo_target_directory"
 artifact_directory=$(CDPATH='' cd -- "$artifact_directory" && pwd)
 cargo_target_directory=$(CDPATH='' cd -- "$cargo_target_directory" && pwd)
+packaged_library_directory="$artifact_directory/staging/libraries"
 rm -rf \
     "$artifact_directory/BondryRuntime.xcframework" \
     "$artifact_directory/BondryLocalServer.xcframework" \
@@ -68,6 +71,69 @@ case "$bondry_root" in
         ;;
 esac
 
+deduplicate_static_addon() {
+    prerequisite=$1
+    addon=$2
+    target=$3
+    working_directory="$artifact_directory/staging/deduplication/$target"
+    prerequisite_directory="$working_directory/prerequisite"
+    addon_directory="$working_directory/addon"
+    prerequisite_members="$working_directory/prerequisite-members.txt"
+    addon_members="$working_directory/addon-members.txt"
+    shared_members="$working_directory/shared-members.txt"
+
+    mkdir -p "$prerequisite_directory" "$addon_directory"
+    "$apple_ar" -t "$prerequisite" | LC_ALL=C sort > "$prerequisite_members"
+    "$apple_ar" -t "$addon" | LC_ALL=C sort > "$addon_members"
+    if uniq -d "$prerequisite_members" | grep -q . \
+        || uniq -d "$addon_members" | grep -q .; then
+        printf 'Cannot deduplicate an archive with duplicate member names: %s\n' \
+            "$target" >&2
+        exit 1
+    fi
+    LC_ALL=C comm -12 "$prerequisite_members" "$addon_members" > "$shared_members"
+    (
+        cd "$prerequisite_directory"
+        "$apple_ar" -x "$prerequisite"
+    )
+    (
+        cd "$addon_directory"
+        "$apple_ar" -x "$addon"
+    )
+
+    set --
+    shared_count=0
+    while IFS= read -r member; do
+        if [ "$member" = '__.SYMDEF SORTED' ]; then
+            continue
+        fi
+        if ! cmp -s \
+            "$prerequisite_directory/$member" \
+            "$addon_directory/$member"; then
+            printf 'Shared archive member differs between runtime and egress: %s (%s)\n' \
+                "$member" "$target" >&2
+            exit 1
+        fi
+        set -- "$@" "$member"
+        shared_count=$((shared_count + 1))
+    done < "$shared_members"
+    if [ "$shared_count" -eq 0 ]; then
+        printf 'Runtime and egress have no shared archive members: %s\n' "$target" >&2
+        exit 1
+    fi
+    "$apple_ar" -d "$addon" "$@"
+    "$apple_ranlib" -D "$addon"
+    "$apple_ar" -t "$addon" | LC_ALL=C sort > "$addon_members"
+    if LC_ALL=C comm -12 "$prerequisite_members" "$addon_members" \
+        | grep -Fvx '__.SYMDEF SORTED' \
+        | grep -q .; then
+        printf 'BondryEgress still contains runtime-owned objects: %s\n' "$target" >&2
+        exit 1
+    fi
+    printf 'Deduplicated %s runtime-owned objects from BondryEgress (%s).\n' \
+        "$shared_count" "$target"
+}
+
 for target in $required_targets; do
     case "$target" in
         *-apple-darwin)
@@ -92,6 +158,21 @@ for target in $required_targets; do
         "$cargo_target_directory/$target/release/libbondry_runtime_ffi.a" \
         "$cargo_target_directory/$target/release/libbondry_local_server_ffi.a" \
         "$cargo_target_directory/$target/release/libbondry_egress_ffi.a"
+    "$apple_ranlib" -D \
+        "$cargo_target_directory/$target/release/libbondry_runtime_ffi.a" \
+        "$cargo_target_directory/$target/release/libbondry_local_server_ffi.a" \
+        "$cargo_target_directory/$target/release/libbondry_egress_ffi.a"
+    target_library_directory="$packaged_library_directory/$target"
+    mkdir -p "$target_library_directory"
+    cp \
+        "$cargo_target_directory/$target/release/libbondry_runtime_ffi.a" \
+        "$cargo_target_directory/$target/release/libbondry_local_server_ffi.a" \
+        "$cargo_target_directory/$target/release/libbondry_egress_ffi.a" \
+        "$target_library_directory/"
+    deduplicate_static_addon \
+        "$target_library_directory/libbondry_runtime_ffi.a" \
+        "$target_library_directory/libbondry_egress_ffi.a" \
+        "$target"
 done
 
 create_xcframework() {
@@ -119,15 +200,15 @@ create_xcframework() {
     cp "$bondry_root/apple/Distribution/$module_map" "$headers_directory/module.modulemap"
 
     lipo -create \
-        "$cargo_target_directory/aarch64-apple-darwin/release/$source_library_name" \
-        "$cargo_target_directory/x86_64-apple-darwin/release/$source_library_name" \
+        "$packaged_library_directory/aarch64-apple-darwin/$source_library_name" \
+        "$packaged_library_directory/x86_64-apple-darwin/$source_library_name" \
         -output "$macos_directory/$packaged_library_name"
     cp \
-        "$cargo_target_directory/aarch64-apple-ios/release/$source_library_name" \
+        "$packaged_library_directory/aarch64-apple-ios/$source_library_name" \
         "$ios_directory/$packaged_library_name"
     lipo -create \
-        "$cargo_target_directory/aarch64-apple-ios-sim/release/$source_library_name" \
-        "$cargo_target_directory/x86_64-apple-ios/release/$source_library_name" \
+        "$packaged_library_directory/aarch64-apple-ios-sim/$source_library_name" \
+        "$packaged_library_directory/x86_64-apple-ios/$source_library_name" \
         -output "$simulator_directory/$packaged_library_name"
 
     xcodebuild -create-xcframework \
@@ -138,6 +219,10 @@ create_xcframework() {
         -library "$simulator_directory/$packaged_library_name" \
         -headers "$headers_root" \
         -output "$xcframework"
+    sed "s/__LIBRARY_NAME__/$packaged_library_name/g" \
+        "$bondry_root/apple/Distribution/XCFrameworkInfo.plist" \
+        > "$xcframework/Info.plist"
+    plutil -lint "$xcframework/Info.plist" > /dev/null
 
     cp "$bondry_root/LICENSE" "$xcframework/LICENSE"
     cp "$bondry_root/THIRD_PARTY_NOTICES.md" "$xcframework/THIRD_PARTY_NOTICES.md"
