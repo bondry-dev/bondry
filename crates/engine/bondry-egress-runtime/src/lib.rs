@@ -1,7 +1,9 @@
 #![doc = "Bounded current-thread scheduling and persistence for Bondry egress."]
 
+mod attempt;
 mod limits;
 mod memory_log;
+mod runtime;
 
 pub use limits::{
     DEFAULT_CALL_IN_FLIGHT, DEFAULT_DRAIN_TIMEOUT, DEFAULT_GLOBAL_IN_FLIGHT,
@@ -12,4 +14,8 @@ pub use limits::{
 };
 pub use memory_log::{
     InMemoryDeliveryLog, InMemoryDeliveryLogLimit, InMemoryDeliveryLogLimitError,
+};
+pub use runtime::{
+    DeliveryReceipt, EgressRuntime, EgressRuntimeError, EgressRuntimeStartError,
+    EgressRuntimeStopError,
 };
