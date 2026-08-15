@@ -30,9 +30,15 @@ lowest candidate result.
 
 ## Size Gates
 
-Every candidate passed the 3 MiB Rust linked-delta gates, the Swift linked-size
-gates, the individual archive ceilings, and the 250 MiB aggregate archive
-ceiling.
+Every candidate passed the Swift linked-size gates, the individual archive
+ceilings, and the 250 MiB aggregate archive ceiling. None passed the 3 MiB Rust
+MCP linked-delta gate.
+
+| Candidate | Rust webhook delta | Rust MCP delta | MCP excess |
+| --- | ---: | ---: | ---: |
+| `s/fat/1` | 1,162,656 | 3,196,928 | 51,200 |
+| `s/fat/16` | 1,245,616 | 3,296,640 | 150,912 |
+| `3/fat/16` | 1,592,336 | 4,122,720 | 976,992 |
 
 | Candidate | Runtime probe | Server probe | Egress delta | Ingress delta | Combined delta | Apple archives |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -40,10 +46,10 @@ ceiling.
 | `s/fat/16` | 6,929,472 | 8,264,760 | 2,084,648 | 612,136 | 2,390,744 | 245,373,076 |
 | `3/fat/16` | 7,674,192 | 9,143,416 | 2,072,664 | 655,320 | 2,390,760 | 253,266,421 |
 
-The selected profile retains 8,877,579 bytes below the aggregate archive
-ceiling and 714,416 bytes below the runtime-only executable ceiling. Its egress
-archive is 24,206,594 bytes and its ingress archive is 5,645,612 bytes, below
-their 40 MiB and 30 MiB ceilings.
+The selected `z/fat/1` profile produces Rust webhook and MCP linked deltas of
+983,504 and 2,394,864 bytes. The measurement scripts resolve
+`CARGO_TARGET_DIR` so isolated candidate builds cannot accidentally measure a
+stale default-target binary.
 
 ## v0.1.2 Release Gate
 
@@ -53,14 +59,16 @@ budget:
 
 | Protocol | p95 change | Throughput change |
 | --- | ---: | ---: |
-| REST | +1.85% | +2.39% |
-| MCP | -16.75% | +28.57% |
+| REST | +0.29% | -0.75% |
+| MCP | -1.33% | -0.03% |
 
 ## Selection
 
-The 0.2.0 release profile is `opt-level=3`, fat LTO, and 16 codegen units. It is
-the fastest eligible candidate across the complete REST, MCP, egress, ingress,
-and Apple distribution surface.
+The three shortlisted profiles trade acceptable Apple artifact growth for a
+Rust MCP linked-size regression beyond the release ceiling. The 0.2.0 release
+therefore retains `opt-level=z`, fat LTO, and one codegen unit. It satisfies all
+size and performance gates across the complete REST, MCP, egress, ingress, and
+Apple distribution surface.
 
 Raw server reports are stored in [`candidate-trials`](candidate-trials/) and
 [`baseline-trials`](baseline-trials/). Reproduce the candidate trials with:
