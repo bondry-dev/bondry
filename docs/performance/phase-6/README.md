@@ -45,6 +45,7 @@ MCP linked-delta gate.
 | `s/fat/1` | 6,141,968 | 7,238,360 | 1,864,600 | 525,848 | 2,114,776 | 201,575,575 |
 | `s/fat/16` | 6,929,472 | 8,264,760 | 2,084,648 | 612,136 | 2,390,744 | 245,373,076 |
 | `3/fat/16` | 7,674,192 | 9,143,416 | 2,072,664 | 655,320 | 2,390,760 | 253,266,421 |
+| `z/fat/1` (selected) | 5,430,752 | 6,472,040 | 1,816,296 | 522,952 | 2,047,944 | 177,777,658 |
 
 The selected `z/fat/1` profile produces Rust webhook and MCP linked deltas of
 983,504 and 2,394,864 bytes. The measurement scripts resolve
