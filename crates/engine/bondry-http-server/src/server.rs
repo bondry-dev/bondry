@@ -562,7 +562,7 @@ fn secure_response(mut response: Response<Bytes>) -> Response<Bytes> {
     response
 }
 
-fn error_response(status: StatusCode, code: &'static str) -> Response<Bytes> {
+fn error_response(status: StatusCode, code: &str) -> Response<Bytes> {
     let body = serde_json::to_vec(&json!({ "error": code })).unwrap_or_default();
     let mut response = Response::new(Bytes::from(body));
     *response.status_mut() = status;
@@ -601,14 +601,20 @@ fn retryable_response(status: StatusCode, code: &'static str, retry_after: u64) 
 }
 
 fn raw_body_response(response: RawBodyResponse) -> Response<Bytes> {
-    let mut output = Response::new(Bytes::new());
-    *output.status_mut() = response.status();
+    let mut output = response.error_code().map_or_else(
+        || {
+            let mut output = Response::new(Bytes::new());
+            *output.status_mut() = response.status();
+            secure_response(output)
+        },
+        |code| error_response(response.status(), code),
+    );
     if let Some(retry_after) = response.retry_after_seconds() {
         if let Ok(value) = http::HeaderValue::from_str(&retry_after.to_string()) {
             output.headers_mut().insert(header::RETRY_AFTER, value);
         }
     }
-    secure_response(output)
+    output
 }
 
 fn clone_io_error(error: &io::Error) -> io::Error {

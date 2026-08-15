@@ -1370,6 +1370,8 @@ mod tests {
             abi_version: BONDRY_RAW_BODY_HANDLER_ABI_VERSION_V1,
             struct_size: std::mem::size_of::<BondryRawBodyResponseV1>(),
             status_code: 204,
+            error_code: ptr::null(),
+            error_code_length: 0,
             retry_after_seconds: 0,
             has_retry_after: 0,
         }
