@@ -1,0 +1,17 @@
+[package]
+name = "bondry-webhook-verify"
+description = "Sans-I/O inbound webhook verification contracts for Bondry"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+license.workspace = true
+
+[dependencies]
+bondry-delivery-store = { version = "0.1.2", path = "../../contract/bondry-delivery-store" }
+http.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true
