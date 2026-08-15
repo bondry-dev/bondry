@@ -1,8 +1,8 @@
 #!/bin/sh
 set -eu
 
-if [ "$#" -ne 3 ]; then
-    printf 'Usage: %s <BondryRuntime.xcframework> <BondryLocalServer.xcframework> <BondryEgress.xcframework>\n' "$0" >&2
+if [ "$#" -ne 4 ]; then
+    printf 'Usage: %s <BondryRuntime.xcframework> <BondryLocalServer.xcframework> <BondryEgress.xcframework> <BondryWebhookIngress.xcframework>\n' "$0" >&2
     exit 64
 fi
 
@@ -11,6 +11,7 @@ bondry_root=$(CDPATH='' cd -- "$script_directory/../.." && pwd)
 runtime_framework=$1
 server_framework=$2
 egress_framework=$3
+ingress_framework=$4
 runtime_macos_slice="$runtime_framework/macos-arm64_x86_64"
 runtime_ios_slice="$runtime_framework/ios-arm64"
 runtime_simulator_slice="$runtime_framework/ios-arm64_x86_64-simulator"
@@ -20,6 +21,9 @@ server_simulator_slice="$server_framework/ios-arm64_x86_64-simulator"
 egress_macos_slice="$egress_framework/macos-arm64_x86_64"
 egress_ios_slice="$egress_framework/ios-arm64"
 egress_simulator_slice="$egress_framework/ios-arm64_x86_64-simulator"
+ingress_macos_slice="$ingress_framework/macos-arm64_x86_64"
+ingress_ios_slice="$ingress_framework/ios-arm64"
+ingress_simulator_slice="$ingress_framework/ios-arm64_x86_64-simulator"
 runtime_macos_library="$runtime_macos_slice/libbondry_runtime.a"
 runtime_ios_library="$runtime_ios_slice/libbondry_runtime.a"
 runtime_simulator_library="$runtime_simulator_slice/libbondry_runtime.a"
@@ -29,14 +33,25 @@ server_simulator_library="$server_simulator_slice/libbondry_local_server.a"
 egress_macos_library="$egress_macos_slice/libbondry_egress.a"
 egress_ios_library="$egress_ios_slice/libbondry_egress.a"
 egress_simulator_library="$egress_simulator_slice/libbondry_egress.a"
+ingress_macos_library="$ingress_macos_slice/libbondry_webhook_ingress.a"
+ingress_ios_library="$ingress_ios_slice/libbondry_webhook_ingress.a"
+ingress_simulator_library="$ingress_simulator_slice/libbondry_webhook_ingress.a"
 runtime_macos_headers="$runtime_macos_slice/Headers/CBondryRuntime"
 runtime_ios_headers="$runtime_ios_slice/Headers/CBondryRuntime"
 runtime_simulator_headers="$runtime_simulator_slice/Headers/CBondryRuntime"
 egress_macos_headers="$egress_macos_slice/Headers/CBondryEgress"
 egress_ios_headers="$egress_ios_slice/Headers/CBondryEgress"
 egress_simulator_headers="$egress_simulator_slice/Headers/CBondryEgress"
+ingress_macos_headers="$ingress_macos_slice/Headers/CBondryWebhookIngress"
+ingress_ios_headers="$ingress_ios_slice/Headers/CBondryWebhookIngress"
+ingress_simulator_headers="$ingress_simulator_slice/Headers/CBondryWebhookIngress"
 
-for framework in "$runtime_framework" "$server_framework" "$egress_framework"; do
+for framework in \
+    "$runtime_framework" \
+    "$server_framework" \
+    "$egress_framework" \
+    "$ingress_framework"
+do
     test -f "$framework/Info.plist"
     cmp "$bondry_root/LICENSE" "$framework/LICENSE"
     cmp "$bondry_root/THIRD_PARTY_NOTICES.md" "$framework/THIRD_PARTY_NOTICES.md"
@@ -52,6 +67,9 @@ lipo "$server_simulator_library" -verify_arch arm64 x86_64
 lipo "$egress_macos_library" -verify_arch arm64 x86_64
 lipo "$egress_ios_library" -verify_arch arm64
 lipo "$egress_simulator_library" -verify_arch arm64 x86_64
+lipo "$ingress_macos_library" -verify_arch arm64 x86_64
+lipo "$ingress_ios_library" -verify_arch arm64
+lipo "$ingress_simulator_library" -verify_arch arm64 x86_64
 
 for slice in "$runtime_macos_slice" "$runtime_ios_slice" "$runtime_simulator_slice"; do
     cmp "$bondry_root/bindings/c/include/bondry.h" \
@@ -71,6 +89,12 @@ for slice in "$server_macos_slice" "$server_ios_slice" "$server_simulator_slice"
     cmp "$bondry_root/apple/Distribution/BondryLocalServer.modulemap" \
         "$slice/Headers/CBondryLocalServer/module.modulemap"
 done
+for slice in "$ingress_macos_slice" "$ingress_ios_slice" "$ingress_simulator_slice"; do
+    cmp "$bondry_root/bindings/c/include/bondry_webhook_ingress.h" \
+        "$slice/Headers/CBondryWebhookIngress/bondry_webhook_ingress.h"
+    cmp "$bondry_root/apple/Distribution/BondryWebhookIngress.modulemap" \
+        "$slice/Headers/CBondryWebhookIngress/module.modulemap"
+done
 
 for library in \
     "$runtime_macos_library" \
@@ -81,7 +105,10 @@ for library in \
     "$server_simulator_library" \
     "$egress_macos_library" \
     "$egress_ios_library" \
-    "$egress_simulator_library"
+    "$egress_simulator_library" \
+    "$ingress_macos_library" \
+    "$ingress_ios_library" \
+    "$ingress_simulator_library"
 do
     if strings -a "$library" | grep -E -q '/Users/|/home/|[A-Za-z]:\\Users'; then
         printf 'An XCFramework contains a private build-machine path: %s\n' "$library" >&2
@@ -119,6 +146,16 @@ if nm -gU "$egress_macos_library" 2>/dev/null \
     printf 'BondryEgress defines the runtime store implementation.\n' >&2
     exit 1
 fi
+if ! nm -gU "$ingress_macos_library" 2>/dev/null \
+    | awk '$NF == "_bondry_webhook_ingress_handler_v1" { found = 1 } END { exit !found }'; then
+    printf 'BondryWebhookIngress does not export bondry_webhook_ingress_handler_v1.\n' >&2
+    exit 1
+fi
+if nm -gU "$ingress_macos_library" 2>/dev/null \
+    | awk '$NF == "_bondry_store_open_v1" || $NF ~ /^_bondry_egress_/ { found = 1 } END { exit !found }'; then
+    printf 'BondryWebhookIngress defines runtime or egress entry points.\n' >&2
+    exit 1
+fi
 
 temporary_directory=$(mktemp -d "${TMPDIR:-/tmp}/bondry-xcframework.XXXXXX")
 trap 'rm -rf "$temporary_directory"' EXIT HUP INT TERM
@@ -130,6 +167,7 @@ printf '%s\n' \
     '@import CBondryRuntime;' \
     '@import CBondryLocalServer;' \
     '@import CBondryEgress;' \
+    '@import CBondryWebhookIngress;' \
     'uint32_t bondry_module_smoke(void) { return bondry_abi_version_v1(); }' \
     > "$temporary_directory/module-smoke.m"
 
@@ -139,6 +177,7 @@ cc \
     -I "$runtime_macos_slice/Headers" \
     -I "$server_macos_slice/Headers" \
     -I "$egress_macos_slice/Headers" \
+    -I "$ingress_macos_slice/Headers" \
     -fsyntax-only \
     "$temporary_directory/module-smoke.m"
 
@@ -178,6 +217,28 @@ cc \
 
 "$temporary_directory/bondry-egress-smoke" "$temporary_directory/egress.db"
 
+cc \
+    -std=c11 \
+    -Wall \
+    -Wextra \
+    -Werror \
+    -mmacosx-version-min=13.0 \
+    -Wl,-fatal_warnings \
+    "$bondry_root/bindings/c/tests/webhook_ingress_smoke.c" \
+    -I "$runtime_macos_headers" \
+    -I "$server_macos_slice/Headers/CBondryLocalServer" \
+    -I "$ingress_macos_headers" \
+    "$runtime_macos_library" \
+    "$server_macos_library" \
+    "$ingress_macos_library" \
+    -framework CoreFoundation \
+    -framework Security \
+    -liconv \
+    -o "$temporary_directory/bondry-webhook-ingress-smoke"
+
+"$temporary_directory/bondry-webhook-ingress-smoke" \
+    "$temporary_directory/webhook-ingress.db"
+
 for platform in ios simulator; do
     case "$platform" in
         ios)
@@ -187,6 +248,10 @@ for platform in ios simulator; do
             runtime_headers=$runtime_ios_headers
             egress_library=$egress_ios_library
             egress_headers=$egress_ios_headers
+            server_library=$server_ios_library
+            server_headers="$server_ios_slice/Headers/CBondryLocalServer"
+            ingress_library=$ingress_ios_library
+            ingress_headers=$ingress_ios_headers
             ;;
         simulator)
             target=arm64-apple-ios16.0-simulator
@@ -195,6 +260,10 @@ for platform in ios simulator; do
             runtime_headers=$runtime_simulator_headers
             egress_library=$egress_simulator_library
             egress_headers=$egress_simulator_headers
+            server_library=$server_simulator_library
+            server_headers="$server_simulator_slice/Headers/CBondryLocalServer"
+            ingress_library=$ingress_simulator_library
+            ingress_headers=$ingress_simulator_headers
             ;;
     esac
     "$apple_clang" \
@@ -229,6 +298,25 @@ for platform in ios simulator; do
         -framework Security \
         -liconv \
         -o "$temporary_directory/bondry-egress-smoke-$platform"
+    "$apple_clang" \
+        -std=c11 \
+        -Wall \
+        -Wextra \
+        -Werror \
+        -target "$target" \
+        -isysroot "$sdk" \
+        -Wl,-fatal_warnings \
+        "$bondry_root/bindings/c/tests/webhook_ingress_smoke.c" \
+        -I "$runtime_headers" \
+        -I "$server_headers" \
+        -I "$ingress_headers" \
+        "$runtime_library" \
+        "$server_library" \
+        "$ingress_library" \
+        -framework CoreFoundation \
+        -framework Security \
+        -liconv \
+        -o "$temporary_directory/bondry-webhook-ingress-smoke-$platform"
 done
 
 package_directory="$temporary_directory/BondryBinaryProbe"
@@ -237,21 +325,31 @@ mkdir -p \
     "$package_directory/Sources/BondryApple" \
     "$package_directory/Sources/BondryEgress" \
     "$package_directory/Sources/BondryLocalServer" \
+    "$package_directory/Sources/BondryWebhookIngress" \
+    "$package_directory/Sources/CombinedProbe" \
     "$package_directory/Sources/EgressProbe" \
+    "$package_directory/Sources/IngressProbe" \
     "$package_directory/Sources/RuntimeProbe" \
     "$package_directory/Sources/ServerProbe"
 
 cp -R "$runtime_framework" "$package_directory/BondryRuntime.xcframework"
 cp -R "$server_framework" "$package_directory/BondryLocalServer.xcframework"
 cp -R "$egress_framework" "$package_directory/BondryEgress.xcframework"
+cp -R "$ingress_framework" "$package_directory/BondryWebhookIngress.xcframework"
 cp "$bondry_root/apple/Sources/Bondry/"*.swift "$package_directory/Sources/Bondry/"
 cp "$bondry_root/apple/Sources/BondryApple/"*.swift "$package_directory/Sources/BondryApple/"
 cp "$bondry_root/apple/Sources/BondryLocalServer/"*.swift \
     "$package_directory/Sources/BondryLocalServer/"
 cp "$bondry_root/apple/Sources/BondryEgress/"*.swift \
     "$package_directory/Sources/BondryEgress/"
+cp "$bondry_root/apple/Sources/BondryWebhookIngress/"*.swift \
+    "$package_directory/Sources/BondryWebhookIngress/"
 cp "$bondry_root/apple/IntegrationTests/EgressProbe/Sources/main.swift" \
     "$package_directory/Sources/EgressProbe/main.swift"
+cp "$bondry_root/apple/IntegrationTests/IngressProbe/Sources/main.swift" \
+    "$package_directory/Sources/IngressProbe/main.swift"
+cp "$bondry_root/apple/IntegrationTests/IngressProbe/Sources/main.swift" \
+    "$package_directory/Sources/CombinedProbe/main.swift"
 
 printf '%s\n' \
     '// swift-tools-version: 6.2' \
@@ -265,6 +363,10 @@ printf '%s\n' \
     '    .binaryTarget(name: "CBondryRuntime", path: "BondryRuntime.xcframework"),' \
     '    .binaryTarget(name: "CBondryLocalServer", path: "BondryLocalServer.xcframework"),' \
     '    .binaryTarget(name: "CBondryEgress", path: "BondryEgress.xcframework"),' \
+    '    .binaryTarget(' \
+    '      name: "CBondryWebhookIngress",' \
+    '      path: "BondryWebhookIngress.xcframework"' \
+    '    ),' \
     '    .target(' \
     '      name: "BondryApple",' \
     '      linkerSettings: [.linkedFramework("Security")]' \
@@ -286,10 +388,30 @@ printf '%s\n' \
     '      name: "BondryEgress",' \
     '      dependencies: ["Bondry", "BondryApple", "CBondryEgress"]' \
     '    ),' \
+    '    .target(' \
+    '      name: "BondryWebhookIngress",' \
+    '      dependencies: [' \
+    '        "Bondry", "BondryApple", "BondryLocalServer", "CBondryWebhookIngress",' \
+    '      ]' \
+    '    ),' \
     '    .executableTarget(name: "RuntimeProbe", dependencies: ["Bondry", "BondryApple"]),' \
     '    .executableTarget(' \
     '      name: "EgressProbe",' \
     '      dependencies: ["Bondry", "BondryApple", "BondryEgress"]' \
+    '    ),' \
+    '    .executableTarget(' \
+    '      name: "IngressProbe",' \
+    '      dependencies: [' \
+    '        "Bondry", "BondryApple", "BondryLocalServer", "BondryWebhookIngress",' \
+    '      ]' \
+    '    ),' \
+    '    .executableTarget(' \
+    '      name: "CombinedProbe",' \
+    '      dependencies: [' \
+    '        "Bondry", "BondryApple", "BondryEgress", "BondryLocalServer",' \
+    '        "BondryWebhookIngress", "CBondryEgress",' \
+    '      ],' \
+    '      swiftSettings: [.define("BONDRY_COMBINED_PROBE")]' \
     '    ),' \
     '    .executableTarget(' \
     '      name: "ServerProbe",' \
@@ -393,6 +515,59 @@ if [ "$server_probe_size" -gt 16777216 ]; then
     exit 1
 fi
 
+swift build --package-path "$package_directory" --configuration release --product IngressProbe
+ingress_probe="$package_directory/.build/release/IngressProbe"
+"$ingress_probe" "$temporary_directory/swift-ingress.db"
+if ! nm -gU "$ingress_probe" 2>/dev/null \
+    | awk '$NF == "_bondry_webhook_ingress_handler_v1" { found = 1 } END { exit !found }'; then
+    printf 'An ingress-enabled Swift executable omits its ingress entry point.\n' >&2
+    exit 1
+fi
+if nm -gU "$ingress_probe" 2>/dev/null \
+    | awk '$NF ~ /^_bondry_egress_/ { found = 1 } END { exit !found }'; then
+    printf 'An ingress-only Swift executable contains egress symbols.\n' >&2
+    exit 1
+fi
+ingress_probe_size=$(stat -f %z "$ingress_probe")
+ingress_delta=$((ingress_probe_size - server_probe_size))
+if [ "$ingress_delta" -gt 4194304 ]; then
+    printf 'The ingress linked delta exceeds 4 MiB: %s bytes.\n' "$ingress_delta" >&2
+    exit 1
+fi
+
+swift build --package-path "$package_directory" --configuration release --product CombinedProbe
+combined_probe="$package_directory/.build/release/CombinedProbe"
+"$combined_probe" "$temporary_directory/swift-combined.db"
+for symbol in _bondry_egress_start_v1 _bondry_webhook_ingress_handler_v1; do
+    if ! nm -gU "$combined_probe" 2>/dev/null \
+        | awk -v symbol="$symbol" '$NF == symbol { found = 1 } END { exit !found }'; then
+        printf 'The combined Swift executable omits %s.\n' "$symbol" >&2
+        exit 1
+    fi
+done
+combined_probe_size=$(stat -f %z "$combined_probe")
+combined_delta=$((combined_probe_size - server_probe_size))
+if [ "$combined_delta" -gt 9437184 ]; then
+    printf 'The combined linked delta exceeds 9 MiB: %s bytes.\n' "$combined_delta" >&2
+    exit 1
+fi
+
+for scheme in IngressProbe CombinedProbe; do
+    (
+        cd "$package_directory"
+        xcodebuild \
+            -quiet \
+            -scheme "$scheme" \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$temporary_directory/ios-$scheme-derived" \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+    )
+done
+
 printf 'Verified runtime-only executable: %s bytes\n' "$runtime_probe_size"
 printf 'Verified egress linked delta: %s bytes\n' "$egress_delta"
 printf 'Verified server-enabled executable: %s bytes\n' "$server_probe_size"
+printf 'Verified ingress linked delta: %s bytes\n' "$ingress_delta"
+printf 'Verified combined linked delta: %s bytes\n' "$combined_delta"

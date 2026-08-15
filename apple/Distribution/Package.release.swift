@@ -18,6 +18,7 @@ let package = Package(
     .library(name: "BondryAppIntents", targets: ["BondryAppIntents"]),
     .library(name: "BondryLocalServer", targets: ["BondryLocalServer"]),
     .library(name: "BondryEgress", targets: ["BondryEgress"]),
+    .library(name: "BondryWebhookIngress", targets: ["BondryWebhookIngress"]),
   ],
   targets: [
     .binaryTarget(
@@ -34,6 +35,11 @@ let package = Package(
       name: "CBondryEgress",
       url: "\(releaseBaseURL)/BondryEgress.xcframework.zip",
       checksum: "__BONDRY_EGRESS_CHECKSUM__"
+    ),
+    .binaryTarget(
+      name: "CBondryWebhookIngress",
+      url: "\(releaseBaseURL)/BondryWebhookIngress.xcframework.zip",
+      checksum: "__BONDRY_WEBHOOK_INGRESS_CHECKSUM__"
     ),
     .target(
       name: "BondryApple",
@@ -59,6 +65,13 @@ let package = Package(
       name: "BondryEgress",
       dependencies: ["Bondry", "BondryApple", "CBondryEgress"],
       path: "apple/Sources/BondryEgress"
+    ),
+    .target(
+      name: "BondryWebhookIngress",
+      dependencies: [
+        "Bondry", "BondryApple", "BondryLocalServer", "CBondryWebhookIngress",
+      ],
+      path: "apple/Sources/BondryWebhookIngress"
     ),
     .target(
       name: "BondryAppIntents",
