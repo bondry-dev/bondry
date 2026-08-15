@@ -161,9 +161,6 @@ public struct BondryLocalServerConfiguration: Equatable, Sendable {
     allowsCleartextNetworkAccess: Bool = false,
     allowsUnauthenticatedNetworkAccess: Bool = false
   ) throws {
-    guard !adapters.isEmpty else {
-      throw BondryLocalServerConfigurationError.noAdapters
-    }
     guard isValidIPAddress(listeningAddress) else {
       throw BondryLocalServerConfigurationError.invalidListeningAddress
     }
