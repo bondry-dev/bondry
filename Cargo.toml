@@ -20,6 +20,7 @@ members = [
     "itests/server-bench",
     "itests/server-e2e",
     "itests/egress-e2e",
+    "itests/egress-mcp-e2e",
     "itests/transport-e2e",
     "xtask",
 ]
