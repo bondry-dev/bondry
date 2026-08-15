@@ -1,9 +1,9 @@
 use serde_json::{Value, json};
 use thiserror::Error;
 
-const MAX_NAME_LENGTH: usize = 128;
+pub(crate) const MAX_NAME_LENGTH: usize = 128;
 const MAX_TITLE_LENGTH: usize = 256;
-const MAX_VERSION_LENGTH: usize = 64;
+pub(crate) const MAX_VERSION_LENGTH: usize = 64;
 
 /// Validated host-application metadata returned during MCP initialization.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -57,7 +57,7 @@ pub enum McpServerInfoError {
     ControlCharacter,
 }
 
-fn validate(value: String, max_length: usize) -> Result<String, McpServerInfoError> {
+pub(crate) fn validate(value: String, max_length: usize) -> Result<String, McpServerInfoError> {
     if value.trim().is_empty() {
         return Err(McpServerInfoError::Empty);
     }

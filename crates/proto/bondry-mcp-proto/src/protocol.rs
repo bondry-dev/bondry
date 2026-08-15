@@ -2,10 +2,22 @@ use bytes::Bytes;
 use http::{Response, StatusCode, header};
 use serde_json::{Map, Value, json};
 
+pub(crate) const CALL_TOOL_METHOD: &str = "tools/call";
+pub(crate) const CLIENT_CAPABILITIES_META: &str = "io.modelcontextprotocol/clientCapabilities";
+pub(crate) const CLIENT_INFO_META: &str = "io.modelcontextprotocol/clientInfo";
+pub(crate) const DISCOVER_METHOD: &str = "server/discover";
+pub(crate) const INITIALIZE_METHOD: &str = "initialize";
+pub(crate) const LIST_TOOLS_METHOD: &str = "tools/list";
+pub(crate) const METHOD_HEADER: &str = "mcp-method";
+pub(crate) const NAME_HEADER: &str = "mcp-name";
+pub(crate) const PROTOCOL_VERSION_HEADER: &str = "mcp-protocol-version";
+pub(crate) const PROTOCOL_VERSION_META: &str = "io.modelcontextprotocol/protocolVersion";
+pub(crate) const SERVER_INFO_META: &str = "io.modelcontextprotocol/serverInfo";
+
 pub(crate) enum Message {
     Request(RpcRequest),
     Notification(RpcNotification),
-    Response,
+    Response(RpcResponse),
 }
 
 pub(crate) struct RpcRequest {
@@ -18,8 +30,22 @@ pub(crate) struct RpcNotification {
     pub(crate) params: Option<Value>,
 }
 
+pub(crate) struct RpcResponse {
+    pub(crate) id: Value,
+    pub(crate) payload: RpcResponsePayload,
+}
+
+pub(crate) enum RpcResponsePayload {
+    Result(Value),
+    Error(RpcError),
+}
+
+pub(crate) struct RpcError {
+    pub(crate) code: i64,
+}
+
 pub(crate) struct ProtocolError {
-    code: i32,
+    pub(crate) code: i32,
     message: &'static str,
 }
 
@@ -51,11 +77,7 @@ pub(crate) fn parse(body: &[u8]) -> Result<Message, ProtocolError> {
             None => Err(invalid_request()),
         };
     }
-    if valid_response(object) {
-        Ok(Message::Response)
-    } else {
-        Err(invalid_request())
-    }
+    parse_response(object).map(Message::Response)
 }
 
 pub(crate) fn accepted_response() -> Response<Bytes> {
@@ -122,17 +144,28 @@ fn valid_id(id: &Value) -> bool {
             .is_some_and(|number| number.as_i64().is_some() || number.as_u64().is_some())
 }
 
-fn valid_response(response: &Map<String, Value>) -> bool {
-    response.get("id").is_some_and(valid_id)
-        && (response.contains_key("result") ^ response.contains_key("error"))
-        && response.get("error").is_none_or(valid_error)
-}
-
-fn valid_error(error: &Value) -> bool {
-    error.as_object().is_some_and(|error| {
-        error.get("code").and_then(Value::as_i64).is_some()
-            && error.get("message").and_then(Value::as_str).is_some()
-    })
+fn parse_response(response: &Map<String, Value>) -> Result<RpcResponse, ProtocolError> {
+    let id = response
+        .get("id")
+        .filter(|id| valid_id(id))
+        .cloned()
+        .ok_or_else(invalid_request)?;
+    let payload = match (response.get("result"), response.get("error")) {
+        (Some(result), None) => RpcResponsePayload::Result(result.clone()),
+        (None, Some(error)) => {
+            let error = error.as_object().ok_or_else(invalid_request)?;
+            let code = error
+                .get("code")
+                .and_then(Value::as_i64)
+                .ok_or_else(invalid_request)?;
+            if error.get("message").and_then(Value::as_str).is_none() {
+                return Err(invalid_request());
+            }
+            RpcResponsePayload::Error(RpcError { code })
+        }
+        _ => return Err(invalid_request()),
+    };
+    Ok(RpcResponse { id, payload })
 }
 
 const fn invalid_request() -> ProtocolError {
@@ -146,7 +179,7 @@ const fn invalid_request() -> ProtocolError {
 mod tests {
     use serde_json::json;
 
-    use super::{Message, parse};
+    use super::{Message, RpcResponsePayload, parse};
 
     #[test]
     fn distinguishes_requests_notifications_and_responses() {
@@ -160,7 +193,26 @@ mod tests {
         ));
         assert!(matches!(
             parse(br#"{"jsonrpc":"2.0","id":"one","result":{}}"#),
-            Ok(Message::Response)
+            Ok(Message::Response(_))
+        ));
+    }
+
+    #[test]
+    fn exposes_response_results_and_errors() {
+        let response = parse(br#"{"jsonrpc":"2.0","id":1,"result":{"ok":true}}"#);
+        assert!(matches!(
+            response,
+            Ok(Message::Response(response))
+                if matches!(&response.payload, RpcResponsePayload::Result(result) if result["ok"] == true)
+        ));
+
+        let response = parse(
+            br#"{"jsonrpc":"2.0","id":1,"error":{"code":-32022,"message":"unsupported","data":{"supported":[]}}}"#,
+        );
+        assert!(matches!(
+            response,
+            Ok(Message::Response(response))
+                if matches!(&response.payload, RpcResponsePayload::Error(error) if error.code == -32_022)
         ));
     }
 

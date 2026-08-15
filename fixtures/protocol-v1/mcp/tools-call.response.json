@@ -1,0 +1,17 @@
+{
+  "jsonrpc": "2.0",
+  "id": 3,
+  "result": {
+    "content": [
+      {
+        "type": "text",
+        "text": "{\"charging\":true}"
+      }
+    ],
+    "structuredContent": {
+      "charging": true
+    },
+    "isError": false,
+    "resultType": "complete"
+  }
+}

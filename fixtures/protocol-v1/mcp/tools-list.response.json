@@ -1,0 +1,25 @@
+{
+  "jsonrpc": "2.0",
+  "id": 2,
+  "result": {
+    "tools": [
+      {
+        "name": "battery:status",
+        "description": "Returns battery status",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "detail": {
+              "type": "boolean"
+            }
+          },
+          "required": ["detail"],
+          "additionalProperties": false
+        }
+      }
+    ],
+    "ttlMs": 0,
+    "cacheScope": "private",
+    "resultType": "complete"
+  }
+}
