@@ -1,5 +1,12 @@
 const WEBHOOK_CANONICAL_PREFIX: &[u8] = b"bondry-webhook-v1\n";
 
+/// Delivery identifier header covered by the Bondry webhook canonical form.
+pub const BONDRY_WEBHOOK_DELIVERY_ID_HEADER: &str = "x-bondry-delivery-id";
+/// Unix-seconds timestamp header covered by the Bondry webhook canonical form.
+pub const BONDRY_WEBHOOK_TIMESTAMP_HEADER: &str = "x-bondry-timestamp";
+/// Lowercase hexadecimal HMAC-SHA-256 signature header.
+pub const BONDRY_WEBHOOK_SIGNATURE_HEADER: &str = "x-bondry-signature";
+
 /// Exact inputs covered by the Bondry webhook HMAC form.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct WebhookSigningInput<'a> {
