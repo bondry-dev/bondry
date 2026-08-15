@@ -14,14 +14,17 @@ crate-type = ["rlib", "staticlib"]
 base64.workspace = true
 bondry-delivery-store = { version = "0.1.2", path = "../../contract/bondry-delivery-store" }
 bondry-egress = { version = "0.1.2", path = "../../egress/bondry-egress" }
+bondry-egress-mcp = { version = "0.1.2", path = "../../egress/bondry-egress-mcp" }
 bondry-egress-runtime = { version = "0.1.2", path = "../../engine/bondry-egress-runtime" }
 bondry-egress-webhook = { version = "0.1.2", path = "../../egress/bondry-egress-webhook" }
+bondry-mcp-proto = { version = "0.1.2", path = "../../proto/bondry-mcp-proto" }
 bondry-secrets = { version = "0.1.2", path = "../../contract/bondry-secrets" }
 bondry-transport = { version = "0.1.2", path = "../../contract/bondry-transport" }
 bytes.workspace = true
 http.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+tokio = { workspace = true, features = ["rt", "time"] }
 
 [dev-dependencies]
 bondry-runtime-ffi = { version = "0.1.2", path = "../bondry-runtime-ffi" }

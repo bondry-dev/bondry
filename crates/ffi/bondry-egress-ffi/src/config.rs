@@ -3,20 +3,27 @@ use std::{sync::Arc, time::Duration};
 use base64::{Engine, engine::general_purpose::STANDARD};
 use bondry_delivery_store::{PersistentDeliveryLogLimits, RouteId};
 use bondry_egress::{
-    GlobalAdmissionLimit, PayloadContract, PayloadField, PayloadFieldName, PayloadFieldType,
-    PayloadLimit, RequestTimeout, RetryPolicy, Route, RouteAdmissionLimit, RouteRegistry,
-    RouteRegistryLimit,
+    DeliveryKind, GlobalAdmissionLimit, PayloadContract, PayloadField, PayloadFieldName,
+    PayloadFieldType, PayloadLimit, RequestTimeout, RetryPolicy, Route, RouteAdmissionLimit,
+    RouteRegistry, RouteRegistryLimit,
+};
+use bondry_egress_mcp::{
+    McpAuthentication, McpDeliveryKind, McpDiscoveryLimits, McpDiscoveryOperation, McpLimits,
+    McpToolBinding,
 };
 use bondry_egress_runtime::EgressRuntimeLimits;
 use bondry_egress_webhook::{
     SecretUrlTemplate, UrlTemplateLimits, WebhookAuthentication, WebhookDeliveryKind, WebhookLimits,
 };
+use bondry_mcp_proto::{McpClient, McpClientInfo, McpProtocolVersion};
 use bondry_secrets::SecretRef;
 use bondry_transport::{AdditionalTrustAnchor, EndpointPolicy, NetworkEndpoint};
 use serde::Deserialize;
+use serde_json::Value;
 
 pub(crate) const MAX_RUNTIME_CONFIGURATION_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_ROUTE_CONFIGURATION_BYTES: usize = 128 * 1024;
+pub(crate) const MAX_DISCOVERY_CONFIGURATION_BYTES: usize = 128 * 1024;
 
 const CONFIGURATION_VERSION: u32 = 1;
 
@@ -243,6 +250,32 @@ enum RouteKindConfiguration {
         #[serde(default)]
         limits: WebhookLimitsConfiguration,
     },
+    Mcp {
+        endpoint: String,
+        authentication: McpAuthenticationConfiguration,
+        #[serde(default)]
+        policy: PolicyConfiguration,
+        protocol_version: String,
+        tool: McpToolConfiguration,
+        #[serde(default)]
+        limits: McpLimitsConfiguration,
+        #[serde(default)]
+        automatic_retry: bool,
+    },
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+enum McpAuthenticationConfiguration {
+    None,
+    Bearer { secret_ref: String },
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct McpToolConfiguration {
+    name: String,
+    input_schema: Value,
 }
 
 #[derive(Deserialize)]
@@ -296,6 +329,23 @@ impl Default for WebhookLimitsConfiguration {
     }
 }
 
+#[derive(Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct McpLimitsConfiguration {
+    schema_bytes: usize,
+    result_bytes: usize,
+}
+
+impl Default for McpLimitsConfiguration {
+    fn default() -> Self {
+        let limits = McpLimits::default();
+        Self {
+            schema_bytes: limits.schema_bytes(),
+            result_bytes: limits.result_bytes(),
+        }
+    }
+}
+
 pub(crate) fn route_configuration(bytes: &[u8]) -> Result<Route, ConfigurationError> {
     let configuration: RouteConfiguration = parse_configuration(bytes)?;
     if configuration.version != CONFIGURATION_VERSION {
@@ -331,62 +381,40 @@ pub(crate) fn route_configuration(bytes: &[u8]) -> Result<Route, ConfigurationEr
         configuration.admission.capacity,
     )
     .map_err(|_| ConfigurationError::Invalid)?;
-    let RouteKindConfiguration::Webhook {
-        authentication,
-        policy,
-        limits,
-    } = configuration.kind;
-    let webhook_limits = WebhookLimits::new(limits.body_bytes, limits.response_body_bytes)
-        .map_err(|_| ConfigurationError::Invalid)?;
-    let template_limits =
-        UrlTemplateLimits::new(limits.url_template_bytes, limits.expanded_url_bytes)
-            .map_err(|_| ConfigurationError::Invalid)?;
-    let policy = decode_policy(policy)?;
-    let kind = match authentication {
-        AuthenticationConfiguration::None { endpoint } => WebhookDeliveryKind::new(
-            decode_endpoint(&endpoint)?,
-            WebhookAuthentication::None,
+    let kind: Arc<dyn DeliveryKind> = match configuration.kind {
+        RouteKindConfiguration::Webhook {
+            authentication,
             policy,
-            webhook_limits,
-        )
-        .map_err(|_| ConfigurationError::Invalid)?,
-        AuthenticationConfiguration::Bearer {
+            limits,
+        } => Arc::new(decode_webhook_kind(authentication, policy, limits)?),
+        RouteKindConfiguration::Mcp {
             endpoint,
-            secret_ref,
-        } => WebhookDeliveryKind::new(
-            decode_endpoint(&endpoint)?,
-            WebhookAuthentication::Bearer(
-                SecretRef::new(secret_ref).map_err(|_| ConfigurationError::Invalid)?,
-            ),
+            authentication,
             policy,
-            webhook_limits,
-        )
-        .map_err(|_| ConfigurationError::Invalid)?,
-        AuthenticationConfiguration::Hmac {
-            endpoint,
-            secret_ref,
-        } => WebhookDeliveryKind::new(
-            decode_endpoint(&endpoint)?,
-            WebhookAuthentication::Hmac(
-                SecretRef::new(secret_ref).map_err(|_| ConfigurationError::Invalid)?,
-            ),
-            policy,
-            webhook_limits,
-        )
-        .map_err(|_| ConfigurationError::Invalid)?,
-        AuthenticationConfiguration::UrlTemplate {
-            template,
-            secret_ref,
-        } => WebhookDeliveryKind::with_url_template(
-            SecretUrlTemplate::new(
-                template,
-                SecretRef::new(secret_ref).map_err(|_| ConfigurationError::Invalid)?,
-                template_limits,
+            protocol_version,
+            tool,
+            limits,
+            automatic_retry,
+        } => {
+            let limits = McpLimits::new(limits.schema_bytes, limits.result_bytes)
+                .map_err(|_| ConfigurationError::Invalid)?;
+            let tool = McpToolBinding::from_parts(&tool.name, tool.input_schema, limits)
+                .map_err(|_| ConfigurationError::Invalid)?;
+            let mut kind = McpDeliveryKind::new(
+                decode_endpoint(&endpoint)?,
+                decode_mcp_authentication(authentication)?,
+                decode_policy(policy)?,
+                mcp_client()?,
+                McpProtocolVersion::parse(&protocol_version).ok_or(ConfigurationError::Invalid)?,
+                tool,
+                limits,
             )
-            .map_err(|_| ConfigurationError::Invalid)?,
-            policy,
-            webhook_limits,
-        ),
+            .map_err(|_| ConfigurationError::Invalid)?;
+            if automatic_retry {
+                kind = kind.with_automatic_retry();
+            }
+            Arc::new(kind)
+        }
     };
     Ok(Route::new(
         RouteId::new(configuration.id).map_err(|_| ConfigurationError::Invalid)?,
@@ -398,8 +426,151 @@ pub(crate) fn route_configuration(bytes: &[u8]) -> Result<Route, ConfigurationEr
         .map_err(|_| ConfigurationError::Invalid)?,
         retry,
         admission,
-        Arc::new(kind),
+        kind,
     ))
+}
+
+fn decode_webhook_kind(
+    authentication: AuthenticationConfiguration,
+    policy: PolicyConfiguration,
+    limits: WebhookLimitsConfiguration,
+) -> Result<WebhookDeliveryKind, ConfigurationError> {
+    let webhook_limits = WebhookLimits::new(limits.body_bytes, limits.response_body_bytes)
+        .map_err(|_| ConfigurationError::Invalid)?;
+    let template_limits =
+        UrlTemplateLimits::new(limits.url_template_bytes, limits.expanded_url_bytes)
+            .map_err(|_| ConfigurationError::Invalid)?;
+    let policy = decode_policy(policy)?;
+    match authentication {
+        AuthenticationConfiguration::None { endpoint } => WebhookDeliveryKind::new(
+            decode_endpoint(&endpoint)?,
+            WebhookAuthentication::None,
+            policy,
+            webhook_limits,
+        )
+        .map_err(|_| ConfigurationError::Invalid),
+        AuthenticationConfiguration::Bearer {
+            endpoint,
+            secret_ref,
+        } => WebhookDeliveryKind::new(
+            decode_endpoint(&endpoint)?,
+            WebhookAuthentication::Bearer(decode_secret_reference(secret_ref)?),
+            policy,
+            webhook_limits,
+        )
+        .map_err(|_| ConfigurationError::Invalid),
+        AuthenticationConfiguration::Hmac {
+            endpoint,
+            secret_ref,
+        } => WebhookDeliveryKind::new(
+            decode_endpoint(&endpoint)?,
+            WebhookAuthentication::Hmac(decode_secret_reference(secret_ref)?),
+            policy,
+            webhook_limits,
+        )
+        .map_err(|_| ConfigurationError::Invalid),
+        AuthenticationConfiguration::UrlTemplate {
+            template,
+            secret_ref,
+        } => Ok(WebhookDeliveryKind::with_url_template(
+            SecretUrlTemplate::new(
+                template,
+                decode_secret_reference(secret_ref)?,
+                template_limits,
+            )
+            .map_err(|_| ConfigurationError::Invalid)?,
+            policy,
+            webhook_limits,
+        )),
+    }
+}
+
+fn decode_mcp_authentication(
+    authentication: McpAuthenticationConfiguration,
+) -> Result<McpAuthentication, ConfigurationError> {
+    match authentication {
+        McpAuthenticationConfiguration::None => Ok(McpAuthentication::None),
+        McpAuthenticationConfiguration::Bearer { secret_ref } => Ok(McpAuthentication::Bearer(
+            decode_secret_reference(secret_ref)?,
+        )),
+    }
+}
+
+fn decode_secret_reference(value: String) -> Result<SecretRef, ConfigurationError> {
+    SecretRef::new(value).map_err(|_| ConfigurationError::Invalid)
+}
+
+fn mcp_client() -> Result<McpClient, ConfigurationError> {
+    McpClientInfo::new("bondry-egress", env!("CARGO_PKG_VERSION"))
+        .map(McpClient::new)
+        .map_err(|_| ConfigurationError::Invalid)
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct McpDiscoveryConfiguration {
+    version: u32,
+    endpoint: String,
+    authentication: McpAuthenticationConfiguration,
+    #[serde(default)]
+    policy: PolicyConfiguration,
+    #[serde(default)]
+    limits: McpDiscoveryLimitsConfiguration,
+    #[serde(default = "default_request_timeout_milliseconds")]
+    request_timeout_milliseconds: u64,
+}
+
+#[derive(Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct McpDiscoveryLimitsConfiguration {
+    tools: usize,
+    schema_bytes: usize,
+    response_bytes: usize,
+}
+
+impl Default for McpDiscoveryLimitsConfiguration {
+    fn default() -> Self {
+        let limits = McpDiscoveryLimits::default();
+        Self {
+            tools: limits.tools(),
+            schema_bytes: limits.schema_bytes(),
+            response_bytes: limits.response_bytes(),
+        }
+    }
+}
+
+pub(crate) struct ValidatedMcpDiscoveryConfiguration {
+    pub(crate) operation: McpDiscoveryOperation,
+    pub(crate) timeout: Duration,
+}
+
+pub(crate) fn mcp_discovery_configuration(
+    bytes: &[u8],
+) -> Result<ValidatedMcpDiscoveryConfiguration, ConfigurationError> {
+    let configuration: McpDiscoveryConfiguration = parse_configuration(bytes)?;
+    if configuration.version != CONFIGURATION_VERSION {
+        return Err(ConfigurationError::Invalid);
+    }
+    let limits = McpDiscoveryLimits::new(
+        configuration.limits.tools,
+        configuration.limits.schema_bytes,
+        configuration.limits.response_bytes,
+    )
+    .map_err(|_| ConfigurationError::Invalid)?;
+    let timeout = RequestTimeout::new(Duration::from_millis(
+        configuration.request_timeout_milliseconds,
+    ))
+    .map_err(|_| ConfigurationError::Invalid)?
+    .get();
+    let operation = McpDiscoveryOperation::new(
+        decode_endpoint(&configuration.endpoint)?,
+        decode_mcp_authentication(configuration.authentication)?,
+        decode_policy(configuration.policy)?,
+        mcp_client()?,
+        limits,
+    )
+    .map_err(|_| ConfigurationError::Invalid)?;
+    Ok(ValidatedMcpDiscoveryConfiguration { operation, timeout })
 }
 
 fn parse_configuration<T: for<'de> Deserialize<'de>>(
@@ -473,7 +644,7 @@ const fn default_payload_bytes() -> usize {
 
 #[cfg(test)]
 mod tests {
-    use super::{route_configuration, runtime_configuration};
+    use super::{mcp_discovery_configuration, route_configuration, runtime_configuration};
 
     #[test]
     fn defaults_runtime_but_rejects_unknown_fields() {
@@ -510,5 +681,29 @@ mod tests {
           "kind":{"type":"webhook","authentication":{"type":"none","endpoint":"https://example.com","extra":true},"extra":true}
         }"#;
         assert!(route_configuration(kind).is_err());
+    }
+
+    #[test]
+    fn validates_mcp_route_and_discovery_configuration() {
+        let route = br#"{
+          "version":1,
+          "id":"mcp",
+          "payload":{"fields":[{"name":"detail","type":"boolean"}]},
+          "kind":{
+            "type":"mcp",
+            "endpoint":"https://example.com/mcp",
+            "authentication":{"type":"bearer","secret_ref":"keychain:mcp"},
+            "protocol_version":"2026-07-28",
+            "tool":{"name":"battery:status","input_schema":{"type":"object"}}
+          }
+        }"#;
+        assert!(route_configuration(route).is_ok());
+
+        let discovery = br#"{
+          "version":1,
+          "endpoint":"https://example.com/mcp",
+          "authentication":{"type":"none"}
+        }"#;
+        assert!(mcp_discovery_configuration(discovery).is_ok());
     }
 }

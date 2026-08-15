@@ -147,8 +147,10 @@ dependencies = [
  "base64",
  "bondry-delivery-store",
  "bondry-egress",
+ "bondry-egress-mcp",
  "bondry-egress-runtime",
  "bondry-egress-webhook",
+ "bondry-mcp-proto",
  "bondry-runtime-ffi",
  "bondry-secrets",
  "bondry-transport",
@@ -157,6 +159,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+ "tokio",
 ]
 
 [[package]]

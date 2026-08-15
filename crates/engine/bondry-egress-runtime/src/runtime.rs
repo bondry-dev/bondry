@@ -243,6 +243,12 @@ impl CallResult {
     pub const fn json(&self) -> &Bytes {
         &self.json
     }
+
+    /// Moves the identifier, metadata, and untrusted result bytes to a host boundary.
+    #[must_use]
+    pub fn into_parts(self) -> (DeliveryId, DeliveryResultMetadata, Bytes) {
+        (self.delivery, self.metadata, self.json)
+    }
 }
 
 impl DeliveryReceipt {
