@@ -7,6 +7,7 @@ pub(crate) const CLIENT_CAPABILITIES_META: &str = "io.modelcontextprotocol/clien
 pub(crate) const CLIENT_INFO_META: &str = "io.modelcontextprotocol/clientInfo";
 pub(crate) const DISCOVER_METHOD: &str = "server/discover";
 pub(crate) const INITIALIZE_METHOD: &str = "initialize";
+pub(crate) const INITIALIZED_METHOD: &str = "notifications/initialized";
 pub(crate) const LIST_TOOLS_METHOD: &str = "tools/list";
 pub(crate) const METHOD_HEADER: &str = "mcp-method";
 pub(crate) const NAME_HEADER: &str = "mcp-name";
