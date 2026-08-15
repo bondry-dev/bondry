@@ -113,6 +113,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "bondry-egress"
+version = "0.1.2"
+dependencies = [
+ "bondry-delivery-store",
+ "bondry-secrets",
+ "bondry-transport",
+ "bytes",
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
 name = "bondry-http-server"
 version = "0.1.2"
 dependencies = [
