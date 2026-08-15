@@ -2,6 +2,7 @@
 members = [
     "crates/contract/bondry-auth",
     "crates/contract/bondry-core",
+    "crates/contract/bondry-delivery-store",
     "crates/contract/bondry-secrets",
     "crates/contract/bondry-transport",
     "crates/engine/bondry-http-server",
