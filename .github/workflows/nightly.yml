@@ -13,8 +13,12 @@ concurrency:
   cancel-in-progress: true
 
 env:
+  CARGO_INCREMENTAL: "0"
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: "1"
+  RUSTC_WRAPPER: sccache
+  SCCACHE_GHA_ENABLED: "true"
+  SCCACHE_GHA_VERSION: bondry-v1
 
 jobs:
   full:
@@ -24,6 +28,10 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Configure sccache
+        uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+        with:
+          version: "v0.17.0"
       - name: Install Rust
         run: rustup toolchain install 1.90.0 --profile minimal --component clippy,rustfmt
       - name: Restore Rust cache
@@ -36,7 +44,6 @@ jobs:
             ~/.cargo/bin/cargo-nextest
             ~/.cargo/git
             ~/.cargo/registry
-            target
           key: ${{ runner.os }}-rust-1.90.0-nightly-nextest-0.9.128-audit-0.22.2-deny-0.20.2-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-rust-1.90.0-nightly-nextest-0.9.128-audit-0.22.2-deny-0.20.2-
@@ -121,6 +128,10 @@ jobs:
         run: |
           sudo xcode-select --switch /Applications/Xcode_26.2.app/Contents/Developer
           xcodebuild -version
+      - name: Configure sccache
+        uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+        with:
+          version: "v0.17.0"
       - name: Install Rust
         run: rustup toolchain install 1.90.0 --profile minimal
       - name: Restore Rust cache
@@ -129,7 +140,6 @@ jobs:
           path: |
             ~/.cargo/git
             ~/.cargo/registry
-            target
           key: ${{ runner.os }}-rust-1.90.0-egress-size-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-rust-1.90.0-egress-size-
@@ -143,6 +153,10 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Configure sccache
+        uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+        with:
+          version: "v0.17.0"
       - name: Install Rust
         run: rustup toolchain install 1.85.0 --profile minimal
       - name: Restore MSRV cache
@@ -151,7 +165,6 @@ jobs:
           path: |
             ~/.cargo/git
             ~/.cargo/registry
-            target
           key: ${{ runner.os }}-rust-1.85.0-msrv-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-rust-1.85.0-msrv-
