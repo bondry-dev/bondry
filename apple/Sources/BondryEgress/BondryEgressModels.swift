@@ -273,8 +273,8 @@ public indirect enum BondryJSONValue: Codable, Equatable, Sendable {
 }
 
 public enum BondryMCPProtocolVersion: String, Codable, Equatable, Sendable {
-  case v2026_07_28 = "2026-07-28"
-  case v2025_11_25 = "2025-11-25"
+  case v20260728 = "2026-07-28"
+  case v20251125 = "2025-11-25"
 }
 
 public struct BondryMCPTool: Codable, Equatable, Sendable {

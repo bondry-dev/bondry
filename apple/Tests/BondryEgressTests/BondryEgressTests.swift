@@ -125,7 +125,7 @@ final class BondryEgressTests: XCTestCase {
     let discovery = try await egress.discoverMCP(
       BondryMCPDiscoveryConfiguration(authentication: .none(endpoint: endpoint))
     )
-    XCTAssertEqual(discovery.protocolVersion, .v2026_07_28)
+    XCTAssertEqual(discovery.protocolVersion, .v20260728)
     XCTAssertEqual(discovery.tools.count, 1)
     XCTAssertEqual(discovery.tools[0].name, "battery:status")
     XCTAssertEqual(
@@ -167,7 +167,7 @@ final class BondryEgressTests: XCTestCase {
     let content = try XCTUnwrap(output["content"] as? [[String: Any]])
     XCTAssertEqual(content.first?["text"] as? String, "ok")
 
-    await XCTAssertThrowsErrorAsync(
+    await assertThrowsErrorAsync(
       try await egress.call(
         routeID: route.id,
         payload: ["detail": true],
@@ -209,7 +209,7 @@ final class BondryEgressTests: XCTestCase {
   }
 }
 
-private func XCTAssertThrowsErrorAsync<T>(
+private func assertThrowsErrorAsync<T>(
   _ expression: @autoclosure () async throws -> T,
   _ errorHandler: (Error) -> Void,
   file: StaticString = #filePath,
