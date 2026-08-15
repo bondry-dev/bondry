@@ -21,8 +21,11 @@ thiserror.workspace = true
 tokio = { workspace = true, features = ["macros", "rt", "sync", "time"] }
 
 [dev-dependencies]
+bondry-egress-mcp = { path = "../../egress/bondry-egress-mcp" }
 bondry-egress-webhook = { path = "../../egress/bondry-egress-webhook" }
+bondry-mcp-proto = { path = "../../proto/bondry-mcp-proto" }
 http.workspace = true
+serde_json.workspace = true
 
 [lints]
 workspace = true

@@ -160,16 +160,36 @@ dependencies = [
 ]
 
 [[package]]
+name = "bondry-egress-mcp"
+version = "0.1.2"
+dependencies = [
+ "bondry-delivery-store",
+ "bondry-egress",
+ "bondry-mcp-proto",
+ "bondry-secrets",
+ "bondry-transport",
+ "bytes",
+ "http",
+ "jsonschema",
+ "serde_json",
+ "thiserror",
+ "zeroize",
+]
+
+[[package]]
 name = "bondry-egress-runtime"
 version = "0.1.2"
 dependencies = [
  "bondry-delivery-store",
  "bondry-egress",
+ "bondry-egress-mcp",
  "bondry-egress-webhook",
+ "bondry-mcp-proto",
  "bondry-secrets",
  "bondry-transport",
  "bytes",
  "http",
+ "serde_json",
  "thiserror",
  "tokio",
 ]

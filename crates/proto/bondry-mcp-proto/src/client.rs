@@ -381,10 +381,22 @@ pub enum McpToolCallOutcome {
 }
 
 /// Bounded JSON tool result with no application-level interpretation.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Eq, PartialEq)]
 pub struct McpToolCallResult {
     outcome: McpToolCallOutcome,
     json: Bytes,
+    nesting_depth: usize,
+}
+
+impl std::fmt::Debug for McpToolCallResult {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("McpToolCallResult")
+            .field("outcome", &self.outcome)
+            .field("json_bytes", &self.json.len())
+            .field("nesting_depth", &self.nesting_depth)
+            .finish()
+    }
 }
 
 impl McpToolCallResult {
@@ -398,6 +410,12 @@ impl McpToolCallResult {
     #[must_use]
     pub const fn json(&self) -> &Bytes {
         &self.json
+    }
+
+    /// Returns the deepest JSON container path in the result object.
+    #[must_use]
+    pub const fn nesting_depth(&self) -> usize {
+        self.nesting_depth
     }
 }
 
@@ -561,7 +579,20 @@ fn parse_tool_call(result: Value) -> Result<McpToolCallResult, McpClientError> {
     let json = serde_json::to_vec(&result)
         .map(Bytes::from)
         .map_err(|_| McpClientError::InvalidEnvelope)?;
-    Ok(McpToolCallResult { outcome, json })
+    let nesting_depth = json_nesting_depth(&result);
+    Ok(McpToolCallResult {
+        outcome,
+        json,
+        nesting_depth,
+    })
+}
+
+fn json_nesting_depth(value: &Value) -> usize {
+    match value {
+        Value::Array(values) => 1 + values.iter().map(json_nesting_depth).max().unwrap_or(0),
+        Value::Object(values) => 1 + values.values().map(json_nesting_depth).max().unwrap_or(0),
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => 0,
+    }
 }
 
 #[cfg(test)]

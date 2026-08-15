@@ -26,6 +26,7 @@ pub fn run(workspace: &Workspace) -> Result<(), Box<dyn Error>> {
     check_layer_sources(workspace, &mut violations)?;
     check_openssl_confinement(workspace, &mut violations)?;
     check_egress_runtime_tokio_features(workspace, &mut violations)?;
+    check_local_mcp_transport_profile(workspace, &mut violations)?;
     check_consumer_profiles(workspace, &mut violations);
     if violations.is_empty() {
         println!("Architecture gates passed");
@@ -35,6 +36,60 @@ pub fn run(workspace: &Workspace) -> Result<(), Box<dyn Error>> {
         eprintln!("gate violation: {violation}");
     }
     Err(format!("{} architecture gate violation(s)", violations.len()).into())
+}
+
+fn check_local_mcp_transport_profile(
+    workspace: &Workspace,
+    violations: &mut Vec<String>,
+) -> Result<(), Box<dyn Error>> {
+    if workspace.package("bondry-egress-mcp").is_none() {
+        return Ok(());
+    }
+    let output = Command::new("cargo")
+        .args([
+            "tree",
+            "--package",
+            "bondry-transport-net",
+            "--no-default-features",
+            "--features",
+            "http",
+            "--edges",
+            "normal,build",
+            "--prefix",
+            "none",
+            "--format",
+            "{p}",
+            "--locked",
+        ])
+        .current_dir(workspace.root())
+        .output()?;
+    if !output.status.success() {
+        return Err(format!(
+            "cargo tree failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        )
+        .into());
+    }
+    let tree = String::from_utf8(output.stdout)?;
+    let packages = tree
+        .lines()
+        .filter_map(|line| line.split_ascii_whitespace().next())
+        .collect::<BTreeSet<_>>();
+    for forbidden in ["rustls", "rustls-platform-verifier", "tokio-rustls"] {
+        if packages.contains(forbidden) {
+            violations.push(format!(
+                "local MCP HTTP transport reaches forbidden TLS package {forbidden}"
+            ));
+        }
+    }
+    for required in ["hyper", "tokio"] {
+        if !packages.contains(required) {
+            violations.push(format!(
+                "local MCP HTTP transport omits required package {required}"
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn check_egress_runtime_tokio_features(
@@ -272,7 +327,6 @@ fn check_consumer_profiles(workspace: &Workspace, violations: &mut Vec<String>) 
             "bondry-egress",
             "bondry-egress-mcp",
             "bondry-egress-runtime",
-            "bondry-transport-net",
         ],
         &[
             "bondry-egress-webhook",
