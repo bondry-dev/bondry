@@ -2,6 +2,7 @@
 #include "bondry.h"
 #include "bondry_egress.h"
 #include "bondry_local_server.h"
+#include "bondry_webhook_ingress.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -12,6 +13,10 @@ struct BondryStoreHandle {
 
 struct BondryServerHandle {
     uint8_t marker;
+};
+
+struct BondryRawBodyRegistrationHandle {
+    uint32_t lifecycle;
 };
 
 struct BondryEgressHandle {
@@ -98,6 +103,15 @@ static size_t egress_emit_count = 0;
 static size_t captured_egress_configuration_length = 0;
 static uint8_t captured_egress_configuration[65536];
 static size_t captured_egress_route_length = 0;
+static uint32_t webhook_ingress_abi_version = BONDRY_WEBHOOK_INGRESS_ABI_VERSION_V1;
+static BondryStatus webhook_disable_status = BONDRY_STATUS_OK;
+static size_t webhook_register_count = 0;
+static size_t webhook_release_count = 0;
+static size_t captured_webhook_configuration_length = 0;
+static uint8_t captured_webhook_configuration[BONDRY_WEBHOOK_MAX_CONFIGURATION_BYTES_V1];
+static uint32_t captured_dedup_records = 0;
+static uint64_t captured_dedup_bytes = 0;
+static uint64_t captured_dedup_retention_seconds = 0;
 static uint8_t captured_egress_route[131072];
 static size_t captured_egress_delivery_id_length = 0;
 static uint8_t captured_egress_delivery_id[BONDRY_IDENTIFIER_CAPACITY_V1];
@@ -257,6 +271,15 @@ void bondry_test_reset(void) {
     memset(captured_egress_route, 0, sizeof(captured_egress_route));
     captured_egress_delivery_id_length = 0;
     memset(captured_egress_delivery_id, 0, sizeof(captured_egress_delivery_id));
+    webhook_ingress_abi_version = BONDRY_WEBHOOK_INGRESS_ABI_VERSION_V1;
+    webhook_disable_status = BONDRY_STATUS_OK;
+    webhook_register_count = 0;
+    webhook_release_count = 0;
+    captured_webhook_configuration_length = 0;
+    memset(captured_webhook_configuration, 0, sizeof(captured_webhook_configuration));
+    captured_dedup_records = 0;
+    captured_dedup_bytes = 0;
+    captured_dedup_retention_seconds = 0;
 }
 
 void bondry_test_set_abi_version(uint32_t version) {
@@ -309,6 +332,14 @@ void bondry_test_set_invalid_server_address(int enabled) {
 
 void bondry_test_set_egress_abi_version(uint32_t version) {
     egress_abi_version = version;
+}
+
+void bondry_test_set_webhook_ingress_abi_version(uint32_t version) {
+    webhook_ingress_abi_version = version;
+}
+
+void bondry_test_set_webhook_disable_status(int32_t status) {
+    webhook_disable_status = status;
 }
 
 size_t bondry_test_open_count(void) {
@@ -429,6 +460,36 @@ size_t bondry_test_egress_route_length(void) {
 
 uint8_t bondry_test_egress_route_byte(size_t index) {
     return index < sizeof(captured_egress_route) ? captured_egress_route[index] : 0;
+}
+
+size_t bondry_test_webhook_register_count(void) {
+    return webhook_register_count;
+}
+
+size_t bondry_test_webhook_release_count(void) {
+    return webhook_release_count;
+}
+
+size_t bondry_test_webhook_configuration_length(void) {
+    return captured_webhook_configuration_length;
+}
+
+uint8_t bondry_test_webhook_configuration_byte(size_t index) {
+    return index < sizeof(captured_webhook_configuration)
+        ? captured_webhook_configuration[index]
+        : 0;
+}
+
+uint32_t bondry_test_webhook_dedup_records(void) {
+    return captured_dedup_records;
+}
+
+uint64_t bondry_test_webhook_dedup_bytes(void) {
+    return captured_dedup_bytes;
+}
+
+uint64_t bondry_test_webhook_dedup_retention_seconds(void) {
+    return captured_dedup_retention_seconds;
 }
 
 size_t bondry_test_path_length(void) {
@@ -622,6 +683,135 @@ BondryStatus bondry_server_stop_v1(BondryServerHandle *server) {
         free(server);
     }
     return server_stop_status;
+}
+
+BondryStatus bondry_automation_service_v1(
+    const BondryStoreHandle *store,
+    BondryAutomationServiceV1 *out_service
+) {
+    if (store == NULL || out_service == NULL) {
+        return BONDRY_STATUS_NULL_POINTER;
+    }
+    memset(out_service, 0, sizeof(*out_service));
+    out_service->abi_version = BONDRY_AUTOMATION_SERVICE_ABI_VERSION_V1;
+    out_service->struct_size = sizeof(*out_service);
+    out_service->threading_model = BONDRY_SERVICE_THREADING_CONCURRENT_V1;
+    return BONDRY_STATUS_OK;
+}
+
+BondryStatus bondry_store_dedup_v1(
+    const BondryStoreHandle *store,
+    uint32_t max_records,
+    uint64_t max_bytes,
+    uint64_t retention_seconds,
+    BondryDedupStoreV1 *out_dedup
+) {
+    if (store == NULL || out_dedup == NULL) {
+        return BONDRY_STATUS_NULL_POINTER;
+    }
+    captured_dedup_records = max_records;
+    captured_dedup_bytes = max_bytes;
+    captured_dedup_retention_seconds = retention_seconds;
+    memset(out_dedup, 0, sizeof(*out_dedup));
+    out_dedup->abi_version = BONDRY_DEDUP_STORE_ABI_VERSION_V1;
+    out_dedup->struct_size = sizeof(*out_dedup);
+    out_dedup->threading_model = BONDRY_DEDUP_THREADING_SERIALIZED_V1;
+    out_dedup->durability = BONDRY_STORE_DURABILITY_PERSISTENT_V1;
+    return BONDRY_STATUS_OK;
+}
+
+uint32_t bondry_webhook_ingress_abi_version_v1(void) {
+    return webhook_ingress_abi_version;
+}
+
+BondryStatus bondry_webhook_ingress_handler_v1(
+    const BondryWebhookIngressRegistrationDescriptorV1 *descriptor,
+    BondryRawBodyHandlerDescriptorV1 *out_handler
+) {
+    if (descriptor == NULL || out_handler == NULL) {
+        return BONDRY_STATUS_NULL_POINTER;
+    }
+    capture_bytes(
+        captured_webhook_configuration,
+        sizeof(captured_webhook_configuration),
+        &captured_webhook_configuration_length,
+        descriptor->configuration_json,
+        descriptor->configuration_json_length
+    );
+    memset(out_handler, 0, sizeof(*out_handler));
+    out_handler->abi_version = BONDRY_RAW_BODY_HANDLER_ABI_VERSION_V1;
+    out_handler->struct_size = sizeof(*out_handler);
+    out_handler->method = BONDRY_RAW_BODY_METHOD_POST_V1;
+    return BONDRY_STATUS_OK;
+}
+
+void bondry_webhook_ingress_handler_release_v1(
+    BondryRawBodyHandlerDescriptorV1 *handler
+) {
+    if (handler != NULL) {
+        memset(handler, 0, sizeof(*handler));
+    }
+}
+
+BondryStatus bondry_server_raw_body_handler_register_v1(
+    const BondryServerHandle *server,
+    const BondryRawBodyHandlerDescriptorV1 *descriptor,
+    BondryRawBodyRegistrationHandle **out_registration
+) {
+    if (out_registration != NULL) {
+        *out_registration = NULL;
+    }
+    if (server == NULL || descriptor == NULL || out_registration == NULL) {
+        return BONDRY_STATUS_NULL_POINTER;
+    }
+    BondryRawBodyRegistrationHandle *registration = malloc(sizeof(*registration));
+    if (registration == NULL) {
+        return BONDRY_STATUS_INTERNAL_FAILURE;
+    }
+    registration->lifecycle = BONDRY_RAW_BODY_LIFECYCLE_ENABLED_V1;
+    *out_registration = registration;
+    webhook_register_count += 1;
+    return BONDRY_STATUS_OK;
+}
+
+BondryStatus bondry_server_raw_body_handler_disable_v1(
+    const BondryRawBodyRegistrationHandle *registration,
+    uint64_t deadline_milliseconds
+) {
+    if (registration == NULL) {
+        return BONDRY_STATUS_NULL_POINTER;
+    }
+    BondryRawBodyRegistrationHandle *mutable_registration =
+        (BondryRawBodyRegistrationHandle *)registration;
+    if (deadline_milliseconds < 1000 || deadline_milliseconds > 60000) {
+        return BONDRY_STATUS_INVALID_ARGUMENT;
+    }
+    if (webhook_disable_status == BONDRY_STATUS_RAW_BODY_DRAIN_TIMED_OUT) {
+        mutable_registration->lifecycle = BONDRY_RAW_BODY_LIFECYCLE_DRAINING_V1;
+    } else if (webhook_disable_status == BONDRY_STATUS_OK) {
+        mutable_registration->lifecycle = BONDRY_RAW_BODY_LIFECYCLE_DETACHED_V1;
+    }
+    return webhook_disable_status;
+}
+
+BondryStatus bondry_server_raw_body_handler_lifecycle_v1(
+    const BondryRawBodyRegistrationHandle *registration,
+    uint32_t *out_lifecycle
+) {
+    if (registration == NULL || out_lifecycle == NULL) {
+        return BONDRY_STATUS_NULL_POINTER;
+    }
+    *out_lifecycle = registration->lifecycle;
+    return BONDRY_STATUS_OK;
+}
+
+void bondry_server_raw_body_handler_release_v1(
+    BondryRawBodyRegistrationHandle *registration
+) {
+    if (registration != NULL) {
+        webhook_release_count += 1;
+        free(registration);
+    }
 }
 
 uint32_t bondry_egress_abi_version_v1(void) {

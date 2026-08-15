@@ -36,6 +36,17 @@ public final class BondryLocalServer: @unchecked Sendable {
     self.handle = handle
     self.endpoint = endpoint
   }
+
+  package func withNativeHandle<Result>(
+    _ body: (OpaquePointer) throws -> Result
+  ) throws -> Result {
+    try lock.withLock {
+      guard let handle else {
+        throw BondryLocalServerError.invalidHandle
+      }
+      return try body(handle)
+    }
+  }
 }
 
 extension BondryRuntime {
