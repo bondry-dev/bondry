@@ -106,7 +106,7 @@ run_baseline() {
 
 if [[ "$mode" == "baseline" || "$mode" == "all" ]]; then
   run_baseline
-  run_current 3 fat 16
+  run_current z fat 1
 fi
 
 if [[ "$mode" == "matrix" || "$mode" == "all" ]]; then

@@ -4,6 +4,10 @@ set -euo pipefail
 
 workspace_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 cd "$workspace_root"
+target_directory=${CARGO_TARGET_DIR:-"$workspace_root/target"}
+if [[ "$target_directory" != /* ]]; then
+  target_directory="$workspace_root/$target_directory"
+fi
 
 cargo build --release --locked \
   -p bondry-transport-net \
@@ -12,8 +16,8 @@ cargo build --release --locked \
   --example transport-size-baseline \
   --example transport-size-http-tls
 
-baseline_path=target/release/examples/transport-size-baseline
-transport_path=target/release/examples/transport-size-http-tls
+baseline_path="$target_directory/release/examples/transport-size-baseline"
+transport_path="$target_directory/release/examples/transport-size-http-tls"
 baseline_bytes=$(wc -c < "$baseline_path" | tr -d ' ')
 transport_bytes=$(wc -c < "$transport_path" | tr -d ' ')
 delta_bytes=$((transport_bytes - baseline_bytes))
