@@ -3,8 +3,13 @@
 use std::{
     io::{Read, Write},
     net::{IpAddr, Ipv4Addr, SocketAddr, TcpStream},
-    sync::Arc,
-    time::Duration,
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicUsize, Ordering},
+        mpsc,
+    },
+    thread,
+    time::{Duration, Instant},
 };
 
 use bondry_core::{
@@ -13,10 +18,13 @@ use bondry_core::{
 };
 use bondry_http_server::{
     Authentication, AuthenticationError, BearerAuthenticator, BearerTokenVerifier, LocalHttpServer,
-    MountedProtocol, OriginPolicy, RateLimits, ServerConfiguration, ServerConfigurationError,
-    ServerStartError,
+    MountedProtocol, OriginPolicy, RateLimits, RawBodyCompletion, RawBodyHandler,
+    RawBodyHandlerLimits, RawBodyLifecycle, RawBodyRegistrationError, RawBodyRequest,
+    RawBodyResponse, RawBodyRoute, RawBodyServerLimits, ServerConfiguration,
+    ServerConfigurationError, ServerStartError,
 };
 use bondry_rest_proto::RestAdapter;
+use http::HeaderName;
 use serde_json::json;
 
 struct TestVerifier;
@@ -37,6 +45,67 @@ impl BearerTokenVerifier for TestVerifier {
 
 struct EchoService {
     capabilities: Vec<CapabilityDescriptor>,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+struct CapturedRawBody {
+    target: String,
+    headers: Vec<(String, Vec<u8>)>,
+    body: Vec<u8>,
+    peer: SocketAddr,
+}
+
+struct CapturingRawBodyHandler {
+    captured: mpsc::SyncSender<CapturedRawBody>,
+}
+
+impl RawBodyHandler for CapturingRawBodyHandler {
+    fn handle(&self, request: RawBodyRequest<'_>, completion: RawBodyCompletion) {
+        let captured = CapturedRawBody {
+            target: request.target().to_owned(),
+            headers: request
+                .headers()
+                .iter()
+                .map(|header| (header.name().as_str().to_owned(), header.value().to_vec()))
+                .collect(),
+            body: request.body().to_vec(),
+            peer: request.peer(),
+        };
+        let _ = self.captured.send(captured);
+        completion.complete(RawBodyResponse::no_content());
+    }
+}
+
+struct CountingRawBodyHandler {
+    calls: Arc<AtomicUsize>,
+}
+
+impl RawBodyHandler for CountingRawBodyHandler {
+    fn handle(&self, _request: RawBodyRequest<'_>, completion: RawBodyCompletion) {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        completion.complete(RawBodyResponse::no_content());
+    }
+}
+
+struct DeferredRawBodyHandler {
+    entered: mpsc::SyncSender<()>,
+    completion: Arc<Mutex<Option<RawBodyCompletion>>>,
+    releases: Arc<AtomicUsize>,
+}
+
+impl RawBodyHandler for DeferredRawBodyHandler {
+    fn handle(&self, _request: RawBodyRequest<'_>, completion: RawBodyCompletion) {
+        if let Ok(mut retained) = self.completion.lock() {
+            *retained = Some(completion);
+        }
+        let _ = self.entered.send(());
+    }
+}
+
+impl Drop for DeferredRawBodyHandler {
+    fn drop(&mut self) {
+        self.releases.fetch_add(1, Ordering::SeqCst);
+    }
 }
 
 impl AutomationService for EchoService {
@@ -135,6 +204,20 @@ fn status(response: &str) -> Option<u16> {
 
 fn body(response: &str) -> &str {
     response.split_once("\r\n\r\n").map_or("", |(_, body)| body)
+}
+
+fn wait_for_lifecycle(
+    registration: &bondry_http_server::RawBodyRegistration,
+    lifecycle: RawBodyLifecycle,
+) -> bool {
+    let deadline = Instant::now() + Duration::from_secs(1);
+    while Instant::now() < deadline {
+        if registration.lifecycle() == lifecycle {
+            return true;
+        }
+        thread::sleep(Duration::from_millis(1));
+    }
+    false
 }
 
 #[test]
@@ -237,6 +320,238 @@ fn bounds_request_bodies() -> Result<(), Box<dyn std::error::Error>> {
     )?;
 
     assert_eq!(status(&response), Some(413));
+    Ok(())
+}
+
+#[test]
+fn delivers_exact_bounded_raw_body_without_weakening_rest_authentication()
+-> Result<(), Box<dyn std::error::Error>> {
+    let server = start(authenticated_configuration())?;
+    let (captured_sender, captured_receiver) = mpsc::sync_channel(1);
+    let route = RawBodyRoute::post(
+        "/hooks/provider",
+        [
+            HeaderName::from_static("x-signature"),
+            HeaderName::from_static("x-event"),
+        ],
+        RawBodyHandlerLimits::default(),
+    )?;
+    let _registration = server.register_raw_body_handler(
+        route,
+        Arc::new(CapturingRawBodyHandler {
+            captured: captured_sender,
+        }),
+    )?;
+
+    let response = request(
+        server.local_address(),
+        "POST /hooks/provider?delivery=%2Fone HTTP/1.1\r\nHost: localhost\r\nX-Signature: first\r\nX-Signature: second\r\nX-Event: created\r\nX-Ignored: secret\r\nContent-Length: 5\r\nConnection: close\r\n\r\n\x00raw!",
+    )?;
+    assert_eq!(status(&response), Some(204));
+    let captured = captured_receiver.recv_timeout(Duration::from_secs(1))?;
+    assert_eq!(captured.target, "/hooks/provider?delivery=%2Fone");
+    assert_eq!(
+        captured.headers,
+        [
+            ("x-signature".to_owned(), b"first".to_vec()),
+            ("x-signature".to_owned(), b"second".to_vec()),
+            ("x-event".to_owned(), b"created".to_vec()),
+        ]
+    );
+    assert_eq!(captured.body, b"\x00raw!");
+    assert!(captured.peer.ip().is_loopback());
+
+    let rest_without_bearer = request(
+        server.local_address(),
+        "GET /api/v1/capabilities/echo HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
+    )?;
+    assert_eq!(status(&rest_without_bearer), Some(401));
+    Ok(())
+}
+
+#[test]
+fn rejects_oversized_raw_bodies_and_rate_limits_before_reading_them()
+-> Result<(), Box<dyn std::error::Error>> {
+    let server = start(authenticated_configuration())?;
+    let calls = Arc::new(AtomicUsize::new(0));
+    let limits = RawBodyHandlerLimits::new(1_024, 3 * 1_048_576, 2_048, 32 * 1_024, 1, 1)?;
+    let _registration = server.register_raw_body_handler(
+        RawBodyRoute::post("/hooks/bounded", [], limits)?,
+        Arc::new(CountingRawBodyHandler {
+            calls: Arc::clone(&calls),
+        }),
+    )?;
+    let oversized_headers = "POST /hooks/bounded HTTP/1.1\r\nHost: localhost\r\nContent-Length: 1025\r\nConnection: close\r\n\r\n";
+
+    let oversized = request(server.local_address(), oversized_headers)?;
+    assert_eq!(status(&oversized), Some(413));
+    let limited = request(server.local_address(), oversized_headers)?;
+    assert_eq!(status(&limited), Some(429));
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    Ok(())
+}
+
+#[test]
+fn enforces_the_aggregate_raw_body_budget_before_copying_another_body()
+-> Result<(), Box<dyn std::error::Error>> {
+    let configuration = authenticated_configuration()
+        .with_raw_body_limits(RawBodyServerLimits::new(1_048_576, Duration::from_secs(1))?);
+    let server = start(configuration)?;
+    let completion = Arc::new(Mutex::new(None));
+    let releases = Arc::new(AtomicUsize::new(0));
+    let (entered_sender, entered_receiver) = mpsc::sync_channel(1);
+    let handler = Arc::new(DeferredRawBodyHandler {
+        entered: entered_sender,
+        completion: Arc::clone(&completion),
+        releases,
+    });
+    let _registration = server.register_raw_body_handler(
+        RawBodyRoute::post(
+            "/hooks/memory",
+            [],
+            RawBodyHandlerLimits::new(1_048_576, 1_048_576, 2_048, 32 * 1_024, 60, 120)?,
+        )?,
+        handler,
+    )?;
+    let address = server.local_address();
+    let request_thread = thread::spawn(move || {
+        let body = "x".repeat(700 * 1_024);
+        request(
+            address,
+            &format!(
+                "POST /hooks/memory HTTP/1.1\r\nHost: localhost\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            ),
+        )
+    });
+    entered_receiver.recv_timeout(Duration::from_secs(1))?;
+
+    let capacity = request(
+        server.local_address(),
+        "POST /hooks/memory HTTP/1.1\r\nHost: localhost\r\nContent-Length: 716800\r\nConnection: close\r\n\r\n",
+    )?;
+    assert_eq!(status(&capacity), Some(503));
+    assert!(capacity.contains("raw_body_capacity"));
+
+    let retained_completion = completion
+        .lock()
+        .map_err(|_| std::io::Error::other("completion lock poisoned"))?
+        .take()
+        .ok_or_else(|| std::io::Error::other("completion was not retained"))?;
+    retained_completion.complete(RawBodyResponse::no_content());
+    let first_response = request_thread
+        .join()
+        .map_err(|_| std::io::Error::other("request thread panicked"))??;
+    assert_eq!(status(&first_response), Some(204));
+    Ok(())
+}
+
+#[test]
+fn drains_raw_body_generations_without_fallback_or_early_release()
+-> Result<(), Box<dyn std::error::Error>> {
+    let server = start(authenticated_configuration())?;
+    let address = server.local_address();
+    let completion = Arc::new(Mutex::new(None));
+    let releases = Arc::new(AtomicUsize::new(0));
+    let (entered_sender, entered_receiver) = mpsc::sync_channel(1);
+    let handler = Arc::new(DeferredRawBodyHandler {
+        entered: entered_sender,
+        completion: Arc::clone(&completion),
+        releases: Arc::clone(&releases),
+    });
+    let registration = Arc::new(server.register_raw_body_handler(
+        RawBodyRoute::post("/hooks/drain", [], RawBodyHandlerLimits::default())?,
+        handler.clone(),
+    )?);
+    drop(handler);
+
+    let request_thread = thread::spawn(move || {
+        request(
+            address,
+            "POST /hooks/drain HTTP/1.1\r\nHost: localhost\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}",
+        )
+    });
+    entered_receiver.recv_timeout(Duration::from_secs(1))?;
+
+    let disable_registration = Arc::clone(&registration);
+    let disable_thread =
+        thread::spawn(move || disable_registration.disable(Duration::from_secs(2)));
+    assert!(wait_for_lifecycle(
+        &registration,
+        RawBodyLifecycle::Draining
+    ));
+    assert_eq!(releases.load(Ordering::SeqCst), 0);
+
+    let draining = request(
+        server.local_address(),
+        "POST /hooks/drain HTTP/1.1\r\nHost: localhost\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+    )?;
+    assert_eq!(status(&draining), Some(503));
+    assert!(draining.contains("raw_body_handler_draining"));
+
+    let retained_completion = completion
+        .lock()
+        .map_err(|_| std::io::Error::other("completion lock poisoned"))?
+        .take()
+        .ok_or_else(|| std::io::Error::other("completion was not retained"))?;
+    retained_completion.complete(RawBodyResponse::no_content());
+    let first_response = request_thread
+        .join()
+        .map_err(|_| std::io::Error::other("request thread panicked"))??;
+    assert_eq!(status(&first_response), Some(204));
+    disable_thread
+        .join()
+        .map_err(|_| std::io::Error::other("disable thread panicked"))??;
+    assert_eq!(registration.lifecycle(), RawBodyLifecycle::Detached);
+    assert_eq!(releases.load(Ordering::SeqCst), 1);
+
+    let (captured_sender, captured_receiver) = mpsc::sync_channel(1);
+    let _replacement = server.register_raw_body_handler(
+        RawBodyRoute::post("/hooks/drain", [], RawBodyHandlerLimits::default())?,
+        Arc::new(CapturingRawBodyHandler {
+            captured: captured_sender,
+        }),
+    )?;
+    let replacement_response = request(
+        server.local_address(),
+        "POST /hooks/drain HTTP/1.1\r\nHost: localhost\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+    )?;
+    assert_eq!(status(&replacement_response), Some(204));
+    let _ = captured_receiver.recv_timeout(Duration::from_secs(1))?;
+    Ok(())
+}
+
+#[test]
+fn rejects_raw_body_route_conflicts_and_duplicate_generations()
+-> Result<(), Box<dyn std::error::Error>> {
+    let server = start(authenticated_configuration())?;
+    let calls = Arc::new(AtomicUsize::new(0));
+    let handler: Arc<dyn RawBodyHandler> = Arc::new(CountingRawBodyHandler { calls });
+    let conflict = server.register_raw_body_handler(
+        RawBodyRoute::post(
+            "/api/v1/capabilities/echo",
+            [],
+            RawBodyHandlerLimits::default(),
+        )?,
+        Arc::clone(&handler),
+    );
+    assert!(matches!(
+        conflict,
+        Err(RawBodyRegistrationError::ProtocolConflict)
+    ));
+
+    let _registration = server.register_raw_body_handler(
+        RawBodyRoute::post("/hooks/unique", [], RawBodyHandlerLimits::default())?,
+        Arc::clone(&handler),
+    )?;
+    let duplicate = server.register_raw_body_handler(
+        RawBodyRoute::post("/hooks/unique", [], RawBodyHandlerLimits::default())?,
+        handler,
+    );
+    assert!(matches!(
+        duplicate,
+        Err(RawBodyRegistrationError::AlreadyRegistered)
+    ));
     Ok(())
 }
 
