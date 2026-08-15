@@ -5,7 +5,7 @@ use std::{
     panic::{AssertUnwindSafe, catch_unwind},
     path::Path,
     ptr, slice,
-    sync::{Arc, RwLock},
+    sync::{Arc, Mutex, RwLock},
 };
 
 use bondry_auth::{AuthManager, AuthStore, ClientManagementError, TokenLifecycleError};
@@ -13,7 +13,9 @@ use bondry_store_sqlcipher::{DatabaseKey, SqlCipherStore, SqlCipherStoreError};
 
 mod audit;
 mod auth;
+mod automation_service;
 mod capabilities;
+mod dedup_store;
 mod delivery_log;
 mod grants;
 mod records;
@@ -24,12 +26,29 @@ pub use auth::{
     bondry_issued_token_clear_v1, bondry_token_authenticate_v1, bondry_token_issue_v1,
     bondry_token_revoke_v1, bondry_token_rotate_v1, bondry_tokens_list_v1,
 };
+pub use automation_service::{
+    BONDRY_AUTOMATION_SERVICE_ABI_VERSION_V1, BONDRY_SERVICE_THREADING_CONCURRENT_V1,
+    BondryAutomationCapabilitiesV1, BondryAutomationDispatchV1, BondryAutomationServiceV1,
+    BondryServiceContextReleaseV1, BondryServiceContextRetainV1, bondry_automation_service_v1,
+};
 pub use capabilities::{
     BondryCapabilityCompletionV1, BondryCapabilityInvokeV1, BondryCapabilityReleaseV1,
     BondryDispatchCompletionV1, bondry_capabilities_discover_json_v1, bondry_capabilities_json_v1,
     bondry_capabilities_list_v1, bondry_capability_register_v1,
     bondry_capability_register_with_schema_v1, bondry_capability_unregister_v1,
     bondry_dispatch_principal_v1, bondry_dispatch_token_v1,
+};
+pub use dedup_store::{
+    BONDRY_DEDUP_CLAIMED_V1, BONDRY_DEDUP_DUPLICATE_V1, BONDRY_DEDUP_EXPIRE_COMPLETED_V1,
+    BONDRY_DEDUP_RESOLVE_COMPLETED_V1, BONDRY_DEDUP_RESOLVE_RETRY_ALLOWED_V1,
+    BONDRY_DEDUP_RETAIN_COMPLETED_V1, BONDRY_DEDUP_STATE_COMPLETED_V1,
+    BONDRY_DEDUP_STATE_IN_FLIGHT_V1, BONDRY_DEDUP_STATE_UNKNOWN_V1,
+    BONDRY_DEDUP_STORE_ABI_VERSION_V1, BONDRY_DEDUP_THREADING_SERIALIZED_V1,
+    BONDRY_STORE_DURABILITY_PERSISTENT_V1, BondryDedupClaimV1, BondryDedupClearCompletedV1,
+    BondryDedupContextReleaseV1, BondryDedupContextRetainV1, BondryDedupQueryV1,
+    BondryDedupRecordV1, BondryDedupRecoverV1, BondryDedupResolveV1, BondryDedupStoreV1,
+    BondryDedupTransitionV1, BondryDedupUnknownVisitorV1, BondryDedupVisitUnknownV1,
+    bondry_store_dedup_v1,
 };
 pub use delivery_log::{
     BONDRY_DELIVERY_FAILURE_CANCELLED_V1, BONDRY_DELIVERY_FAILURE_DEADLINE_EXCEEDED_V1,
@@ -122,6 +141,7 @@ struct StoreHandle {
     auth: AuthManager,
     capabilities:
         Arc<RwLock<HashMap<bondry_core::CapabilityId, capabilities::RegisteredCapability>>>,
+    dedup_recovered: Mutex<bool>,
 }
 
 /// Returns the ABI version implemented by the linked library.
@@ -185,6 +205,7 @@ pub unsafe extern "C" fn bondry_store_open_v1(
             store,
             auth: AuthManager::from_shared(auth_store),
             capabilities: Arc::new(RwLock::new(HashMap::new())),
+            dedup_recovered: Mutex::new(false),
         });
 
         // SAFETY: out_store was validated above and receives ownership of this allocation.

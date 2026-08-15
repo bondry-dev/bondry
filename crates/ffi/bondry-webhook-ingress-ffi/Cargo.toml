@@ -1,0 +1,33 @@
+[package]
+name = "bondry-webhook-ingress-ffi"
+description = "Versioned C ABI for Bondry inbound webhook registration"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["rlib", "staticlib"]
+
+[dependencies]
+bondry-core = { version = "0.1.2", path = "../../contract/bondry-core" }
+bondry-delivery-store = { version = "0.1.2", path = "../../contract/bondry-delivery-store" }
+bondry-secrets = { version = "0.1.2", path = "../../contract/bondry-secrets" }
+bondry-webhook-ingress = { version = "0.1.2", path = "../../proto/bondry-webhook-ingress" }
+bondry-webhook-verify = { version = "0.1.2", path = "../../proto/bondry-webhook-verify" }
+http.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio = { workspace = true, features = ["rt", "sync"] }
+
+[lints.rust]
+missing_docs = "warn"
+unsafe_code = "allow"
+unsafe_op_in_unsafe_fn = "deny"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+expect_used = "deny"
+panic = "deny"
+unwrap_used = "deny"

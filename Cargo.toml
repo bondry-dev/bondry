@@ -14,6 +14,7 @@ members = [
     "crates/ffi/bondry-egress-ffi",
     "crates/ffi/bondry-local-server-ffi",
     "crates/ffi/bondry-runtime-ffi",
+    "crates/ffi/bondry-webhook-ingress-ffi",
     "crates/proto/bondry-mcp-proto",
     "crates/proto/bondry-rest-proto",
     "crates/proto/bondry-webhook-ingress",

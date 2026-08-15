@@ -71,6 +71,22 @@ typedef int32_t BondryStatus;
 #define BONDRY_DISPATCH_OUTCOME_HANDLER_FAILED_V1 ((uint32_t)5)
 #define BONDRY_DISPATCH_OUTCOME_INVALID_INPUT_V1 ((uint32_t)6)
 
+#define BONDRY_AUTOMATION_SERVICE_ABI_VERSION_V1 ((uint32_t)1)
+#define BONDRY_SERVICE_THREADING_CONCURRENT_V1 ((uint32_t)1)
+
+#define BONDRY_DEDUP_STORE_ABI_VERSION_V1 ((uint32_t)1)
+#define BONDRY_DEDUP_THREADING_SERIALIZED_V1 ((uint32_t)1)
+#define BONDRY_STORE_DURABILITY_PERSISTENT_V1 ((uint32_t)2)
+#define BONDRY_DEDUP_CLAIMED_V1 ((uint32_t)1)
+#define BONDRY_DEDUP_DUPLICATE_V1 ((uint32_t)2)
+#define BONDRY_DEDUP_STATE_IN_FLIGHT_V1 ((uint32_t)1)
+#define BONDRY_DEDUP_STATE_COMPLETED_V1 ((uint32_t)2)
+#define BONDRY_DEDUP_STATE_UNKNOWN_V1 ((uint32_t)3)
+#define BONDRY_DEDUP_RETAIN_COMPLETED_V1 ((uint32_t)1)
+#define BONDRY_DEDUP_EXPIRE_COMPLETED_V1 ((uint32_t)2)
+#define BONDRY_DEDUP_RESOLVE_COMPLETED_V1 ((uint32_t)1)
+#define BONDRY_DEDUP_RESOLVE_RETRY_ALLOWED_V1 ((uint32_t)2)
+
 #define BONDRY_DELIVERY_LOG_ABI_VERSION_V1 ((uint32_t)1)
 #define BONDRY_STORE_THREADING_SERIALIZED_V1 ((uint32_t)1)
 
@@ -171,6 +187,14 @@ typedef struct BondryDispatchResultV1 {
     uint8_t has_detail_code;
 } BondryDispatchResultV1;
 
+typedef struct BondryDedupRecordV1 {
+    uint8_t route_id[BONDRY_IDENTIFIER_CAPACITY_V1];
+    uint8_t verifier_namespace[BONDRY_IDENTIFIER_CAPACITY_V1];
+    uint8_t delivery_hash[32];
+    uint32_t state;
+    uint64_t updated_at_unix_ms;
+} BondryDedupRecordV1;
+
 typedef struct BondryDeliveryRecordV1 {
     uint8_t route_id[BONDRY_IDENTIFIER_CAPACITY_V1];
     uint8_t delivery_id[BONDRY_IDENTIFIER_CAPACITY_V1];
@@ -257,6 +281,134 @@ typedef void (*BondryDispatchCompletionV1)(
     const BondryDispatchResultV1 *result
 );
 
+typedef void *(*BondryContextRetainV1)(void *context);
+typedef void (*BondryContextReleaseV1)(void *context);
+
+/* Passing a null output with zero capacity returns BONDRY_STATUS_OK and the
+ * required JSON byte length. */
+typedef BondryStatus (*BondryAutomationCapabilitiesV1)(
+    void *context,
+    const uint8_t *principal_id,
+    size_t principal_id_length,
+    uint32_t principal_kind,
+    const uint8_t *adapter_id,
+    size_t adapter_id_length,
+    uint8_t *output_json,
+    size_t capacity,
+    size_t *out_length
+);
+typedef BondryStatus (*BondryAutomationDispatchV1)(
+    void *context,
+    const uint8_t *invocation_id,
+    size_t invocation_id_length,
+    const uint8_t *adapter_id,
+    size_t adapter_id_length,
+    const uint8_t *principal_id,
+    size_t principal_id_length,
+    uint32_t principal_kind,
+    const uint8_t *capability_id,
+    size_t capability_id_length,
+    const uint8_t *input_json,
+    size_t input_json_length,
+    BondryDispatchCompletionV1 completion,
+    void *completion_context
+);
+
+typedef struct BondryAutomationServiceV1 {
+    uint32_t abi_version;
+    size_t struct_size;
+    uint32_t threading_model;
+    void *context;
+    BondryContextRetainV1 retain;
+    BondryContextReleaseV1 release;
+    BondryAutomationCapabilitiesV1 capabilities;
+    BondryAutomationDispatchV1 dispatch;
+} BondryAutomationServiceV1;
+
+typedef uint8_t (*BondryDedupUnknownVisitorV1)(
+    void *visitor_context,
+    const BondryDedupRecordV1 *record
+);
+typedef BondryStatus (*BondryDedupClaimV1)(
+    void *context,
+    const uint8_t *route_id,
+    size_t route_id_length,
+    const uint8_t *verifier_namespace,
+    size_t verifier_namespace_length,
+    const uint8_t *delivery_hash,
+    size_t delivery_hash_length,
+    uint32_t policy,
+    uint64_t updated_at_unix_ms,
+    uint32_t *out_result,
+    uint32_t *out_state
+);
+typedef BondryStatus (*BondryDedupTransitionV1)(
+    void *context,
+    const uint8_t *route_id,
+    size_t route_id_length,
+    const uint8_t *verifier_namespace,
+    size_t verifier_namespace_length,
+    const uint8_t *delivery_hash,
+    size_t delivery_hash_length,
+    uint64_t updated_at_unix_ms
+);
+typedef BondryStatus (*BondryDedupQueryV1)(
+    void *context,
+    const uint8_t *route_id,
+    size_t route_id_length,
+    const uint8_t *verifier_namespace,
+    size_t verifier_namespace_length,
+    const uint8_t *delivery_hash,
+    size_t delivery_hash_length,
+    uint8_t *out_found,
+    BondryDedupRecordV1 *out_record
+);
+typedef BondryStatus (*BondryDedupRecoverV1)(
+    void *context,
+    uint64_t updated_at_unix_ms,
+    uint64_t *out_count
+);
+typedef BondryStatus (*BondryDedupResolveV1)(
+    void *context,
+    const uint8_t *route_id,
+    size_t route_id_length,
+    const uint8_t *verifier_namespace,
+    size_t verifier_namespace_length,
+    const uint8_t *delivery_hash,
+    size_t delivery_hash_length,
+    uint32_t resolution,
+    uint64_t updated_at_unix_ms
+);
+typedef BondryStatus (*BondryDedupVisitUnknownV1)(
+    void *context,
+    BondryDedupUnknownVisitorV1 visitor,
+    void *visitor_context
+);
+typedef BondryStatus (*BondryDedupClearCompletedV1)(
+    void *context,
+    uint64_t updated_before_unix_ms,
+    uint64_t *out_count
+);
+
+typedef struct BondryDedupStoreV1 {
+    uint32_t abi_version;
+    size_t struct_size;
+    uint32_t threading_model;
+    uint32_t durability;
+    void *context;
+    BondryContextRetainV1 retain;
+    BondryContextReleaseV1 release;
+    BondryDedupClaimV1 claim;
+    BondryDedupTransitionV1 complete;
+    BondryDedupTransitionV1 mark_unknown;
+    BondryDedupTransitionV1 release_claim;
+    BondryDedupQueryV1 query;
+    BondryDedupRecoverV1 recover;
+    BondryDedupResolveV1 resolve_unknown;
+    BondryDedupVisitUnknownV1 visit_unknown;
+    BondryDedupClearCompletedV1 clear_completed;
+} BondryDedupStoreV1;
+
 /* Caller-owned output records and count pointers must not overlap one another. */
 
 uint32_t bondry_abi_version_v1(void);
@@ -279,6 +431,24 @@ BondryStatus bondry_store_retain_v1(
 
 /* The handle must remain live and must not be closed concurrently. */
 BondryStatus bondry_store_check_v1(const BondryStoreHandle *store);
+
+/* Derives one owned protocol-neutral service descriptor. The caller must
+ * invoke descriptor.release(descriptor.context) exactly once. */
+BondryStatus bondry_automation_service_v1(
+    const BondryStoreHandle *store,
+    BondryAutomationServiceV1 *out_service
+);
+
+/* Derives one owned persistent replay-store descriptor over the same encrypted
+ * store. The first derivation after the handle is opened recovers unfinished
+ * records. The caller must invoke descriptor.release(descriptor.context) once. */
+BondryStatus bondry_store_dedup_v1(
+    const BondryStoreHandle *store,
+    uint32_t max_records,
+    uint64_t max_bytes,
+    uint64_t retention_seconds,
+    BondryDedupStoreV1 *out_dedup
+);
 
 /* Derives one persistent delivery-log descriptor. On success, the caller must
  * invoke descriptor.release(descriptor.context) exactly once. */
@@ -479,7 +649,8 @@ BondryStatus bondry_capabilities_json_v1(
 );
 
 /* Serializes the complete descriptors authorized for one principal and adapter.
- * Passing a null output with zero capacity returns the required byte length. */
+ * Passing a null output with zero capacity returns BONDRY_STATUS_OK and the
+ * required byte length. */
 BondryStatus bondry_capabilities_discover_json_v1(
     const BondryStoreHandle *store,
     const uint8_t *principal_id,

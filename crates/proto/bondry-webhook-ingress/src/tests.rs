@@ -35,6 +35,9 @@ const DISPATCH_SUCCESS: u8 = 0;
 const DISPATCH_PENDING: u8 = 1;
 const DISPATCH_POLICY_UNAVAILABLE: u8 = 2;
 const DISPATCH_AUDIT_UNAVAILABLE: u8 = 3;
+const DISPATCH_NOT_GRANTED: u8 = 4;
+const DISPATCH_CAPABILITY_NOT_FOUND: u8 = 5;
+const DISPATCH_INVALID_INPUT: u8 = 6;
 
 struct TestVerifier {
     selected: Arc<[HeaderName]>,
@@ -89,6 +92,7 @@ impl AutomationService for TestService {
     }
 
     fn dispatch(&self, invocation: Invocation) -> DispatchFuture<'_> {
+        let capability = invocation.capability().clone();
         lock(&self.invocations).push(CapturedInvocation {
             adapter: invocation.adapter().as_str().to_owned(),
             principal: invocation.principal().id().as_str().to_owned(),
@@ -103,6 +107,13 @@ impl AutomationService for TestService {
             DISPATCH_AUDIT_UNAVAILABLE => {
                 Box::pin(async { Err(DispatchError::Audit(AuditError::Unavailable)) })
             }
+            DISPATCH_NOT_GRANTED => {
+                Box::pin(async { Err(DispatchError::AccessDenied(DenialReason::NotGranted)) })
+            }
+            DISPATCH_CAPABILITY_NOT_FOUND => {
+                Box::pin(async move { Err(DispatchError::CapabilityNotFound(capability)) })
+            }
+            DISPATCH_INVALID_INPUT => Box::pin(async { Err(DispatchError::InvalidInput) }),
             _ => Box::pin(async { Ok(json!({ "ignored": true })) }),
         }
     }
@@ -506,6 +517,43 @@ fn bounds_json_allocation_before_claim_and_dispatch() -> Result<(), Box<dyn std:
 }
 
 #[test]
+fn enforces_the_selected_header_budget() -> Result<(), Box<dyn std::error::Error>> {
+    let selected = (0..16)
+        .map(|index| HeaderName::from_bytes(format!("x-selected-{index}").as_bytes()))
+        .collect::<Result<Vec<_>, _>>()?;
+    let verifier = || {
+        Arc::new(TestVerifier {
+            selected: Arc::from(selected.clone()),
+            credentials: Arc::from([]),
+            guarantee: IdentityGuarantee::Never,
+            result: Ok(VerificationResult::authenticated()),
+        })
+    };
+    let service = Arc::new(service(CapabilityEffect::ReadOnly)?);
+    let store = Arc::new(MemoryDedupStore::new(StoreDurability::ProcessLocal));
+
+    assert!(matches!(
+        WebhookRoute::new(
+            configuration(CapabilitySemantics::ReadOnly)?,
+            verifier(),
+            context(service.clone(), store.clone()),
+        ),
+        Err(WebhookRouteError::TooManySelectedHeaders)
+    ));
+
+    let limits = WebhookIngressLimits::default().with_selected_headers(17)?;
+    assert!(
+        WebhookRoute::new(
+            configuration(CapabilitySemantics::ReadOnly)?.with_limits(limits),
+            verifier(),
+            context(service, store),
+        )
+        .is_ok()
+    );
+    Ok(())
+}
+
+#[test]
 fn releases_known_pre_dispatch_failure_but_preserves_uncertain_failure()
 -> Result<(), Box<dyn std::error::Error>> {
     let identity = identity()?;
@@ -534,12 +582,26 @@ fn releases_known_pre_dispatch_failure_but_preserves_uncertain_failure()
     assert_eq!(policy_failure.status(), StatusCode::SERVICE_UNAVAILABLE);
     assert_eq!(store.state(&key), None);
 
+    for (mode, expected_status) in [
+        (DISPATCH_NOT_GRANTED, StatusCode::NOT_FOUND),
+        (DISPATCH_CAPABILITY_NOT_FOUND, StatusCode::NOT_FOUND),
+        (DISPATCH_INVALID_INPUT, StatusCode::UNPROCESSABLE_ENTITY),
+    ] {
+        service.dispatch_mode.store(mode, Ordering::SeqCst);
+        let failure = block_on(route.handle(
+            request(&method, &headers, br#"{"value":1}"#),
+            WebhookIngressTime::new(5_001, 5_001),
+        ));
+        assert_eq!(failure.status(), expected_status);
+        assert_eq!(store.state(&key), None);
+    }
+
     service
         .dispatch_mode
         .store(DISPATCH_AUDIT_UNAVAILABLE, Ordering::SeqCst);
     let audit_failure = block_on(route.handle(
         request(&method, &headers, br#"{"value":1}"#),
-        WebhookIngressTime::new(5_001, 5_001),
+        WebhookIngressTime::new(5_002, 5_002),
     ));
     assert_eq!(audit_failure.status(), StatusCode::SERVICE_UNAVAILABLE);
     assert_eq!(store.state(&key), Some(DedupState::Unknown));
@@ -549,10 +611,10 @@ fn releases_known_pre_dispatch_failure_but_preserves_uncertain_failure()
         .store(DISPATCH_SUCCESS, Ordering::SeqCst);
     let duplicate = block_on(route.handle(
         request(&method, &headers, br#"{"value":1}"#),
-        WebhookIngressTime::new(5_002, 5_002),
+        WebhookIngressTime::new(5_003, 5_003),
     ));
     assert_eq!(duplicate.status(), StatusCode::NO_CONTENT);
-    assert_eq!(lock(&service.invocations).len(), 2);
+    assert_eq!(lock(&service.invocations).len(), 5);
     Ok(())
 }
 

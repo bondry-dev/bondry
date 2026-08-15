@@ -362,6 +362,29 @@ fn check_consumer_profiles(workspace: &Workspace, violations: &mut Vec<String>) 
         ],
         violations,
     );
+    check_profile(
+        workspace,
+        "Apple webhook ingress add-on",
+        &["bondry-webhook-ingress-ffi"],
+        &[
+            "bondry-egress",
+            "bondry-egress-ffi",
+            "bondry-egress-mcp",
+            "bondry-egress-runtime",
+            "bondry-egress-webhook",
+            "bondry-http-server",
+            "bondry-local-server-ffi",
+            "bondry-transport-net",
+            "hyper",
+            "hyper-util",
+            "rustls",
+            "tokio-rustls",
+            "tungstenite",
+            "tokio-tungstenite",
+        ],
+        &["crates/egress", "crates/engine"],
+        violations,
+    );
 }
 
 fn check_profile(

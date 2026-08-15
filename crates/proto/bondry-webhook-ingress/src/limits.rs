@@ -10,12 +10,17 @@ pub const MAX_WEBHOOK_BODY_BYTES: usize = 4 * 1_048_576;
 pub const DEFAULT_WEBHOOK_RETAINED_BYTES: usize = 3 * 1_048_576;
 /// Maximum retained-byte budget for one webhook request lifecycle.
 pub const MAX_WEBHOOK_RETAINED_BYTES: usize = 10 * 1_048_576;
+/// Default maximum selected headers for one webhook route.
+pub const DEFAULT_WEBHOOK_SELECTED_HEADERS: usize = 16;
+/// Maximum selected headers for one webhook route.
+pub const MAX_WEBHOOK_SELECTED_HEADERS: usize = 32;
 
 /// Validated raw-body and retained-memory limits for one webhook route.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct WebhookIngressLimits {
     body_bytes: usize,
     retained_bytes: usize,
+    selected_headers: usize,
 }
 
 impl WebhookIngressLimits {
@@ -33,7 +38,20 @@ impl WebhookIngressLimits {
         Ok(Self {
             body_bytes,
             retained_bytes,
+            selected_headers: DEFAULT_WEBHOOK_SELECTED_HEADERS,
         })
+    }
+
+    /// Replaces the selected-header count budget.
+    pub const fn with_selected_headers(
+        mut self,
+        selected_headers: usize,
+    ) -> Result<Self, WebhookIngressLimitError> {
+        if selected_headers == 0 || selected_headers > MAX_WEBHOOK_SELECTED_HEADERS {
+            return Err(WebhookIngressLimitError::InvalidSelectedHeaders);
+        }
+        self.selected_headers = selected_headers;
+        Ok(self)
     }
 
     /// Returns the exact raw-body limit.
@@ -47,6 +65,12 @@ impl WebhookIngressLimits {
     pub const fn retained_bytes(self) -> usize {
         self.retained_bytes
     }
+
+    /// Returns the maximum selected headers for one route.
+    #[must_use]
+    pub const fn selected_headers(self) -> usize {
+        self.selected_headers
+    }
 }
 
 impl Default for WebhookIngressLimits {
@@ -54,6 +78,7 @@ impl Default for WebhookIngressLimits {
         Self {
             body_bytes: DEFAULT_WEBHOOK_BODY_BYTES,
             retained_bytes: DEFAULT_WEBHOOK_RETAINED_BYTES,
+            selected_headers: DEFAULT_WEBHOOK_SELECTED_HEADERS,
         }
     }
 }
@@ -67,13 +92,17 @@ pub enum WebhookIngressLimitError {
     /// The retained budget is smaller than the body limit or above 10 MiB.
     #[error("webhook retained-byte limit is outside the accepted range")]
     InvalidRetainedBytes,
+    /// The selected-header count is outside one through 32.
+    #[error("webhook selected-header count is outside the accepted range")]
+    InvalidSelectedHeaders,
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        MAX_WEBHOOK_BODY_BYTES, MAX_WEBHOOK_RETAINED_BYTES, MIN_WEBHOOK_BODY_BYTES,
-        WebhookIngressLimitError, WebhookIngressLimits,
+        DEFAULT_WEBHOOK_SELECTED_HEADERS, MAX_WEBHOOK_BODY_BYTES, MAX_WEBHOOK_RETAINED_BYTES,
+        MAX_WEBHOOK_SELECTED_HEADERS, MIN_WEBHOOK_BODY_BYTES, WebhookIngressLimitError,
+        WebhookIngressLimits,
     };
 
     #[test]
@@ -89,6 +118,19 @@ mod tests {
         assert_eq!(
             WebhookIngressLimits::new(MAX_WEBHOOK_BODY_BYTES, MAX_WEBHOOK_BODY_BYTES - 1),
             Err(WebhookIngressLimitError::InvalidRetainedBytes)
+        );
+        assert_eq!(
+            WebhookIngressLimits::default().selected_headers(),
+            DEFAULT_WEBHOOK_SELECTED_HEADERS
+        );
+        assert!(
+            WebhookIngressLimits::default()
+                .with_selected_headers(MAX_WEBHOOK_SELECTED_HEADERS)
+                .is_ok()
+        );
+        assert_eq!(
+            WebhookIngressLimits::default().with_selected_headers(0),
+            Err(WebhookIngressLimitError::InvalidSelectedHeaders)
         );
     }
 }

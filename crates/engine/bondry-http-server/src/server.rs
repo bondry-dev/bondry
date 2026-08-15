@@ -56,9 +56,6 @@ impl LocalHttpServer {
         protocols: Vec<MountedProtocol>,
     ) -> Result<Self, ServerStartError> {
         configuration.validate()?;
-        if protocols.is_empty() {
-            return Err(ServerStartError::NoAdapters);
-        }
         let protocols: Arc<[MountedProtocol]> = protocols.into();
         let raw_body_registry = Arc::new(RawBodyRegistry::new(configuration.raw_body_limits));
         let runtime = tokio::runtime::Builder::new_current_thread()
@@ -627,7 +624,7 @@ pub enum ServerStartError {
     /// Server configuration was rejected.
     #[error(transparent)]
     Configuration(#[from] ServerConfigurationError),
-    /// At least one protocol adapter is required.
+    /// Legacy empty-adapter error retained for source compatibility and no longer emitted.
     #[error("at least one HTTP adapter is required")]
     NoAdapters,
     /// The asynchronous runtime could not be created.

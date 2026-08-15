@@ -1,4 +1,4 @@
-use std::{collections::HashSet, sync::Arc};
+use std::{collections::HashSet, future::Future, pin::Pin, sync::Arc};
 
 use bondry_core::{
     AdapterId, AutomationService, CapabilityEffect, CapabilityId, DenialReason, DispatchError,
@@ -192,6 +192,54 @@ pub struct WebhookRoute {
     selected_headers: Arc<[HeaderName]>,
 }
 
+/// An accepted webhook dispatch that no longer borrows the raw request.
+pub struct WebhookDispatch {
+    future:
+        Pin<Box<dyn Future<Output = Result<serde_json::Value, DispatchError>> + Send + 'static>>,
+    claim: Option<DedupGuard>,
+    success_status: StatusCode,
+}
+
+impl WebhookDispatch {
+    /// Awaits dispatch and commits the final replay-protection state.
+    pub async fn complete(mut self) -> WebhookIngressResponse {
+        let result = self.future.await;
+        let persistence_succeeded = match (&result, &mut self.claim) {
+            (Err(DispatchError::Audit(_)), Some(claim)) => claim.mark_unknown(),
+            (
+                Err(
+                    DispatchError::CapabilityNotFound(_)
+                    | DispatchError::AccessDenied(_)
+                    | DispatchError::InvalidInput,
+                ),
+                Some(claim),
+            ) => claim.release(),
+            (_, Some(claim)) => claim.complete(),
+            (_, None) => true,
+        };
+        if !persistence_succeeded {
+            return retryable("dedup_store_unavailable");
+        }
+        match result {
+            Ok(_) => WebhookIngressResponse::success(self.success_status),
+            Err(DispatchError::CapabilityNotFound(_))
+            | Err(DispatchError::AccessDenied(DenialReason::NotGranted)) => {
+                WebhookIngressResponse::error(StatusCode::NOT_FOUND, "route_unavailable")
+            }
+            Err(DispatchError::InvalidInput) => {
+                WebhookIngressResponse::error(StatusCode::UNPROCESSABLE_ENTITY, "invalid_input")
+            }
+            Err(DispatchError::Handler(_)) => {
+                WebhookIngressResponse::error(StatusCode::UNPROCESSABLE_ENTITY, "capability_failed")
+            }
+            Err(DispatchError::AccessDenied(DenialReason::PolicyUnavailable)) => {
+                retryable("policy_unavailable")
+            }
+            Err(DispatchError::Audit(_)) => retryable("audit_unavailable"),
+        }
+    }
+}
+
 impl WebhookRoute {
     /// Validates one fixed route against its verifier, grant, capability, and store.
     pub fn new(
@@ -219,6 +267,9 @@ impl WebhookRoute {
             }
         }
         let selected_headers = selected_headers(&configuration.mapping, verifier.as_ref())?;
+        if selected_headers.len() > configuration.limits.selected_headers() {
+            return Err(WebhookRouteError::TooManySelectedHeaders);
+        }
         Ok(Self {
             configuration,
             verifier,
@@ -240,40 +291,68 @@ impl WebhookRoute {
         &self.selected_headers
     }
 
+    /// Returns the configured raw-body and retained-memory limits.
+    #[must_use]
+    pub const fn limits(&self) -> WebhookIngressLimits {
+        self.configuration.limits
+    }
+
+    /// Verifies, rate-limits, deduplicates, and creates an owned dispatch.
+    pub fn begin(
+        &self,
+        request: VerificationRequest<'_>,
+        now: WebhookIngressTime,
+    ) -> Result<WebhookDispatch, WebhookIngressResponse> {
+        self.prepare(request, now)
+    }
+
     /// Verifies, rate-limits, deduplicates, and dispatches one bounded delivery.
     pub async fn handle(
         &self,
         request: VerificationRequest<'_>,
         now: WebhookIngressTime,
     ) -> WebhookIngressResponse {
+        match self.begin(request, now) {
+            Ok(dispatch) => dispatch.complete().await,
+            Err(response) => response,
+        }
+    }
+
+    fn prepare(
+        &self,
+        request: VerificationRequest<'_>,
+        now: WebhookIngressTime,
+    ) -> Result<WebhookDispatch, WebhookIngressResponse> {
         if request.method() != Method::POST {
-            return WebhookIngressResponse::error(
+            return Err(WebhookIngressResponse::error(
                 StatusCode::METHOD_NOT_ALLOWED,
                 "method_not_allowed",
-            );
+            ));
         }
         let Ok(now_unix_seconds) = i64::try_from(now.unix_milliseconds / 1_000) else {
-            return retryable("clock_unavailable");
+            return Err(retryable("clock_unavailable"));
         };
         let verified = match self.verifier.verify(request, now_unix_seconds) {
             Ok(verified) => verified,
             Err(VerificationError::Rejected) => {
-                return WebhookIngressResponse::error(
+                return Err(WebhookIngressResponse::error(
                     StatusCode::UNAUTHORIZED,
                     "authentication_rejected",
-                );
+                ));
             }
-            Err(VerificationError::Unavailable) => return retryable("verification_unavailable"),
+            Err(VerificationError::Unavailable) => {
+                return Err(retryable("verification_unavailable"));
+            }
         };
         if self.verifier.identity_guarantee() == IdentityGuarantee::Required
             && verified.identity().is_none()
         {
-            return retryable("verification_unavailable");
+            return Err(retryable("verification_unavailable"));
         }
         if self.verifier.identity_guarantee() == IdentityGuarantee::Never
             && verified.identity().is_some()
         {
-            return retryable("verification_unavailable");
+            return Err(retryable("verification_unavailable"));
         }
         match self.context.limiter.admit(
             self.configuration.principal.id(),
@@ -281,27 +360,24 @@ impl WebhookRoute {
         ) {
             AuthenticatedAdmission::Allowed => {}
             AuthenticatedAdmission::Limited { retry_after } => {
-                return WebhookIngressResponse::retryable(
+                return Err(WebhookIngressResponse::retryable(
                     StatusCode::TOO_MANY_REQUESTS,
                     "rate_limited",
                     retry_after,
-                );
+                ));
             }
         }
         if !payload::has_json_content_type(request, &header::CONTENT_TYPE) {
-            return WebhookIngressResponse::error(
+            return Err(WebhookIngressResponse::error(
                 StatusCode::UNSUPPORTED_MEDIA_TYPE,
                 "unsupported_media_type",
-            );
+            ));
         }
-        let input = match payload::map_payload(
+        let input = payload::map_payload(
             &self.configuration.mapping,
             request,
             self.configuration.limits,
-        ) {
-            Ok(input) => input,
-            Err(response) => return response,
-        };
+        )?;
         let mut claim = match verified.identity() {
             Some(identity) => {
                 let key = DedupKey::new(
@@ -328,23 +404,25 @@ impl WebhookRoute {
                         now.unix_milliseconds,
                     )),
                     Ok(DedupClaim::Duplicate(DedupState::InFlight)) => {
-                        return WebhookIngressResponse::retryable(
+                        return Err(WebhookIngressResponse::retryable(
                             StatusCode::SERVICE_UNAVAILABLE,
                             "delivery_in_flight",
                             1,
-                        );
+                        ));
                     }
                     Ok(DedupClaim::Duplicate(DedupState::Completed | DedupState::Unknown)) => {
-                        return WebhookIngressResponse::success(self.configuration.success_status);
+                        return Err(WebhookIngressResponse::success(
+                            self.configuration.success_status,
+                        ));
                     }
                     Err(DedupStoreError::CapacityExhausted) => {
-                        return retryable("dedup_capacity");
+                        return Err(retryable("dedup_capacity"));
                     }
                     Err(
                         DedupStoreError::NotFound
                         | DedupStoreError::InvalidTransition
                         | DedupStoreError::Unavailable,
-                    ) => return retryable("dedup_store_unavailable"),
+                    ) => return Err(retryable("dedup_store_unavailable")),
                 }
             }
             None => None,
@@ -353,9 +431,9 @@ impl WebhookRoute {
             Ok(id) => id,
             Err(_) => {
                 if claim.as_mut().is_some_and(|claim| !claim.release()) {
-                    return retryable("dedup_store_unavailable");
+                    return Err(retryable("dedup_store_unavailable"));
                 }
-                return retryable("identifier_generation_unavailable");
+                return Err(retryable("identifier_generation_unavailable"));
             }
         };
         let invocation = Invocation::new(
@@ -365,35 +443,13 @@ impl WebhookRoute {
             self.configuration.capability.clone(),
             input,
         );
-        let result = self.context.service.dispatch(invocation).await;
-        let persistence_succeeded = match (&result, &mut claim) {
-            (Err(DispatchError::Audit(_)), Some(claim)) => claim.mark_unknown(),
-            (Err(DispatchError::AccessDenied(DenialReason::PolicyUnavailable)), Some(claim)) => {
-                claim.release()
-            }
-            (_, Some(claim)) => claim.complete(),
-            (_, None) => true,
-        };
-        if !persistence_succeeded {
-            return retryable("dedup_store_unavailable");
-        }
-        match result {
-            Ok(_) => WebhookIngressResponse::success(self.configuration.success_status),
-            Err(DispatchError::CapabilityNotFound(_))
-            | Err(DispatchError::AccessDenied(DenialReason::NotGranted)) => {
-                WebhookIngressResponse::error(StatusCode::NOT_FOUND, "route_unavailable")
-            }
-            Err(DispatchError::InvalidInput) => {
-                WebhookIngressResponse::error(StatusCode::UNPROCESSABLE_ENTITY, "invalid_input")
-            }
-            Err(DispatchError::Handler(_)) => {
-                WebhookIngressResponse::error(StatusCode::UNPROCESSABLE_ENTITY, "capability_failed")
-            }
-            Err(DispatchError::AccessDenied(DenialReason::PolicyUnavailable)) => {
-                retryable("policy_unavailable")
-            }
-            Err(DispatchError::Audit(_)) => retryable("audit_unavailable"),
-        }
+        let service = Arc::clone(&self.context.service);
+        let future = Box::pin(async move { service.dispatch(invocation).await });
+        Ok(WebhookDispatch {
+            future,
+            claim,
+            success_status: self.configuration.success_status,
+        })
     }
 }
 
