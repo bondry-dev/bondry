@@ -3,6 +3,7 @@ use std::{
     error::Error,
     fs,
     path::{Path, PathBuf},
+    process::Command,
 };
 
 use syn::{Path as SynPath, UseTree, visit::Visit};
@@ -24,6 +25,7 @@ pub fn run(workspace: &Workspace) -> Result<(), Box<dyn Error>> {
     check_layer_dependencies(workspace, &mut violations);
     check_layer_sources(workspace, &mut violations)?;
     check_openssl_confinement(workspace, &mut violations)?;
+    check_egress_runtime_tokio_features(workspace, &mut violations)?;
     check_consumer_profiles(workspace, &mut violations);
     if violations.is_empty() {
         println!("Architecture gates passed");
@@ -33,6 +35,67 @@ pub fn run(workspace: &Workspace) -> Result<(), Box<dyn Error>> {
         eprintln!("gate violation: {violation}");
     }
     Err(format!("{} architecture gate violation(s)", violations.len()).into())
+}
+
+fn check_egress_runtime_tokio_features(
+    workspace: &Workspace,
+    violations: &mut Vec<String>,
+) -> Result<(), Box<dyn Error>> {
+    if workspace.package("bondry-egress-runtime").is_none() {
+        return Ok(());
+    };
+    let output = Command::new("cargo")
+        .args([
+            "tree",
+            "--package",
+            "bondry-egress-runtime",
+            "--edges",
+            "normal,build,features",
+            "--prefix",
+            "none",
+            "--locked",
+        ])
+        .current_dir(workspace.root())
+        .output()?;
+    if !output.status.success() {
+        return Err(format!(
+            "cargo tree failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        )
+        .into());
+    }
+    let tree = String::from_utf8(output.stdout)?;
+    let enabled = tree
+        .lines()
+        .filter_map(|line| {
+            line.strip_prefix("tokio feature \"")
+                .and_then(|feature| feature.strip_suffix('"'))
+        })
+        .collect::<BTreeSet<_>>();
+    let allowed = ["macros", "rt", "sync", "time", "tokio-macros"]
+        .into_iter()
+        .collect::<BTreeSet<_>>();
+    for forbidden in enabled.difference(&allowed) {
+        violations.push(format!(
+            "bondry-egress-runtime enables unexpected Tokio feature {forbidden}"
+        ));
+    }
+    for required in ["macros", "rt", "sync", "time"] {
+        if !enabled.contains(required) {
+            violations.push(format!(
+                "bondry-egress-runtime omits required Tokio feature {required}"
+            ));
+        }
+    }
+    for forbidden in ["mio ", "socket2 "] {
+        if tree.lines().any(|line| line.starts_with(forbidden)) {
+            violations.push(format!(
+                "bondry-egress-runtime reaches forbidden network package {}",
+                forbidden.trim()
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn check_layer_dependencies(workspace: &Workspace, violations: &mut Vec<String>) {
