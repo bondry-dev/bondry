@@ -92,9 +92,9 @@ jobs:
             ~/.cargo/bin/cargo-nextest
             ~/.cargo/git
             ~/.cargo/registry
-          key: ${{ runner.os }}-rust-1.90.0-nextest-0.9.128-${{ hashFiles('Cargo.lock') }}
+          key: ${{ runner.os }}-rust-1.90.0-nextest-0.9.128-cargo-v2-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-rust-1.90.0-nextest-0.9.128-
+            ${{ runner.os }}-rust-1.90.0-nextest-0.9.128-cargo-v2-
       - name: Install nextest
         run: |
           cargo nextest --version 2>/dev/null | grep -F 'cargo-nextest 0.9.128' > /dev/null || \
@@ -134,9 +134,9 @@ jobs:
             ~/.cargo/bin/cargo-nextest
             ~/.cargo/git
             ~/.cargo/registry
-          key: ${{ runner.os }}-rust-1.90.0-nextest-0.9.128-${{ hashFiles('Cargo.lock') }}
+          key: ${{ runner.os }}-rust-1.90.0-nextest-0.9.128-cargo-v2-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-rust-1.90.0-nextest-0.9.128-
+            ${{ runner.os }}-rust-1.90.0-nextest-0.9.128-cargo-v2-
       - name: Install nextest
         run: |
           cargo nextest --version 2>/dev/null | grep -F 'cargo-nextest 0.9.128' > /dev/null || \
@@ -174,9 +174,9 @@ jobs:
           path: |
             ~/.cargo/git
             ~/.cargo/registry
-          key: ${{ runner.os }}-rust-1.90.0-transport-${{ hashFiles('Cargo.lock') }}
+          key: ${{ runner.os }}-rust-1.90.0-transport-cargo-v2-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-rust-1.90.0-transport-
+            ${{ runner.os }}-rust-1.90.0-transport-cargo-v2-
       - name: Test supported feature combinations
         run: |
           cargo +1.90.0 test --locked -p bondry-transport-net --no-default-features --features http
@@ -240,9 +240,9 @@ jobs:
           path: |
             ~/.cargo/git
             ~/.cargo/registry
-          key: ${{ runner.os }}-rust-1.90.0-egress-size-${{ hashFiles('Cargo.lock') }}
+          key: ${{ runner.os }}-rust-1.90.0-egress-size-cargo-v2-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-rust-1.90.0-egress-size-
+            ${{ runner.os }}-rust-1.90.0-egress-size-cargo-v2-
       - name: Enforce linked size ceiling
         run: scripts/measure-egress-size.sh
 
@@ -306,9 +306,9 @@ jobs:
           path: |
             ~/.cargo/git
             ~/.cargo/registry
-          key: ${{ runner.os }}-rust-1.90.0-performance-${{ hashFiles('Cargo.lock') }}
+          key: ${{ runner.os }}-rust-1.90.0-performance-cargo-v2-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-rust-1.90.0-performance-
+            ${{ runner.os }}-rust-1.90.0-performance-cargo-v2-
       - name: Run paired performance smoke
         env:
           BONDRY_BENCH_CONNECTIONS: "8"
@@ -367,9 +367,9 @@ jobs:
           path: |
             ~/.cargo/git
             ~/.cargo/registry
-          key: ${{ runner.os }}-rust-1.90.0-apple-${{ hashFiles('Cargo.lock') }}
+          key: ${{ runner.os }}-rust-1.90.0-apple-cargo-v2-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-rust-1.90.0-apple-
+            ${{ runner.os }}-rust-1.90.0-apple-cargo-v2-
       - name: Verify Apple build tools
         run: |
           set -eu
