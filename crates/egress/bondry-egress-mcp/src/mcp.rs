@@ -42,6 +42,15 @@ impl fmt::Debug for McpAuthentication {
     }
 }
 
+impl McpAuthentication {
+    pub(crate) const fn secret_reference(&self) -> Option<&SecretRef> {
+        match self {
+            Self::None => None,
+            Self::Bearer(reference) => Some(reference),
+        }
+    }
+}
+
 /// A discovered tool name and compiled JSON input schema.
 #[derive(Clone)]
 pub struct McpToolBinding {
@@ -62,12 +71,20 @@ impl McpToolBinding {
         schema: Value,
         limits: McpLimits,
     ) -> Result<Self, McpToolBindingError> {
+        Self::from_parts_with_schema_limit(name, schema, limits.schema_bytes())
+    }
+
+    pub(crate) fn from_parts_with_schema_limit(
+        name: &str,
+        schema: Value,
+        schema_bytes: usize,
+    ) -> Result<Self, McpToolBindingError> {
         if name.trim().is_empty() || name.chars().any(char::is_control) {
             return Err(McpToolBindingError::InvalidName);
         }
         let encoded =
             serde_json::to_vec(&schema).map_err(|_| McpToolBindingError::InvalidSchema)?;
-        if encoded.len() > limits.schema_bytes() {
+        if encoded.len() > schema_bytes {
             return Err(McpToolBindingError::SchemaTooLarge);
         }
         if !schema.is_object() || !jsonschema::draft202012::meta::is_valid(&schema) {
@@ -276,10 +293,7 @@ struct McpConfiguration {
 
 impl McpConfiguration {
     fn secret_reference(&self) -> Option<&SecretRef> {
-        match &self.authentication {
-            McpAuthentication::None => None,
-            McpAuthentication::Bearer(reference) => Some(reference),
-        }
+        self.authentication.secret_reference()
     }
 }
 
@@ -366,7 +380,8 @@ impl McpOperation {
         if let McpAuthentication::Bearer(_) = &self.configuration.authentication {
             let mut value = bearer_header(secrets.first().ok_or(AttemptDisposition::Failed(
                 DeliveryFailure::SecretUnavailable,
-            ))?)?;
+            ))?)
+            .map_err(|()| AttemptDisposition::Failed(DeliveryFailure::SecretUnavailable))?;
             value.set_sensitive(true);
             headers.insert(header::AUTHORIZATION, value);
         }
@@ -487,7 +502,8 @@ fn classify_client(error: McpClientError, bytes: u32) -> AttemptDisposition {
         McpClientError::UnsupportedProtocolVersion
         | McpClientError::MethodNotFound
         | McpClientError::RequestRejected
-        | McpClientError::RemoteFailure => {
+        | McpClientError::RemoteFailure
+        | McpClientError::ToolListTooLarge => {
             AttemptDisposition::Failed(DeliveryFailure::ReceiverRejected)
         }
     }
@@ -532,7 +548,7 @@ fn classify_transport(error: TransportError) -> AttemptDisposition {
     }
 }
 
-fn bearer_header(secret: &ResolvedSecret) -> Result<HeaderValue, AttemptDisposition> {
+pub(crate) fn bearer_header(secret: &ResolvedSecret) -> Result<HeaderValue, ()> {
     let token = secret.current_value().expose();
     let padding = token
         .iter()
@@ -544,15 +560,12 @@ fn bearer_header(secret: &ResolvedSecret) -> Result<HeaderValue, AttemptDisposit
         })
         || !token[padding..].iter().all(|byte| *byte == b'=')
     {
-        return Err(AttemptDisposition::Failed(
-            DeliveryFailure::SecretUnavailable,
-        ));
+        return Err(());
     }
     let mut encoded = Zeroizing::new(Vec::with_capacity(7 + token.len()));
     encoded.extend_from_slice(b"Bearer ");
     encoded.extend_from_slice(token);
-    HeaderValue::from_bytes(&encoded)
-        .map_err(|_| AttemptDisposition::Failed(DeliveryFailure::SecretUnavailable))
+    HeaderValue::from_bytes(&encoded).map_err(|_| ())
 }
 
 fn json_nesting_depth(value: &Value) -> usize {

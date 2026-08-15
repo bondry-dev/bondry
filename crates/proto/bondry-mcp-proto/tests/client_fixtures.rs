@@ -13,6 +13,8 @@ const DISCOVER_RESPONSE: &str =
     include_str!("../../../../fixtures/protocol-v1/mcp/discover.response.json");
 const LIST_REQUEST: &str =
     include_str!("../../../../fixtures/protocol-v1/mcp/tools-list.request.json");
+const INITIALIZED_REQUEST: &str =
+    include_str!("../../../../fixtures/protocol-v1/mcp/initialized.request.json");
 const LIST_RESPONSE: &str =
     include_str!("../../../../fixtures/protocol-v1/mcp/tools-list.response.json");
 const CALL_REQUEST: &str =
@@ -49,7 +51,8 @@ fn request_json(
 fn client_requests_match_protocol_fixtures() -> Result<(), Box<dyn std::error::Error>> {
     let client = client()?;
     let (discover, _) = request_json(client.discover(1)?)?;
-    let (list, _) = request_json(client.list_tools(2, McpProtocolVersion::V2026_07_28)?)?;
+    let (initialized, _) = request_json(client.initialized(McpProtocolVersion::V2025_11_25)?)?;
+    let (list, _) = request_json(client.list_tools(2, McpProtocolVersion::V2026_07_28, 256)?)?;
     let (call, _) = request_json(client.call_tool(
         3,
         McpProtocolVersion::V2026_07_28,
@@ -58,6 +61,10 @@ fn client_requests_match_protocol_fixtures() -> Result<(), Box<dyn std::error::E
     )?)?;
 
     assert_eq!(discover, serde_json::from_str::<Value>(DISCOVER_REQUEST)?);
+    assert_eq!(
+        initialized,
+        serde_json::from_str::<Value>(INITIALIZED_REQUEST)?
+    );
     assert_eq!(list, serde_json::from_str::<Value>(LIST_REQUEST)?);
     assert_eq!(call, serde_json::from_str::<Value>(CALL_REQUEST)?);
     Ok(())
@@ -73,7 +80,7 @@ fn client_responses_match_protocol_fixtures() -> Result<(), Box<dyn std::error::
             if discovery.version() == McpProtocolVersion::V2026_07_28
     ));
 
-    let (_, list) = request_json(client.list_tools(2, McpProtocolVersion::V2026_07_28)?)?;
+    let (_, list) = request_json(client.list_tools(2, McpProtocolVersion::V2026_07_28, 256)?)?;
     assert!(matches!(
         list.decode(StatusCode::OK, &headers(), LIST_RESPONSE.as_bytes())?,
         McpClientResponse::Tools(tools)

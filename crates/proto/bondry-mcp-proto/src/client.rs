@@ -8,8 +8,8 @@ use crate::{
     LATEST_PROTOCOL_VERSION, McpClientInfo, McpProtocolVersion, SUPPORTED_PROTOCOL_VERSIONS,
     protocol::{
         CALL_TOOL_METHOD, CLIENT_CAPABILITIES_META, CLIENT_INFO_META, DISCOVER_METHOD,
-        INITIALIZE_METHOD, LIST_TOOLS_METHOD, METHOD_HEADER, Message, NAME_HEADER,
-        PROTOCOL_VERSION_HEADER, PROTOCOL_VERSION_META, RpcResponsePayload,
+        INITIALIZE_METHOD, INITIALIZED_METHOD, LIST_TOOLS_METHOD, METHOD_HEADER, Message,
+        NAME_HEADER, PROTOCOL_VERSION_HEADER, PROTOCOL_VERSION_META, RpcResponsePayload,
     },
 };
 
@@ -49,7 +49,27 @@ impl McpClient {
                 "clientInfo": self.info.as_json(),
             },
         });
-        McpClientRequest::new(id, body, None, ResponseShape::Initialization)
+        McpClientRequest::new(Some(id), body, None, ResponseShape::Initialization)
+    }
+
+    /// Creates the legacy notification that completes initialization.
+    pub fn initialized(
+        &self,
+        version: McpProtocolVersion,
+    ) -> Result<McpClientRequest, McpClientRequestError> {
+        if version.is_modern() {
+            return Err(McpClientRequestError::InvalidInitializationVersion);
+        }
+        let body = json!({
+            "jsonrpc": "2.0",
+            "method": INITIALIZED_METHOD,
+        });
+        McpClientRequest::new(
+            None,
+            body,
+            Some((version, INITIALIZED_METHOD, None)),
+            ResponseShape::Acknowledgement,
+        )
     }
 
     /// Creates a tool-list request for a negotiated protocol revision.
@@ -57,13 +77,14 @@ impl McpClient {
         &self,
         id: u64,
         version: McpProtocolVersion,
+        max_tools: usize,
     ) -> Result<McpClientRequest, McpClientRequestError> {
         self.request(
             id,
             LIST_TOOLS_METHOD,
             version.is_modern().then(|| Value::Object(Map::new())),
             Some(version),
-            ResponseShape::ToolList,
+            ResponseShape::ToolList(max_tools),
         )
     }
 
@@ -119,7 +140,7 @@ impl McpClient {
             })
             .transpose()?;
         let routing = version.map(|version| (version, method, name.as_deref()));
-        McpClientRequest::new(id, body, routing, response)
+        McpClientRequest::new(Some(id), body, routing, response)
     }
 
     fn modern_metadata(&self, version: McpProtocolVersion) -> Value {
@@ -137,7 +158,7 @@ impl McpClient {
     }
 }
 
-/// One protocol request awaiting transport composition.
+/// One outbound protocol message awaiting transport composition.
 pub struct McpClientRequest {
     headers: HeaderMap,
     body: Bytes,
@@ -146,7 +167,7 @@ pub struct McpClientRequest {
 
 impl McpClientRequest {
     fn new(
-        id: u64,
+        id: Option<u64>,
         body: Value,
         routing: Option<(McpProtocolVersion, &'static str, Option<&str>)>,
         response: ResponseShape,
@@ -197,7 +218,7 @@ impl McpClientRequest {
     }
 }
 
-/// Bounded MCP request fields and the matching response decoder.
+/// Bounded MCP message fields and the matching response decoder.
 pub struct McpClientRequestParts {
     headers: HeaderMap,
     body: Bytes,
@@ -211,7 +232,7 @@ impl McpClientRequestParts {
         &self.headers
     }
 
-    /// Returns exact request body bytes.
+    /// Returns exact message body bytes.
     #[must_use]
     pub const fn body(&self) -> &Bytes {
         &self.body
@@ -226,7 +247,7 @@ impl McpClientRequestParts {
 
 /// Response validator bound to one request identifier and operation shape.
 pub struct McpResponseDecoder {
-    id: u64,
+    id: Option<u64>,
     version: Option<McpProtocolVersion>,
     shape: ResponseShape,
 }
@@ -239,6 +260,15 @@ impl McpResponseDecoder {
         headers: &HeaderMap,
         body: &[u8],
     ) -> Result<McpClientResponse, McpClientError> {
+        if matches!(self.shape, ResponseShape::Acknowledgement) {
+            return if status == StatusCode::ACCEPTED && body.is_empty() {
+                Ok(McpClientResponse::Acknowledged)
+            } else if !status.is_success() {
+                Err(McpClientError::UnexpectedHttpStatus)
+            } else {
+                Err(McpClientError::InvalidEnvelope)
+            };
+        }
         validate_content_type(headers)?;
         let message = crate::protocol::parse(body).map_err(|error| {
             if error.code == -32_700 {
@@ -250,7 +280,7 @@ impl McpResponseDecoder {
         let Message::Response(response) = message else {
             return Err(McpClientError::InvalidEnvelope);
         };
-        if response.id.as_u64() != Some(self.id) {
+        if response.id.as_u64() != self.id {
             return Err(McpClientError::MismatchedResponseId);
         }
         match response.payload {
@@ -275,8 +305,11 @@ impl McpResponseDecoder {
             ResponseShape::Initialization => {
                 parse_initialization(result).map(McpClientResponse::Initialized)
             }
-            ResponseShape::ToolList => parse_tool_list(result).map(McpClientResponse::Tools),
+            ResponseShape::ToolList(max_tools) => {
+                parse_tool_list(result, max_tools).map(McpClientResponse::Tools)
+            }
             ResponseShape::ToolCall => parse_tool_call(result).map(McpClientResponse::ToolCall),
+            ResponseShape::Acknowledgement => Err(McpClientError::InvalidEnvelope),
         }
     }
 }
@@ -285,12 +318,15 @@ impl McpResponseDecoder {
 enum ResponseShape {
     Discovery,
     Initialization,
-    ToolList,
+    ToolList(usize),
     ToolCall,
+    Acknowledgement,
 }
 
 /// Validated response to one MCP client request.
 pub enum McpClientResponse {
+    /// A legacy initialization notification was accepted without a response body.
+    Acknowledged,
     /// Modern server discovery and supported revisions.
     Discovery(McpDiscovery),
     /// Legacy initialization and selected revision.
@@ -355,6 +391,12 @@ impl McpTool {
     pub const fn input_schema(&self) -> &Value {
         &self.input_schema
     }
+
+    /// Moves the validated descriptor into host-facing fields.
+    #[must_use]
+    pub fn into_parts(self) -> (String, Option<String>, Value) {
+        (self.name, self.description, self.input_schema)
+    }
 }
 
 /// Validated tool-list response.
@@ -368,6 +410,12 @@ impl McpToolList {
     #[must_use]
     pub fn tools(&self) -> &[McpTool] {
         &self.tools
+    }
+
+    /// Moves all descriptors out in receiver-provided order.
+    #[must_use]
+    pub fn into_tools(self) -> Vec<McpTool> {
+        self.tools
     }
 }
 
@@ -455,11 +503,17 @@ pub enum McpClientError {
     /// The peer returned another protocol failure category.
     #[error("MCP peer returned an operation failure")]
     RemoteFailure,
+    /// The peer returned more tools than the caller allowed.
+    #[error("MCP tool list exceeds the configured bound")]
+    ToolListTooLarge,
 }
 
 /// A local request shape that cannot be encoded safely.
 #[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
 pub enum McpClientRequestError {
+    /// The legacy initialization notification was requested for a modern revision.
+    #[error("MCP initialization notification requires a legacy protocol version")]
+    InvalidInitializationVersion,
     /// The fixed tool name is empty or contains control characters.
     #[error("MCP tool name is invalid")]
     InvalidToolName,
@@ -531,11 +585,14 @@ fn parse_initialization(result: Value) -> Result<McpInitialization, McpClientErr
     Ok(McpInitialization { version })
 }
 
-fn parse_tool_list(result: Value) -> Result<McpToolList, McpClientError> {
+fn parse_tool_list(result: Value, max_tools: usize) -> Result<McpToolList, McpClientError> {
     let tools = result
         .get("tools")
         .and_then(Value::as_array)
         .ok_or(McpClientError::InvalidEnvelope)?;
+    if tools.len() > max_tools {
+        return Err(McpClientError::ToolListTooLarge);
+    }
     let mut parsed = Vec::with_capacity(tools.len());
     for tool in tools {
         let tool = tool.as_object().ok_or(McpClientError::InvalidEnvelope)?;
@@ -706,6 +763,28 @@ mod tests {
     }
 
     #[test]
+    fn validates_legacy_initialization_acknowledgement() -> Result<(), Box<dyn std::error::Error>> {
+        let parts = client()?
+            .initialized(McpProtocolVersion::V2025_11_25)?
+            .into_parts();
+        let (headers, body, decoder) = parts.into_values();
+        assert_eq!(headers["mcp-protocol-version"], "2025-11-25");
+        assert_eq!(
+            serde_json::from_slice::<Value>(&body)?,
+            json!({ "jsonrpc": "2.0", "method": "notifications/initialized" })
+        );
+        assert!(matches!(
+            decoder.decode(StatusCode::ACCEPTED, &HeaderMap::new(), b""),
+            Ok(McpClientResponse::Acknowledged)
+        ));
+        assert!(matches!(
+            client()?.initialized(McpProtocolVersion::V2026_07_28),
+            Err(McpClientRequestError::InvalidInitializationVersion)
+        ));
+        Ok(())
+    }
+
+    #[test]
     fn rejects_invalid_arguments_and_response_ids() -> Result<(), Box<dyn std::error::Error>> {
         assert!(matches!(
             client()?.call_tool(1, McpProtocolVersion::V2025_11_25, "tool", json!([]),),
@@ -720,6 +799,31 @@ mod tests {
         assert!(matches!(
             decoder.decode(StatusCode::OK, &json_headers(), &body),
             Err(McpClientError::MismatchedResponseId)
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_tool_lists_before_allocating_descriptors_past_the_caller_bound()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (_, _, decoder) = client()?
+            .list_tools(4, McpProtocolVersion::V2026_07_28, 1)?
+            .into_parts()
+            .into_values();
+        let body = serde_json::to_vec(&json!({
+            "jsonrpc": "2.0",
+            "id": 4,
+            "result": {
+                "resultType": "complete",
+                "tools": [
+                    { "name": "one", "inputSchema": { "type": "object" } },
+                    { "name": "two", "inputSchema": { "type": "object" } }
+                ],
+            },
+        }))?;
+        assert!(matches!(
+            decoder.decode(StatusCode::OK, &json_headers(), &body),
+            Err(McpClientError::ToolListTooLarge)
         ));
         Ok(())
     }
