@@ -80,6 +80,8 @@ typedef struct BondryRawBodyResponseV1 {
     uint32_t abi_version;
     size_t struct_size;
     uint16_t status_code;
+    const uint8_t *error_code;
+    size_t error_code_length;
     uint64_t retry_after_seconds;
     uint8_t has_retry_after;
 } BondryRawBodyResponseV1;

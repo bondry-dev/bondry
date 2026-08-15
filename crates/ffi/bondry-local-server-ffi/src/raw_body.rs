@@ -108,6 +108,10 @@ pub struct BondryRawBodyResponseV1 {
     pub struct_size: usize,
     /// HTTP status code.
     pub status_code: u16,
+    /// Borrowed stable error-code bytes, or null when absent.
+    pub error_code: *const u8,
+    /// Error-code byte length.
+    pub error_code_length: usize,
     /// Retry delay when `has_retry_after` is one.
     pub retry_after_seconds: u64,
     /// Zero or one.
@@ -322,7 +326,22 @@ unsafe fn decode_response(response: *const BondryRawBodyResponseV1) -> Result<Ra
         _ => return Err(()),
     };
     let status = StatusCode::from_u16(response.status_code).map_err(|_| ())?;
-    RawBodyResponse::new(status, retry_after).map_err(|_| ())
+    let response_value = RawBodyResponse::new(status, retry_after).map_err(|_| ())?;
+    if response.error_code_length == 0 {
+        return if response.error_code.is_null() {
+            Ok(response_value)
+        } else {
+            Err(())
+        };
+    }
+    if response.error_code.is_null() || response.error_code_length > 128 {
+        return Err(());
+    }
+    // SAFETY: The completion record guarantees this bounded field is readable for the callback.
+    let error_code =
+        unsafe { slice::from_raw_parts(response.error_code, response.error_code_length) };
+    let error_code = std::str::from_utf8(error_code).map_err(|_| ())?;
+    response_value.with_error_code(error_code).map_err(|_| ())
 }
 
 /// Registers one exact raw-body handler generation on a running local server.

@@ -294,10 +294,11 @@ impl<'a> RawBodyRequest<'a> {
 }
 
 /// A validated status-only response from a raw-body handler.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RawBodyResponse {
     status: StatusCode,
     retry_after_seconds: Option<u64>,
+    error_code: Option<Arc<str>>,
 }
 
 impl RawBodyResponse {
@@ -315,7 +316,27 @@ impl RawBodyResponse {
         Ok(Self {
             status,
             retry_after_seconds,
+            error_code: None,
         })
+    }
+
+    /// Adds one bounded stable error code for server-owned JSON serialization.
+    pub fn with_error_code(
+        mut self,
+        error_code: impl Into<Arc<str>>,
+    ) -> Result<Self, RawBodyRouteError> {
+        let error_code = error_code.into();
+        if self.status.is_success()
+            || error_code.is_empty()
+            || error_code.len() > 128
+            || !error_code
+                .bytes()
+                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
+        {
+            return Err(RawBodyRouteError::InvalidResponse);
+        }
+        self.error_code = Some(error_code);
+        Ok(self)
     }
 
     /// Returns a successful empty response.
@@ -324,24 +345,30 @@ impl RawBodyResponse {
         Self {
             status: StatusCode::NO_CONTENT,
             retry_after_seconds: None,
+            error_code: None,
         }
     }
 
     /// Returns a safe empty response for an invalid or failed foreign handler.
     #[must_use]
-    pub const fn internal_server_error() -> Self {
+    pub fn internal_server_error() -> Self {
         Self {
             status: StatusCode::INTERNAL_SERVER_ERROR,
             retry_after_seconds: None,
+            error_code: Some(Arc::from("raw_body_handler_failed")),
         }
     }
 
-    pub(crate) const fn status(self) -> StatusCode {
+    pub(crate) const fn status(&self) -> StatusCode {
         self.status
     }
 
-    pub(crate) const fn retry_after_seconds(self) -> Option<u64> {
+    pub(crate) const fn retry_after_seconds(&self) -> Option<u64> {
         self.retry_after_seconds
+    }
+
+    pub(crate) fn error_code(&self) -> Option<&str> {
+        self.error_code.as_deref()
     }
 }
 

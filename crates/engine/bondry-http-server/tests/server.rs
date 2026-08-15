@@ -24,7 +24,7 @@ use bondry_http_server::{
     ServerConfigurationError, ServerStartError,
 };
 use bondry_rest_proto::RestAdapter;
-use http::HeaderName;
+use http::{HeaderName, StatusCode};
 use serde_json::json;
 
 struct TestVerifier;
@@ -78,6 +78,16 @@ impl RawBodyHandler for CapturingRawBodyHandler {
 
 struct CountingRawBodyHandler {
     calls: Arc<AtomicUsize>,
+}
+
+struct RespondingRawBodyHandler {
+    response: RawBodyResponse,
+}
+
+impl RawBodyHandler for RespondingRawBodyHandler {
+    fn handle(&self, _request: RawBodyRequest<'_>, completion: RawBodyCompletion) {
+        completion.complete(self.response.clone());
+    }
 }
 
 impl RawBodyHandler for CountingRawBodyHandler {
@@ -388,6 +398,31 @@ fn rejects_oversized_raw_bodies_and_rate_limits_before_reading_them()
     let limited = request(server.local_address(), oversized_headers)?;
     assert_eq!(status(&limited), Some(429));
     assert_eq!(calls.load(Ordering::SeqCst), 0);
+    Ok(())
+}
+
+#[test]
+fn serializes_only_bounded_raw_body_error_codes() -> Result<(), Box<dyn std::error::Error>> {
+    let server = start(authenticated_configuration())?;
+    let response = RawBodyResponse::new(StatusCode::UNPROCESSABLE_ENTITY, Some(2))?
+        .with_error_code("invalid_payload")?;
+    let _registration = server.register_raw_body_handler(
+        RawBodyRoute::post("/hooks/error", [], RawBodyHandlerLimits::default())?,
+        Arc::new(RespondingRawBodyHandler { response }),
+    )?;
+
+    let response = request(
+        server.local_address(),
+        "POST /hooks/error HTTP/1.1\r\nHost: localhost\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+    )?;
+    assert_eq!(status(&response), Some(422));
+    assert_eq!(body(&response), r#"{"error":"invalid_payload"}"#);
+    assert!(response.contains("retry-after: 2"));
+    assert!(
+        RawBodyResponse::new(StatusCode::BAD_REQUEST, None)?
+            .with_error_code("Not Safe")
+            .is_err()
+    );
     Ok(())
 }
 
