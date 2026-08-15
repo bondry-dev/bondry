@@ -368,3 +368,34 @@ jobs:
           swift test --package-path apple
       - name: Build and verify XCFramework
         run: apple/scripts/build-xcframework.sh
+
+  gate:
+    name: CI gate
+    if: always()
+    needs:
+      - changes
+      - format
+      - affected-rust
+      - full-rust
+      - transport-features
+      - architecture
+      - egress-size
+      - dependencies
+      - performance-smoke
+      - apple
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Verify required jobs
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          for result in $RESULTS; do
+            case "$result" in
+              success | skipped) ;;
+              *)
+                printf 'A required CI job completed with result: %s\n' "$result" >&2
+                exit 1
+                ;;
+            esac
+          done
