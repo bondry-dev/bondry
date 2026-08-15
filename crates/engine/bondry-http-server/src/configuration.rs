@@ -8,7 +8,7 @@ use std::{
 use http::{HeaderMap, HeaderValue, Uri, header};
 use thiserror::Error;
 
-use crate::Authentication;
+use crate::{Authentication, RawBodyServerLimits};
 
 const MAX_BODY_BYTES: usize = 8 * 1_048_576;
 const MAX_CONNECTIONS: usize = 1_024;
@@ -128,6 +128,7 @@ pub struct ServerConfiguration {
     pub(crate) header_read_timeout: Duration,
     pub(crate) request_timeout: Duration,
     pub(crate) shutdown_grace_period: Duration,
+    pub(crate) raw_body_limits: RawBodyServerLimits,
     pub(crate) allow_cleartext_network: bool,
     pub(crate) allow_unauthenticated_network: bool,
 }
@@ -147,6 +148,7 @@ impl ServerConfiguration {
             header_read_timeout: Duration::from_secs(5),
             request_timeout: Duration::from_secs(30),
             shutdown_grace_period: Duration::from_secs(2),
+            raw_body_limits: RawBodyServerLimits::default(),
             allow_cleartext_network: false,
             allow_unauthenticated_network: false,
         }
@@ -218,6 +220,13 @@ impl ServerConfiguration {
         self.request_timeout = request;
         self.shutdown_grace_period = shutdown_grace_period;
         Ok(self)
+    }
+
+    /// Sets server-wide retained-byte and shutdown-drain limits for raw-body handlers.
+    #[must_use]
+    pub const fn with_raw_body_limits(mut self, limits: RawBodyServerLimits) -> Self {
+        self.raw_body_limits = limits;
+        self
     }
 
     /// Explicitly permits disabled authentication on a non-loopback address.
