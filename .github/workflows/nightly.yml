@@ -44,9 +44,9 @@ jobs:
             ~/.cargo/bin/cargo-nextest
             ~/.cargo/git
             ~/.cargo/registry
-          key: ${{ runner.os }}-rust-1.90.0-nightly-nextest-0.9.128-audit-0.22.2-deny-0.20.2-${{ hashFiles('Cargo.lock') }}
+          key: ${{ runner.os }}-rust-1.90.0-nightly-nextest-0.9.128-audit-0.22.2-deny-0.20.2-cargo-v2-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-rust-1.90.0-nightly-nextest-0.9.128-audit-0.22.2-deny-0.20.2-
+            ${{ runner.os }}-rust-1.90.0-nightly-nextest-0.9.128-audit-0.22.2-deny-0.20.2-cargo-v2-
       - name: Install tools
         run: |
           cargo nextest --version 2>/dev/null | grep -F 'cargo-nextest 0.9.128' > /dev/null || \
@@ -140,9 +140,9 @@ jobs:
           path: |
             ~/.cargo/git
             ~/.cargo/registry
-          key: ${{ runner.os }}-rust-1.90.0-egress-size-${{ hashFiles('Cargo.lock') }}
+          key: ${{ runner.os }}-rust-1.90.0-egress-size-cargo-v2-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-rust-1.90.0-egress-size-
+            ${{ runner.os }}-rust-1.90.0-egress-size-cargo-v2-
       - name: Enforce linked size ceiling
         run: scripts/measure-egress-size.sh
 
@@ -165,9 +165,9 @@ jobs:
           path: |
             ~/.cargo/git
             ~/.cargo/registry
-          key: ${{ runner.os }}-rust-1.85.0-msrv-${{ hashFiles('Cargo.lock') }}
+          key: ${{ runner.os }}-rust-1.85.0-msrv-cargo-v2-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-rust-1.85.0-msrv-
+            ${{ runner.os }}-rust-1.85.0-msrv-cargo-v2-
       - name: Check workspace
         run: cargo +1.85.0 check --workspace --all-targets --all-features --locked
 
