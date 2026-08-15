@@ -406,6 +406,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "bondry-webhook-verify"
+version = "0.1.2"
+dependencies = [
+ "bondry-delivery-store",
+ "http",
+ "sha2",
+ "thiserror",
+]
+
+[[package]]
 name = "borrow-or-share"
 version = "0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
