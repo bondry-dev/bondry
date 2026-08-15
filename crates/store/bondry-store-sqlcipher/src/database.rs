@@ -10,7 +10,7 @@ use thiserror::Error;
 
 use crate::DatabaseKey;
 
-const SCHEMA_VERSION: i64 = 3;
+const SCHEMA_VERSION: i64 = 4;
 
 /// SQLCipher-backed authentication and audit persistence.
 pub struct SqlCipherStore {
@@ -92,6 +92,7 @@ fn migrate(connection: &mut Connection) -> Result<(), SqlCipherStoreError> {
     let version: i64 = connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
     match version {
         SCHEMA_VERSION => Ok(()),
+        3 => migrate_from_version_three(connection),
         2 => migrate_from_version_two(connection),
         1 => migrate_from_version_one(connection),
         0 => migrate_from_empty(connection),
@@ -153,10 +154,10 @@ fn migrate_from_empty(connection: &mut Connection) -> Result<(), SqlCipherStoreE
              adapter_id TEXT NOT NULL,
              capability_id TEXT NOT NULL,
              PRIMARY KEY (principal_id, adapter_id, capability_id)
-         );
-
-         PRAGMA user_version = 3;",
+         );",
     )?;
+    create_delivery_log_table(&transaction)?;
+    transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     transaction.commit()?;
     Ok(())
 }
@@ -172,6 +173,7 @@ fn migrate_from_version_one(connection: &mut Connection) -> Result<(), SqlCipher
          );",
     )?;
     rebuild_audit_table(&transaction)?;
+    create_delivery_log_table(&transaction)?;
     transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     transaction.commit()?;
     Ok(())
@@ -180,9 +182,55 @@ fn migrate_from_version_one(connection: &mut Connection) -> Result<(), SqlCipher
 fn migrate_from_version_two(connection: &mut Connection) -> Result<(), SqlCipherStoreError> {
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
     rebuild_audit_table(&transaction)?;
+    create_delivery_log_table(&transaction)?;
     transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     transaction.commit()?;
     Ok(())
+}
+
+fn migrate_from_version_three(connection: &mut Connection) -> Result<(), SqlCipherStoreError> {
+    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    create_delivery_log_table(&transaction)?;
+    transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+    transaction.commit()?;
+    Ok(())
+}
+
+fn create_delivery_log_table(transaction: &rusqlite::Transaction<'_>) -> rusqlite::Result<()> {
+    transaction.execute_batch(
+        "CREATE TABLE delivery_log (
+             sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+             delivery_id TEXT NOT NULL UNIQUE,
+             route_id TEXT NOT NULL,
+             accepted_at_ms INTEGER NOT NULL CHECK (accepted_at_ms >= 0),
+             attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts BETWEEN 0 AND 65535),
+             state TEXT NOT NULL CHECK (
+                 state IN (
+                     'pending',
+                     'delivered',
+                     'failed',
+                     'lost_on_shutdown',
+                     'unknown_after_crash'
+                 )
+             ),
+             failure_kind TEXT,
+             updated_at_ms INTEGER NOT NULL CHECK (updated_at_ms >= 0),
+             result_category TEXT,
+             result_bytes INTEGER,
+             charged_bytes INTEGER NOT NULL CHECK (charged_bytes = 512),
+             CHECK (
+                 (state = 'failed' AND failure_kind IS NOT NULL)
+                 OR (state != 'failed' AND failure_kind IS NULL)
+             ),
+             CHECK (
+                 (result_category IS NULL AND result_bytes IS NULL)
+                 OR (state != 'pending' AND result_category IS NOT NULL
+                     AND result_bytes IS NOT NULL AND result_bytes >= 0)
+             )
+         );
+         CREATE INDEX delivery_log_by_state ON delivery_log(state, updated_at_ms);
+         CREATE INDEX delivery_log_by_route ON delivery_log(route_id, sequence DESC);",
+    )
 }
 
 fn rebuild_audit_table(transaction: &rusqlite::Transaction<'_>) -> rusqlite::Result<()> {

@@ -226,6 +226,7 @@ dependencies = [
  "base64",
  "bondry-auth",
  "bondry-core",
+ "bondry-delivery-store",
  "futures",
  "getrandom 0.4.3",
  "rusqlite",
