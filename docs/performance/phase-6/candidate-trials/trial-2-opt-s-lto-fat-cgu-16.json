@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "revision": "702735dcb8c1b6d326f85a424c233ecc31833aaa",
+  "profile": "opt-s-lto-fat-cgu-16",
+  "target": "aarch64-apple-darwin",
+  "rustc": "rustc 1.90.0 (1159e78c4 2025-09-14)",
+  "binary_bytes": 1256480,
+  "warmup_requests": 5000,
+  "measured_requests": 50000,
+  "connections": 8,
+  "protocols": [
+    {
+      "protocol": "rest",
+      "latency_ns_p50": 49292,
+      "latency_ns_p95": 74625,
+      "latency_ns_p99": 94000,
+      "throughput_requests_per_second": 148194.16166693156,
+      "rss_baseline_bytes": 3571712,
+      "rss_peak_bytes": 5341184,
+      "rss_peak_delta_bytes": 1769472,
+      "allocations": 450120,
+      "deallocations": 450120,
+      "reallocations": 3,
+      "bytes_allocated": 490094336,
+      "bytes_deallocated": 489176832,
+      "bytes_reallocated": 917504,
+      "allocations_per_request": 9.0024,
+      "allocated_bytes_per_request": 9801.88672
+    },
+    {
+      "protocol": "mcp",
+      "latency_ns_p50": 58958,
+      "latency_ns_p95": 81584,
+      "latency_ns_p99": 90458,
+      "throughput_requests_per_second": 130666.47415139475,
+      "rss_baseline_bytes": 3719168,
+      "rss_peak_bytes": 5046272,
+      "rss_peak_delta_bytes": 1327104,
+      "allocations": 2050118,
+      "deallocations": 2050118,
+      "reallocations": 3,
+      "bytes_allocated": 631847792,
+      "bytes_deallocated": 630930288,
+      "bytes_reallocated": 917504,
+      "allocations_per_request": 41.00236,
+      "allocated_bytes_per_request": 12636.95584
+    }
+  ]
+}

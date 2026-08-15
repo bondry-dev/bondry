@@ -74,8 +74,8 @@ panic = "deny"
 unwrap_used = "deny"
 
 [profile.release]
-opt-level = "z"
+opt-level = 3
 lto = "fat"
-codegen-units = 1
+codegen-units = 16
 strip = "debuginfo"
 panic = "unwind"
