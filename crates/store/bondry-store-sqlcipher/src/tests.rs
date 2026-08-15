@@ -15,18 +15,21 @@ use bondry_core::{
     InvocationId, Principal, PrincipalId, PrincipalKind, StoredGrantPolicy,
 };
 use bondry_delivery_store::{
-    DeliveryId, DeliveryIntent, DeliveryLog, DeliveryLogError, DeliveryOutcome,
-    DeliveryResultCategory, DeliveryResultMetadata, DeliveryState,
+    DedupClaim, DedupClaimPolicy, DedupKey, DedupResolution, DedupState, DedupStore,
+    DedupStoreError, DedupStoreLimits, DeliveryId, DeliveryIntent, DeliveryLog, DeliveryLogError,
+    DeliveryOutcome, DeliveryResultCategory, DeliveryResultMetadata, DeliveryState,
+    MIN_DEDUP_STORE_BYTES, MIN_DEDUP_STORE_RECORDS, MIN_DEDUP_STORE_RETENTION,
     MIN_PERSISTENT_DELIVERY_LOG_BYTES, MIN_PERSISTENT_DELIVERY_LOG_RECORDS,
     MIN_PERSISTENT_DELIVERY_LOG_RETENTION, PersistentDeliveryLogLimits, RouteId, StoreDurability,
+    TrustedDeliveryIdHash, VerifierNamespace,
 };
 use futures::executor::block_on;
 use serde_json::json;
 use tempfile::TempDir;
 
 use crate::{
-    AuditQueryLimit, DatabaseKey, DatabaseKeyError, SqlCipherDeliveryLog, SqlCipherStore,
-    SqlCipherStoreError,
+    AuditQueryLimit, DatabaseKey, DatabaseKeyError, SqlCipherDedupStore, SqlCipherDeliveryLog,
+    SqlCipherStore, SqlCipherStoreError,
 };
 
 fn database_path(directory: &TempDir) -> std::path::PathBuf {
@@ -45,6 +48,16 @@ fn delivery_intent(id: impl Into<String>, timestamp: u64) -> DeliveryIntent {
         DeliveryId::new(id).unwrap_or_else(|error| unreachable!("valid delivery ID: {error}")),
         timestamp,
     )
+}
+
+fn dedup_key(index: u32) -> Result<DedupKey, Box<dyn std::error::Error>> {
+    let mut hash = [0_u8; 32];
+    hash[..4].copy_from_slice(&index.to_be_bytes());
+    Ok(DedupKey::new(
+        RouteId::new("webhook.route")?,
+        VerifierNamespace::new("provider:hmac:v1")?,
+        TrustedDeliveryIdHash::from_bytes(hash),
+    ))
 }
 
 #[test]
@@ -72,8 +85,20 @@ fn encrypts_the_database_and_rejects_the_wrong_key() -> Result<(), Box<dyn std::
         DeliveryId::new("private.delivery.marker")?,
         1,
     ))?;
+    let dedup = SqlCipherDedupStore::new(store.clone(), DedupStoreLimits::default());
+    let dedup_marker = DedupKey::new(
+        RouteId::new("private.dedup.route.marker")?,
+        VerifierNamespace::new("private.dedup.namespace.marker")?,
+        TrustedDeliveryIdHash::from_bytes([0x5a; 32]),
+    );
+    assert_eq!(
+        dedup.claim(dedup_marker.clone(), DedupClaimPolicy::RetainCompleted, 1,)?,
+        DedupClaim::Claimed
+    );
+    dedup.complete(&dedup_marker, 2)?;
     assert!(manager.authenticate(issued.secret().expose()).is_ok());
     drop(delivery_log);
+    drop(dedup);
     drop(manager);
     drop(store);
 
@@ -96,6 +121,8 @@ fn encrypts_the_database_and_rejects_the_wrong_key() -> Result<(), Box<dyn std::
         b"private.capability".as_slice(),
         b"private.route.marker".as_slice(),
         b"private.delivery.marker".as_slice(),
+        b"private.dedup.route.marker".as_slice(),
+        b"private.dedup.namespace.marker".as_slice(),
         issued.secret().expose().as_bytes(),
     ] {
         assert!(!contains_bytes(&persisted, marker));
@@ -309,6 +336,7 @@ fn schema_contains_no_credential_or_payload_columns() -> Result<(), Box<dyn std:
         "audit_events",
         "grants",
         "delivery_log",
+        "webhook_dedup",
     ] {
         let mut statement = connection.prepare(&format!("PRAGMA table_info({table})"))?;
         let names = statement
@@ -377,6 +405,7 @@ fn migrates_version_one_without_losing_authentication_state()
     store.connection()?.execute_batch(
         "DROP TABLE grants;
          DROP TABLE delivery_log;
+         DROP TABLE webhook_dedup;
          PRAGMA user_version = 1;",
     )?;
     drop(manager);
@@ -410,7 +439,10 @@ fn migrates_version_two_without_losing_audit_events() -> Result<(), Box<dyn std:
         AuditOutcome::Succeeded,
     ))?;
     store.connection()?.pragma_update(None, "user_version", 2)?;
-    store.connection()?.execute("DROP TABLE delivery_log", [])?;
+    store.connection()?.execute_batch(
+        "DROP TABLE delivery_log;
+         DROP TABLE webhook_dedup;",
+    )?;
     drop(store);
 
     let store = SqlCipherStore::open(&path, &key)?;
@@ -443,6 +475,7 @@ fn migrates_version_three_and_adds_delivery_persistence() -> Result<(), Box<dyn 
     let store = SqlCipherStore::open(&path, &key)?;
     store.connection()?.execute_batch(
         "DROP TABLE delivery_log;
+         DROP TABLE webhook_dedup;
          PRAGMA user_version = 3;",
     )?;
     drop(store);
@@ -455,6 +488,28 @@ fn migrates_version_three_and_adds_delivery_persistence() -> Result<(), Box<dyn 
     assert_eq!(
         log.delivery(&id)?.map(|record| record.state()),
         Some(DeliveryState::Pending)
+    );
+    Ok(())
+}
+
+#[test]
+fn migrates_version_four_and_adds_webhook_replay_persistence()
+-> Result<(), Box<dyn std::error::Error>> {
+    let directory = TempDir::new()?;
+    let path = database_path(&directory);
+    let key = fixed_key(30);
+    let store = SqlCipherStore::open(&path, &key)?;
+    store.connection()?.execute_batch(
+        "DROP TABLE webhook_dedup;
+         PRAGMA user_version = 4;",
+    )?;
+    drop(store);
+
+    let store = Arc::new(SqlCipherStore::open(&path, &key)?);
+    let dedup = SqlCipherDedupStore::new(store, DedupStoreLimits::default());
+    assert_eq!(
+        dedup.claim(dedup_key(1)?, DedupClaimPolicy::RetainCompleted, 100,)?,
+        DedupClaim::Claimed
     );
     Ok(())
 }
@@ -598,6 +653,192 @@ fn independent_connections_admit_one_delivery_intent() -> Result<(), Box<dyn std
         results
             .iter()
             .filter(|result| **result == Err(DeliveryLogError::Conflict))
+            .count(),
+        1
+    );
+    Ok(())
+}
+
+#[test]
+fn persists_deduplication_transitions_and_allows_reentrant_administration()
+-> Result<(), Box<dyn std::error::Error>> {
+    let store = Arc::new(SqlCipherStore::open_in_memory(&fixed_key(31))?);
+    let dedup = SqlCipherDedupStore::new(store, DedupStoreLimits::default());
+    let key = dedup_key(1)?;
+
+    assert_eq!(dedup.durability(), StoreDurability::Persistent);
+    assert_eq!(
+        dedup.claim(key.clone(), DedupClaimPolicy::RetainCompleted, 100,)?,
+        DedupClaim::Claimed
+    );
+    assert_eq!(
+        dedup.claim(key.clone(), DedupClaimPolicy::ExpireCompleted, 101,)?,
+        DedupClaim::Duplicate(DedupState::InFlight)
+    );
+    dedup.mark_unknown(&key, 102)?;
+    let mut resolution = None;
+    dedup.visit_unknown(&mut |record| {
+        resolution = Some(dedup.resolve_unknown(record.key(), DedupResolution::RetryAllowed, 103));
+        false
+    })?;
+    assert_eq!(resolution, Some(Ok(())));
+    assert!(dedup.record(&key)?.is_none());
+
+    assert_eq!(
+        dedup.claim(key.clone(), DedupClaimPolicy::RetainCompleted, 104,)?,
+        DedupClaim::Claimed
+    );
+    dedup.complete(&key, 105)?;
+    assert_eq!(
+        dedup.claim(key.clone(), DedupClaimPolicy::ExpireCompleted, 106,)?,
+        DedupClaim::Duplicate(DedupState::Completed)
+    );
+    assert_eq!(dedup.clear_completed_before(106)?, 1);
+    assert!(dedup.record(&key)?.is_none());
+    Ok(())
+}
+
+#[test]
+fn expires_only_eligible_completed_tombstones_and_never_unknown_records()
+-> Result<(), Box<dyn std::error::Error>> {
+    let limits = DedupStoreLimits::new(
+        MIN_DEDUP_STORE_RECORDS,
+        MIN_DEDUP_STORE_BYTES,
+        MIN_DEDUP_STORE_RETENTION,
+    )?;
+    let store = Arc::new(SqlCipherStore::open_in_memory(&fixed_key(32))?);
+    let dedup = SqlCipherDedupStore::new(store, limits);
+    let retained = dedup_key(1)?;
+    let expiring = dedup_key(2)?;
+    let unknown = dedup_key(3)?;
+    for (key, policy) in [
+        (retained.clone(), DedupClaimPolicy::RetainCompleted),
+        (expiring.clone(), DedupClaimPolicy::ExpireCompleted),
+        (unknown.clone(), DedupClaimPolicy::ExpireCompleted),
+    ] {
+        assert_eq!(dedup.claim(key, policy, 0)?, DedupClaim::Claimed);
+    }
+    dedup.complete(&retained, 0)?;
+    dedup.complete(&expiring, 0)?;
+    dedup.mark_unknown(&unknown, 0)?;
+    let after_retention = MIN_DEDUP_STORE_RETENTION.as_millis() as u64 + 1;
+    assert_eq!(
+        dedup.claim(
+            dedup_key(4)?,
+            DedupClaimPolicy::ExpireCompleted,
+            after_retention,
+        )?,
+        DedupClaim::Claimed
+    );
+
+    assert_eq!(
+        dedup.record(&retained)?.map(|record| record.state()),
+        Some(DedupState::Completed)
+    );
+    assert!(dedup.record(&expiring)?.is_none());
+    assert_eq!(
+        dedup.record(&unknown)?.map(|record| record.state()),
+        Some(DedupState::Unknown)
+    );
+    Ok(())
+}
+
+#[test]
+fn recovers_in_flight_deduplication_as_unknown_after_restart()
+-> Result<(), Box<dyn std::error::Error>> {
+    let directory = TempDir::new()?;
+    let path = database_path(&directory);
+    let key = fixed_key(33);
+    let delivery = dedup_key(1)?;
+    let store = Arc::new(SqlCipherStore::open(&path, &key)?);
+    let dedup = SqlCipherDedupStore::new(store, DedupStoreLimits::default());
+    dedup.claim(delivery.clone(), DedupClaimPolicy::RetainCompleted, 100)?;
+    drop(dedup);
+
+    let store = Arc::new(SqlCipherStore::open(&path, &key)?);
+    let dedup = SqlCipherDedupStore::new(store, DedupStoreLimits::default());
+    assert_eq!(dedup.recover_in_flight(200)?, 1);
+    assert_eq!(
+        dedup.record(&delivery)?.map(|record| record.state()),
+        Some(DedupState::Unknown)
+    );
+    assert_eq!(dedup.recover_in_flight(300)?, 0);
+    Ok(())
+}
+
+#[test]
+fn deduplication_capacity_exhaustion_fails_closed() -> Result<(), Box<dyn std::error::Error>> {
+    let limits = DedupStoreLimits::new(
+        MIN_DEDUP_STORE_RECORDS,
+        MIN_DEDUP_STORE_BYTES,
+        MIN_DEDUP_STORE_RETENTION,
+    )?;
+    let store = Arc::new(SqlCipherStore::open_in_memory(&fixed_key(34))?);
+    let dedup = SqlCipherDedupStore::new(store, limits);
+    for index in 0..MIN_DEDUP_STORE_RECORDS {
+        assert_eq!(
+            dedup.claim(dedup_key(index)?, DedupClaimPolicy::RetainCompleted, 0,)?,
+            DedupClaim::Claimed
+        );
+    }
+    assert_eq!(
+        dedup.claim(
+            dedup_key(MIN_DEDUP_STORE_RECORDS)?,
+            DedupClaimPolicy::RetainCompleted,
+            0,
+        ),
+        Err(DedupStoreError::CapacityExhausted)
+    );
+    Ok(())
+}
+
+#[test]
+fn independent_connections_admit_one_deduplication_claim() -> Result<(), Box<dyn std::error::Error>>
+{
+    let directory = TempDir::new()?;
+    let path = database_path(&directory);
+    let key = fixed_key(35);
+    let first = SqlCipherDedupStore::new(
+        Arc::new(SqlCipherStore::open(&path, &key)?),
+        DedupStoreLimits::default(),
+    );
+    let second = SqlCipherDedupStore::new(
+        Arc::new(SqlCipherStore::open(&path, &key)?),
+        DedupStoreLimits::default(),
+    );
+    let barrier = Arc::new(Barrier::new(3));
+    let mut handles = Vec::new();
+    for dedup in [first, second] {
+        let barrier = Arc::clone(&barrier);
+        handles.push(std::thread::spawn(move || {
+            barrier.wait();
+            dedup.claim(
+                dedup_key(1).map_err(|_| DedupStoreError::Unavailable)?,
+                DedupClaimPolicy::RetainCompleted,
+                100,
+            )
+        }));
+    }
+    barrier.wait();
+    let mut results = Vec::new();
+    for handle in handles {
+        results.push(
+            handle
+                .join()
+                .map_err(|_| std::io::Error::other("deduplication thread panicked"))?,
+        );
+    }
+    assert_eq!(
+        results
+            .iter()
+            .filter(|result| **result == Ok(DedupClaim::Claimed))
+            .count(),
+        1
+    );
+    assert_eq!(
+        results
+            .iter()
+            .filter(|result| **result == Ok(DedupClaim::Duplicate(DedupState::InFlight)))
             .count(),
         1
     );

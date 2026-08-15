@@ -15,8 +15,8 @@ use bondry_core::{
     PrincipalKind,
 };
 use bondry_delivery_store::{
-    DedupClaim, DedupKey, DedupRecord, DedupResolution, DedupState, DedupStore, DedupStoreError,
-    RouteId, StoreDurability, VerifierNamespace,
+    DedupClaim, DedupClaimPolicy, DedupKey, DedupRecord, DedupResolution, DedupState, DedupStore,
+    DedupStoreError, RouteId, StoreDurability, VerifierNamespace,
 };
 use bondry_webhook_verify::{
     IdentityGuarantee, PeerAddress, TrustedDeliveryIdentity, VerificationError, VerificationHeader,
@@ -120,6 +120,7 @@ struct MemoryDedupStore {
     durability: StoreDurability,
     records: Mutex<HashMap<DedupKey, DedupState>>,
     claim_error: Mutex<Option<DedupStoreError>>,
+    policies: Mutex<Vec<DedupClaimPolicy>>,
 }
 
 impl MemoryDedupStore {
@@ -128,6 +129,7 @@ impl MemoryDedupStore {
             durability,
             records: Mutex::new(HashMap::new()),
             claim_error: Mutex::new(None),
+            policies: Mutex::new(Vec::new()),
         }
     }
 
@@ -137,6 +139,10 @@ impl MemoryDedupStore {
 
     fn fail_claim_with(&self, error: DedupStoreError) {
         *lock(&self.claim_error) = Some(error);
+    }
+
+    fn policies(&self) -> Vec<DedupClaimPolicy> {
+        lock(&self.policies).clone()
     }
 }
 
@@ -148,8 +154,10 @@ impl DedupStore for MemoryDedupStore {
     fn claim(
         &self,
         key: DedupKey,
+        policy: DedupClaimPolicy,
         _updated_at_unix_ms: u64,
     ) -> Result<DedupClaim, DedupStoreError> {
+        lock(&self.policies).push(policy);
         if let Some(error) = *lock(&self.claim_error) {
             return Err(error);
         }
@@ -221,6 +229,30 @@ impl DedupStore for MemoryDedupStore {
         }
         Ok(())
     }
+
+    fn visit_unknown(
+        &self,
+        visitor: &mut dyn FnMut(&DedupRecord) -> bool,
+    ) -> Result<(), DedupStoreError> {
+        let records = lock(&self.records)
+            .iter()
+            .filter(|(_, state)| **state == DedupState::Unknown)
+            .map(|(key, state)| DedupRecord::from_stored_parts(key.clone(), *state, 0))
+            .collect::<Vec<_>>();
+        for record in &records {
+            if !visitor(record) {
+                break;
+            }
+        }
+        Ok(())
+    }
+
+    fn clear_completed_before(&self, _updated_before_unix_ms: u64) -> Result<u64, DedupStoreError> {
+        let mut records = lock(&self.records);
+        let before = records.len();
+        records.retain(|_, state| *state != DedupState::Completed);
+        Ok((before - records.len()) as u64)
+    }
 }
 
 #[test]
@@ -251,6 +283,13 @@ fn fixes_principal_adapter_and_capability_and_deduplicates_dispatch()
     assert_eq!(first.status(), StatusCode::NO_CONTENT);
     assert_eq!(duplicate.status(), StatusCode::NO_CONTENT);
     assert_eq!(store.state(&key), Some(DedupState::Completed));
+    assert_eq!(
+        store.policies(),
+        [
+            DedupClaimPolicy::RetainCompleted,
+            DedupClaimPolicy::RetainCompleted,
+        ]
+    );
     let invocations = lock(&service.invocations);
     assert_eq!(invocations.len(), 1);
     assert_eq!(invocations[0].adapter, "webhook");

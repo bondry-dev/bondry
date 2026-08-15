@@ -132,6 +132,15 @@ pub enum DedupClaim {
     Duplicate(DedupState),
 }
 
+/// Retention behavior fixed atomically with a newly claimed delivery.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DedupClaimPolicy {
+    /// Completed state remains until an explicit administration action.
+    RetainCompleted,
+    /// Completed state may expire after retention because repetition is safe or freshness rejects it.
+    ExpireCompleted,
+}
+
 /// Explicit administration decision for an uncertain dispatch.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DedupResolution {
@@ -146,8 +155,13 @@ pub trait DedupStore: Send + Sync {
     /// Reports whether replay state survives process termination.
     fn durability(&self) -> StoreDurability;
 
-    /// Atomically claims a verified identity or reports its existing state.
-    fn claim(&self, key: DedupKey, updated_at_unix_ms: u64) -> Result<DedupClaim, DedupStoreError>;
+    /// Atomically claims a verified identity and its safe retention policy or reports existing state.
+    fn claim(
+        &self,
+        key: DedupKey,
+        policy: DedupClaimPolicy,
+        updated_at_unix_ms: u64,
+    ) -> Result<DedupClaim, DedupStoreError>;
 
     /// Atomically marks an in-flight dispatch completed.
     fn complete(&self, key: &DedupKey, updated_at_unix_ms: u64) -> Result<(), DedupStoreError>;
@@ -171,6 +185,15 @@ pub trait DedupStore: Send + Sync {
         resolution: DedupResolution,
         updated_at_unix_ms: u64,
     ) -> Result<(), DedupStoreError>;
+
+    /// Visits unknown records in key order without holding a store lock during callbacks.
+    fn visit_unknown(
+        &self,
+        visitor: &mut dyn FnMut(&DedupRecord) -> bool,
+    ) -> Result<(), DedupStoreError>;
+
+    /// Explicitly removes completed records before a host-selected cutoff, never unknown records.
+    fn clear_completed_before(&self, updated_before_unix_ms: u64) -> Result<u64, DedupStoreError>;
 }
 
 /// Stable, non-sensitive replay-storage failure categories.

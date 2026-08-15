@@ -6,8 +6,8 @@ mod identifier;
 mod limits;
 
 pub use dedup::{
-    DedupClaim, DedupKey, DedupRecord, DedupResolution, DedupState, DedupStore, DedupStoreError,
-    TrustedDeliveryIdHash,
+    DedupClaim, DedupClaimPolicy, DedupKey, DedupRecord, DedupResolution, DedupState, DedupStore,
+    DedupStoreError, TrustedDeliveryIdHash,
 };
 pub use delivery::{
     DeliveryFailure, DeliveryIntent, DeliveryLog, DeliveryLogError, DeliveryOutcome,
@@ -19,12 +19,15 @@ pub use identifier::{
     PersistenceIdentifierError, RouteId, VerifierNamespace,
 };
 pub use limits::{
+    DEFAULT_DEDUP_STORE_BYTES, DEFAULT_DEDUP_STORE_RECORDS, DEFAULT_DEDUP_STORE_RETENTION,
     DEFAULT_PERSISTENT_DELIVERY_LOG_BYTES, DEFAULT_PERSISTENT_DELIVERY_LOG_RECORDS,
-    DEFAULT_PERSISTENT_DELIVERY_LOG_RETENTION, MAX_PERSISTENT_DELIVERY_LOG_BYTES,
-    MAX_PERSISTENT_DELIVERY_LOG_RECORDS, MAX_PERSISTENT_DELIVERY_LOG_RETENTION,
-    MIN_PERSISTENT_DELIVERY_LOG_BYTES, MIN_PERSISTENT_DELIVERY_LOG_RECORDS,
-    MIN_PERSISTENT_DELIVERY_LOG_RETENTION, PersistentDeliveryLogLimits,
-    PersistentDeliveryLogLimitsError,
+    DEFAULT_PERSISTENT_DELIVERY_LOG_RETENTION, DedupStoreLimits, DedupStoreLimitsError,
+    MAX_DEDUP_STORE_BYTES, MAX_DEDUP_STORE_RECORDS, MAX_DEDUP_STORE_RETENTION,
+    MAX_PERSISTENT_DELIVERY_LOG_BYTES, MAX_PERSISTENT_DELIVERY_LOG_RECORDS,
+    MAX_PERSISTENT_DELIVERY_LOG_RETENTION, MIN_DEDUP_STORE_BYTES, MIN_DEDUP_STORE_RECORDS,
+    MIN_DEDUP_STORE_RETENTION, MIN_PERSISTENT_DELIVERY_LOG_BYTES,
+    MIN_PERSISTENT_DELIVERY_LOG_RECORDS, MIN_PERSISTENT_DELIVERY_LOG_RETENTION,
+    PersistentDeliveryLogLimits, PersistentDeliveryLogLimitsError,
 };
 
 /// Whether storage survives the current process.
