@@ -1,0 +1,19 @@
+[package]
+name = "bondry-webhook-ingress"
+description = "Sans-I/O verified webhook route adapter for Bondry"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+license.workspace = true
+
+[dependencies]
+bondry-core = { version = "0.1.2", path = "../../contract/bondry-core" }
+bondry-delivery-store = { version = "0.1.2", path = "../../contract/bondry-delivery-store" }
+bondry-webhook-verify = { version = "0.1.2", path = "../bondry-webhook-verify" }
+http.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

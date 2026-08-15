@@ -155,6 +155,9 @@ pub trait DedupStore: Send + Sync {
     /// Atomically marks an in-flight dispatch uncertain.
     fn mark_unknown(&self, key: &DedupKey, updated_at_unix_ms: u64) -> Result<(), DedupStoreError>;
 
+    /// Atomically removes a claim after a known pre-dispatch retryable failure.
+    fn release_claim(&self, key: &DedupKey) -> Result<(), DedupStoreError>;
+
     /// Loads one replay-protection record.
     fn record(&self, key: &DedupKey) -> Result<Option<DedupRecord>, DedupStoreError>;
 

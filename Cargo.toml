@@ -16,6 +16,7 @@ members = [
     "crates/ffi/bondry-runtime-ffi",
     "crates/proto/bondry-mcp-proto",
     "crates/proto/bondry-rest-proto",
+    "crates/proto/bondry-webhook-ingress",
     "crates/proto/bondry-webhook-verify",
     "crates/store/bondry-store-sqlcipher",
     "itests/server-bench",
