@@ -1,6 +1,6 @@
 # Local HTTP
 
-`bondry-http-server` provides one reusable HTTP/1.1 runtime for local protocols. REST and MCP can be mounted independently while sharing transport authentication, origin validation, rate limiting, body bounds, timeouts, connection limits, and shutdown ownership.
+`bondry-http-server` provides one reusable HTTP/1.1 runtime for local protocols. REST and MCP can be mounted independently while sharing transport authentication, origin validation, rate limiting, body bounds, timeouts, connection limits, and shutdown ownership. A server may also start with no REST or MCP adapter so an optional add-on can register a bounded raw-body route.
 
 ## Security Defaults
 
@@ -31,6 +31,10 @@ This runtime does not terminate TLS. Any non-loopback bind requires `allowing_cl
 
 Hosts should keep the default loopback bind. If network access is required, a host should place Bondry behind a trusted TLS terminator or provide a future secure transport implementation instead of transmitting bearer credentials over cleartext HTTP.
 
+Webhook signatures make byte preservation part of the proxy trust boundary.
+See [Webhook ingress](webhook-ingress.md) for the required TLS-termination and
+raw-body behavior.
+
 ## Rate Limiting
 
 Authenticated requests use an independent sliding window for each principal. Rejected authentication attempts use a separate sliding window for each peer IP address, limiting credential guessing without forcing all valid local clients to share one quota. Rate-limited responses include `Retry-After`.
@@ -38,3 +42,17 @@ Authenticated requests use an independent sliding window for each principal. Rej
 ## Protocol Boundary
 
 The runtime selects an enabled protocol by path before authentication. A disabled or unknown route therefore remains a `404` rather than presenting an authentication challenge. Once authenticated, the pure protocol handler receives a bounded in-memory request and the authenticated principal. Protocol parsing, method handling, content negotiation, and error mapping remain protocol responsibilities.
+
+## Raw-body registration
+
+The raw-body seam is protocol-neutral and versioned. A registered generation
+declares one exact method/path pair, selected headers, body and retained-memory
+bounds, and pre-authentication rate limits. The server matches and rate-limits
+before reading the body, reserves from an 8 MiB aggregate retained-byte budget,
+and passes callback-scoped borrows to the handler. REST and MCP keep their
+existing authentication path and do not see raw webhook credentials.
+
+Disabling a generation closes admission atomically and drains accepted work.
+While draining, its path cannot fall through to another protocol. Handler
+contexts are released only after detachment and the last asynchronous
+completion. The server accepts at most 16 registered raw-body handlers.

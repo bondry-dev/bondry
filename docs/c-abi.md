@@ -1,6 +1,6 @@
 # C ABI
 
-`bondry-runtime-ffi` is the language-neutral runtime boundary. Its canonical header is `bindings/c/include/bondry.h`. The optional `bondry-local-server-ffi` has its own `bindings/c/include/bondry_local_server.h` header and calls the runtime exclusively through the runtime ABI.
+`bondry-runtime-ffi` is the language-neutral runtime boundary. Its canonical header is `bindings/c/include/bondry.h`. The optional `bondry-local-server-ffi` has its own `bindings/c/include/bondry_local_server.h` header and calls the runtime exclusively through the runtime ABI. Optional webhook composition is published separately in `bindings/c/include/bondry_webhook_ingress.h`.
 
 ## Version One
 
@@ -23,6 +23,8 @@ It also exposes administrative operations without adding transport or applicatio
 - Discover complete descriptors authorized for a principal and adapter
 - Authenticate and asynchronously dispatch protocol-neutral JSON invocations
 - Dispatch trusted operating-system invocations with an explicit platform principal
+- Retain a versioned automation-service vtable for add-ons without exposing the runtime handle
+- Retain the runtime store's versioned persistent delivery-deduplication vtable
 
 The runtime store is an opaque, reference-counted handle. Foreign callers never allocate it, inspect its layout, or receive a Rust reference. Opening and retaining each transfer one independent ownership unit; closing consumes one unit. A non-null ownership unit must be closed exactly once and must not be closed concurrently with an operation using that same unit.
 
@@ -52,9 +54,9 @@ An `OK` return accepts the dispatch and guarantees exactly one result callback, 
 
 ## Local Server
 
-Local-server symbols are not present in `BondryRuntime`. A host links `BondryLocalServer` only when it needs HTTP, REST, or MCP. Server startup retains its own runtime ownership unit, so the caller and server have independent lifetimes.
+Local-server symbols are not present in `BondryRuntime`. A host links `BondryLocalServer` only when it needs HTTP, REST, MCP, or a registered raw-body add-on. Server startup retains its own runtime ownership unit, so the caller and server have independent lifetimes.
 
-`bondry_server_start_v1` accepts a bounded, versioned JSON configuration and returns an opaque server handle plus the actual bound IP address and port. Port zero requests an operating-system-selected port. The configuration selects REST, MCP, or both; bearer authentication remains the default at the Swift layer. Disabled authentication requires an explicit principal so grants and audit events remain attributable.
+`bondry_server_start_v1` accepts a bounded, versioned JSON configuration and returns an opaque server handle plus the actual bound IP address and port. Port zero requests an operating-system-selected port. The configuration selects REST, MCP, both, or neither; an empty set supports separately registered raw-body routes. Bearer authentication remains the default at the Swift layer. Disabled authentication requires an explicit principal so grants and audit events remain attributable.
 
 The configuration includes the bind address, exact browser origins, rate limits, body and connection limits, timeouts, network-risk acknowledgements, and MCP implementation metadata. Unknown fields, duplicate adapters, inconsistent authentication fields, invalid limits, and MCP metadata without an enabled MCP adapter are rejected. Syntax errors return `BONDRY_STATUS_INVALID_JSON`; a syntactically valid but invalid configuration returns `BONDRY_STATUS_INVALID_ARGUMENT`.
 
@@ -84,12 +86,38 @@ Configuration version one has this complete shape:
   "headerReadTimeoutMilliseconds": 5000,
   "requestTimeoutMilliseconds": 30000,
   "shutdownGracePeriodMilliseconds": 2000,
+  "rawBodyLimits": null,
   "allowCleartextNetwork": false,
   "allowUnauthenticatedNetwork": false
 }
 ```
 
 Disabled authentication uses `mode: "disabled"` with a validated `principalId` and a `principalKind` of `user`, `application`, or `system`. Bearer mode requires both principal fields to be null. `mcpServer` must be null when MCP is disabled and must contain validated implementation metadata when MCP is enabled.
+
+`rawBodyLimits` may be omitted or null to use the 8 MiB aggregate
+retained-byte budget and 10-second shutdown drain deadline. A non-null value
+contains `aggregateRetainedBytes` and `shutdownDrainDeadlineMilliseconds`.
+
+## Raw-body add-ons
+
+`bondry_server_raw_body_handler_register_v1` installs one versioned immutable
+handler generation. Its descriptor fixes the method, exact path, selected
+headers, request and retained-memory limits, pre-authentication rate limits,
+and thread-safe retain/release/completion callbacks. Request bytes are borrowed
+only for the callback; asynchronous work must copy what it retains and complete
+exactly once.
+
+Disable closes admission before waiting for a bounded drain. A timeout leaves
+the generation draining and its context live. Release consumes the registration
+handle, closes admission, and allows accepted work to retain the generation
+until completion.
+
+`bondry-webhook-ingress-ffi` consumes retained automation, deduplication, and
+secret-provider vtables and produces one raw-body handler descriptor. It has no
+Rust dependency on either runtime or local-server FFI implementation. The
+configuration contains only fixed route metadata and secret references. See
+[Webhook ingress](webhook-ingress.md) for its complete security and deployment
+contract.
 
 The server retains the runtime handle before returning. The caller may therefore close its own handle after successful startup. Registration, unregistration, token revocation, client disablement, and grant changes take effect on subsequent requests without restarting the server.
 
@@ -112,7 +140,7 @@ Rust unwinding is caught at each fallible ABI entry point and maps to `BONDRY_ST
 
 `Bondry` is the native Swift runtime wrapper. It validates the linked ABI version, accepts only file URLs, maps every public runtime status, closes its handle during deinitialization, and never exposes the opaque pointer outside the package. It provides Swift models for clients, non-secret token metadata, principals, exact capability grants, audit events, complete capability descriptors, and dispatch while transparently retrying queries that grow between calls.
 
-`BondryLocalServer` owns server configuration, lifecycle, endpoints, and server-specific errors. It can access the runtime handle only through Swift package access and the public retained-handle ABI; server concepts are absent from the `Bondry` product.
+`BondryLocalServer` owns server configuration, lifecycle, endpoints, and server-specific errors. It can access the runtime handle only through Swift package access and the public retained-handle ABI; server concepts are absent from the `Bondry` product. `BondryWebhookIngress` is a separate product that composes retained runtime services with a raw-body generation and exposes bounded asynchronous disable plus replay administration.
 
 Swift hosts register `@Sendable async throws` capability handlers and dispatch JSON as `Data`. The wrapper copies every borrowed C invocation before starting Swift concurrency work and retains each handler until the C release callback. Unknown Swift errors become the fixed `handler_failed` code; only an explicit `BondryCapabilityHandlerError` code crosses the trust boundary. Dispatch uses checked continuations and supports completion before the C entry point returns or later from another thread. A Swift task cancelled before dispatch does not start it. Once the C core accepts an invocation, it runs through handler completion and required auditing even if the waiting task is cancelled later.
 
