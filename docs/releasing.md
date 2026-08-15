@@ -6,7 +6,8 @@ Bondry uses GitHub Actions for release preparation and publication. No personal 
 
 Before the first release:
 
-1. Make `main` the default branch and require the CI workflow to pass before merge.
+1. Make `main` the default branch and create a branch ruleset that requires pull
+   requests and the `CI gate` status check before merge.
 2. Create a GitHub environment named `release` with a required reviewer.
 3. Allow GitHub Actions to request read and write repository permissions.
 4. Make the repository public so the release can receive a public Sigstore provenance attestation.
