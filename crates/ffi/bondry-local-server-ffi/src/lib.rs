@@ -1,5 +1,7 @@
 #![doc = "Versioned C ABI for Bondry local REST and MCP servers."]
 
+mod raw_body;
+
 use std::{
     ffi::c_void,
     net::IpAddr,
@@ -19,13 +21,16 @@ use bondry_core::{
 };
 use bondry_http_server::{
     Authentication, AuthenticationError, BearerAuthenticator, BearerTokenVerifier, LocalHttpServer,
-    MountedProtocol, OriginPolicy, RateLimits, ServerConfiguration, ServerStartError,
+    MountedProtocol, OriginPolicy, RateLimits, RawBodyServerLimits, ServerConfiguration,
+    ServerStartError,
 };
 use bondry_mcp_proto::{McpAdapter, McpServerInfo};
 use bondry_rest_proto::RestAdapter;
 use serde::Deserialize;
 use serde_json::Value;
 use tokio::sync::oneshot;
+
+pub use raw_body::*;
 
 /// The first JSON server-configuration contract version.
 pub const BONDRY_SERVER_CONFIGURATION_VERSION_V1: u32 = 1;
@@ -134,7 +139,7 @@ unsafe extern "C" {
     ) -> i32;
 }
 
-struct ServerHandle {
+pub(crate) struct ServerHandle {
     server: LocalHttpServer,
 }
 
@@ -362,6 +367,7 @@ struct InputConfiguration {
     header_read_timeout_milliseconds: u64,
     request_timeout_milliseconds: u64,
     shutdown_grace_period_milliseconds: u64,
+    raw_body_limits: Option<InputRawBodyLimits>,
     allow_cleartext_network: bool,
     allow_unauthenticated_network: bool,
 }
@@ -402,6 +408,13 @@ struct InputMcpServer {
     name: String,
     title: Option<String>,
     version: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct InputRawBodyLimits {
+    aggregate_retained_bytes: usize,
+    shutdown_drain_deadline_milliseconds: u64,
 }
 
 #[derive(Deserialize)]
@@ -553,6 +566,15 @@ fn start_server(
             Duration::from_millis(input.shutdown_grace_period_milliseconds),
         )
         .map_err(|_| BONDRY_STATUS_INVALID_ARGUMENT)?;
+    if let Some(raw_body_limits) = input.raw_body_limits.as_ref() {
+        configuration = configuration.with_raw_body_limits(
+            RawBodyServerLimits::new(
+                raw_body_limits.aggregate_retained_bytes,
+                Duration::from_millis(raw_body_limits.shutdown_drain_deadline_milliseconds),
+            )
+            .map_err(|_| BONDRY_STATUS_INVALID_ARGUMENT)?,
+        );
+    }
     if input.allow_cleartext_network {
         configuration = configuration.allowing_cleartext_network();
     }
@@ -787,10 +809,12 @@ mod tests {
         net::{IpAddr, Ipv4Addr, SocketAddr, TcpStream},
         ptr,
         sync::{
-            Arc,
-            atomic::{AtomicUsize, Ordering},
+            Arc, Mutex,
+            atomic::{AtomicBool, AtomicUsize, Ordering},
+            mpsc,
         },
-        time::Duration,
+        thread,
+        time::{Duration, Instant},
     };
 
     use bondry_runtime_ffi::{
@@ -804,9 +828,17 @@ mod tests {
     use tempfile::tempdir;
 
     use super::{
+        BONDRY_RAW_BODY_HANDLER_ABI_VERSION_V1, BONDRY_RAW_BODY_LIFECYCLE_DETACHED_V1,
+        BONDRY_RAW_BODY_LIFECYCLE_DRAINING_V1, BONDRY_RAW_BODY_METHOD_POST_V1,
         BONDRY_STATUS_INVALID_ARGUMENT, BONDRY_STATUS_INVALID_JSON, BONDRY_STATUS_NULL_POINTER,
-        BONDRY_STATUS_PAYLOAD_TOO_LARGE, BONDRY_STATUS_SERVER_BIND, BondryServerAddressV1,
-        BondryServerHandle, BondryStoreHandle, bondry_server_start_v1, bondry_server_stop_v1,
+        BONDRY_STATUS_PAYLOAD_TOO_LARGE, BONDRY_STATUS_RAW_BODY_DRAIN_TIMED_OUT,
+        BONDRY_STATUS_SERVER_BIND, BONDRY_STATUS_SERVER_STOP, BondryRawBodyByteSliceV1,
+        BondryRawBodyCompletionV1, BondryRawBodyHandlerDescriptorV1,
+        BondryRawBodyRegistrationHandle, BondryRawBodyRequestV1, BondryRawBodyResponseV1,
+        BondryServerAddressV1, BondryServerHandle, BondryStoreHandle,
+        bondry_server_raw_body_handler_disable_v1, bondry_server_raw_body_handler_lifecycle_v1,
+        bondry_server_raw_body_handler_register_v1, bondry_server_raw_body_handler_release_v1,
+        bondry_server_start_v1, bondry_server_stop_v1,
     };
 
     const READ_ONLY_EFFECT: u32 = 1;
@@ -1030,6 +1062,338 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn raw_body_abi_drains_times_out_releases_and_reregisters()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let store = TestStore::open()?;
+        let mut input: Value = serde_json::from_slice(&configuration(
+            json!(["rest"]),
+            Value::Null,
+            bearer_authentication(),
+        ))?;
+        input["shutdownGracePeriodMilliseconds"] = json!(100);
+        input["rawBodyLimits"]["shutdownDrainDeadlineMilliseconds"] = json!(1_000);
+        let input = serde_json::to_vec(&input)?;
+        let (server, address) = start_successfully(store.server_handle(), &input)?;
+        let (entered_sender, entered_receiver) = mpsc::channel();
+        let context = Arc::new(TestRawBodyContext {
+            deferred: AtomicBool::new(false),
+            calls: AtomicUsize::new(0),
+            releases: AtomicUsize::new(0),
+            completion: Mutex::new(None),
+            captured: Mutex::new(Vec::new()),
+            entered: entered_sender,
+        });
+        let path = b"/hooks/ffi";
+        let signature = b"x-signature";
+        let selected_headers = [BondryRawBodyByteSliceV1 {
+            bytes: signature.as_ptr(),
+            length: signature.len(),
+        }];
+        let descriptor = raw_body_descriptor(&context, path, &selected_headers);
+        let mut registration = ptr::dangling_mut::<BondryRawBodyRegistrationHandle>();
+        let mut invalid = descriptor;
+        invalid.struct_size = 0;
+        assert_eq!(
+            unsafe {
+                bondry_server_raw_body_handler_register_v1(server, &invalid, &mut registration)
+            },
+            BONDRY_STATUS_INVALID_ARGUMENT
+        );
+        assert!(registration.is_null());
+        assert_eq!(context.releases.load(Ordering::SeqCst), 0);
+        assert_eq!(
+            unsafe {
+                bondry_server_raw_body_handler_register_v1(server, &descriptor, &mut registration)
+            },
+            BONDRY_STATUS_OK
+        );
+        if registration.is_null() {
+            return Err("raw-body registration returned null".into());
+        }
+
+        let immediate = request(
+            address.port,
+            "POST /hooks/ffi?delivery=one HTTP/1.1\r\nHost: localhost\r\nX-Signature: exact\r\nContent-Length: 2\r\n\r\n{}",
+        )?;
+        assert!(immediate.starts_with("HTTP/1.1 204 No Content"));
+        entered_receiver.recv_timeout(Duration::from_secs(1))?;
+        assert_eq!(context.calls.load(Ordering::SeqCst), 1);
+        {
+            let captured = context
+                .captured
+                .lock()
+                .map_err(|_| "captured request lock poisoned")?;
+            let captured = captured
+                .first()
+                .ok_or("raw-body request was not captured")?;
+            assert_eq!(captured.target, b"/hooks/ffi?delivery=one");
+            assert_eq!(
+                captured.headers,
+                [(b"x-signature".to_vec(), b"exact".to_vec())]
+            );
+            assert_eq!(captured.body, b"{}");
+            assert_eq!(captured.peer_ip_family, 1);
+            assert_eq!(&captured.peer_ip[..4], &[127, 0, 0, 1]);
+        }
+
+        context.deferred.store(true, Ordering::SeqCst);
+        let port = address.port;
+        let request_thread = thread::spawn(move || {
+            request(
+                port,
+                "POST /hooks/ffi HTTP/1.1\r\nHost: localhost\r\nContent-Length: 2\r\n\r\n{}",
+            )
+            .map_err(|error| error.to_string())
+        });
+        entered_receiver.recv_timeout(Duration::from_secs(1))?;
+        let registration_address = registration as usize;
+        let disable_thread = thread::spawn(move || {
+            // SAFETY: The test keeps this registration live until the call returns.
+            unsafe {
+                bondry_server_raw_body_handler_disable_v1(
+                    registration_address as *const BondryRawBodyRegistrationHandle,
+                    1_000,
+                )
+            }
+        });
+        assert!(wait_for_raw_body_lifecycle(
+            registration,
+            BONDRY_RAW_BODY_LIFECYCLE_DRAINING_V1
+        ));
+        let draining = request(
+            address.port,
+            "POST /hooks/ffi HTTP/1.1\r\nHost: localhost\r\nContent-Length: 0\r\n\r\n",
+        )?;
+        assert!(draining.starts_with("HTTP/1.1 503 Service Unavailable"));
+        assert!(draining.contains("raw_body_handler_draining"));
+        assert_eq!(context.releases.load(Ordering::SeqCst), 0);
+        assert_eq!(
+            disable_thread
+                .join()
+                .map_err(|_| "disable thread panicked")?,
+            BONDRY_STATUS_RAW_BODY_DRAIN_TIMED_OUT
+        );
+        assert_eq!(context.releases.load(Ordering::SeqCst), 0);
+
+        let (completion, completion_context) = context
+            .completion
+            .lock()
+            .map_err(|_| "completion lock poisoned")?
+            .take()
+            .ok_or("raw-body completion was not retained")?;
+        let response = successful_raw_body_response();
+        // SAFETY: The callback owns this completion unit and borrows response for the call.
+        unsafe { completion(completion_context as *mut c_void, &response) };
+        let deferred_response = request_thread
+            .join()
+            .map_err(|_| "request thread panicked")??;
+        assert!(deferred_response.starts_with("HTTP/1.1 204 No Content"));
+        assert_eq!(
+            unsafe { bondry_server_raw_body_handler_disable_v1(registration, 1_000) },
+            BONDRY_STATUS_OK
+        );
+        assert_eq!(context.releases.load(Ordering::SeqCst), 1);
+        assert!(wait_for_raw_body_lifecycle(
+            registration,
+            BONDRY_RAW_BODY_LIFECYCLE_DETACHED_V1
+        ));
+
+        context.deferred.store(false, Ordering::SeqCst);
+        let mut replacement = ptr::null_mut();
+        assert_eq!(
+            unsafe {
+                bondry_server_raw_body_handler_register_v1(server, &descriptor, &mut replacement)
+            },
+            BONDRY_STATUS_OK
+        );
+        if replacement.is_null() {
+            return Err("replacement registration returned null".into());
+        }
+        let replaced = request(
+            address.port,
+            "POST /hooks/ffi HTTP/1.1\r\nHost: localhost\r\nContent-Length: 0\r\n\r\n",
+        )?;
+        assert!(replaced.starts_with("HTTP/1.1 204 No Content"));
+        entered_receiver.recv_timeout(Duration::from_secs(1))?;
+
+        unsafe { bondry_server_raw_body_handler_release_v1(registration) };
+        context.deferred.store(true, Ordering::SeqCst);
+        let port = address.port;
+        let shutdown_request = thread::spawn(move || {
+            request(
+                port,
+                "POST /hooks/ffi HTTP/1.1\r\nHost: localhost\r\nContent-Length: 2\r\n\r\n{}",
+            )
+            .map_err(|error| error.to_string())
+        });
+        entered_receiver.recv_timeout(Duration::from_secs(1))?;
+        unsafe { bondry_server_raw_body_handler_release_v1(replacement) };
+        assert_eq!(context.releases.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            unsafe { bondry_server_stop_v1(server) },
+            BONDRY_STATUS_SERVER_STOP
+        );
+        assert_eq!(context.releases.load(Ordering::SeqCst), 1);
+
+        let (completion, completion_context) = context
+            .completion
+            .lock()
+            .map_err(|_| "completion lock poisoned")?
+            .take()
+            .ok_or("shutdown completion was not retained")?;
+        let response = successful_raw_body_response();
+        // SAFETY: The callback owns this completion unit and borrows response for the call.
+        unsafe { completion(completion_context as *mut c_void, &response) };
+        let _ = shutdown_request
+            .join()
+            .map_err(|_| "shutdown request thread panicked")??;
+        assert_eq!(context.releases.load(Ordering::SeqCst), 2);
+        Ok(())
+    }
+
+    struct TestRawBodyContext {
+        deferred: AtomicBool,
+        calls: AtomicUsize,
+        releases: AtomicUsize,
+        completion: Mutex<Option<(BondryRawBodyCompletionV1, usize)>>,
+        captured: Mutex<Vec<CapturedTestRawBody>>,
+        entered: mpsc::Sender<()>,
+    }
+
+    struct CapturedTestRawBody {
+        target: Vec<u8>,
+        headers: Vec<(Vec<u8>, Vec<u8>)>,
+        body: Vec<u8>,
+        peer_ip_family: u32,
+        peer_ip: [u8; 16],
+    }
+
+    unsafe extern "C" fn retain_raw_body_context(context: *mut c_void) -> *mut c_void {
+        if context.is_null() {
+            return ptr::null_mut();
+        }
+        // SAFETY: The descriptor context points to one live Arc allocation.
+        unsafe { Arc::increment_strong_count(context.cast::<TestRawBodyContext>()) };
+        context
+    }
+
+    unsafe extern "C" fn release_raw_body_context(context: *mut c_void) {
+        if context.is_null() {
+            return;
+        }
+        // SAFETY: Each successful retain transfers one Arc ownership unit to release.
+        let context = unsafe { Arc::from_raw(context.cast::<TestRawBodyContext>()) };
+        context.releases.fetch_add(1, Ordering::SeqCst);
+    }
+
+    unsafe extern "C" fn handle_raw_body(
+        context: *mut c_void,
+        request: *const BondryRawBodyRequestV1,
+        completion: BondryRawBodyCompletionV1,
+        completion_context: *mut c_void,
+    ) {
+        let Some(context) = (unsafe { context.cast::<TestRawBodyContext>().as_ref() }) else {
+            return;
+        };
+        let Some(request) = (unsafe { request.as_ref() }) else {
+            return;
+        };
+        // SAFETY: The local-server ABI borrows target and body for this callback.
+        let target = unsafe { std::slice::from_raw_parts(request.target, request.target_length) };
+        // SAFETY: The local-server ABI borrows target and body for this callback.
+        let body = unsafe { std::slice::from_raw_parts(request.body, request.body_length) };
+        // SAFETY: The local-server ABI borrows the selected-header array for this callback.
+        let headers = unsafe { std::slice::from_raw_parts(request.headers, request.header_count) }
+            .iter()
+            .map(|header| {
+                // SAFETY: Each header name and value is borrowed for this callback.
+                let name = unsafe { std::slice::from_raw_parts(header.name, header.name_length) };
+                // SAFETY: Each header name and value is borrowed for this callback.
+                let value =
+                    unsafe { std::slice::from_raw_parts(header.value, header.value_length) };
+                (name.to_vec(), value.to_vec())
+            })
+            .collect();
+        if let Ok(mut captured) = context.captured.lock() {
+            captured.push(CapturedTestRawBody {
+                target: target.to_vec(),
+                headers,
+                body: body.to_vec(),
+                peer_ip_family: request.peer_ip_family,
+                peer_ip: request.peer_ip,
+            });
+        }
+        context.calls.fetch_add(1, Ordering::SeqCst);
+        if context.deferred.load(Ordering::SeqCst) {
+            if let Ok(mut retained) = context.completion.lock() {
+                *retained = Some((completion, completion_context as usize));
+            }
+        } else {
+            let response = successful_raw_body_response();
+            // SAFETY: This callback owns one completion and borrows response for the call.
+            unsafe { completion(completion_context, &response) };
+        }
+        let _ = context.entered.send(());
+    }
+
+    fn raw_body_descriptor(
+        context: &Arc<TestRawBodyContext>,
+        path: &[u8],
+        selected_headers: &[BondryRawBodyByteSliceV1],
+    ) -> BondryRawBodyHandlerDescriptorV1 {
+        BondryRawBodyHandlerDescriptorV1 {
+            abi_version: BONDRY_RAW_BODY_HANDLER_ABI_VERSION_V1,
+            struct_size: std::mem::size_of::<BondryRawBodyHandlerDescriptorV1>(),
+            method: BONDRY_RAW_BODY_METHOD_POST_V1,
+            path: BondryRawBodyByteSliceV1 {
+                bytes: path.as_ptr(),
+                length: path.len(),
+            },
+            selected_headers: selected_headers.as_ptr(),
+            selected_header_count: selected_headers.len(),
+            max_body_bytes: 1_048_576,
+            max_retained_bytes: 3 * 1_048_576,
+            max_selected_header_bytes: 2_048,
+            max_selected_headers_bytes: 32 * 1_024,
+            pre_authentication_requests_per_peer_minute: 60,
+            pre_authentication_requests_per_route_minute: 120,
+            context: Arc::as_ptr(context).cast_mut().cast::<c_void>(),
+            retain: Some(retain_raw_body_context),
+            release: Some(release_raw_body_context),
+            handle: Some(handle_raw_body),
+        }
+    }
+
+    fn successful_raw_body_response() -> BondryRawBodyResponseV1 {
+        BondryRawBodyResponseV1 {
+            abi_version: BONDRY_RAW_BODY_HANDLER_ABI_VERSION_V1,
+            struct_size: std::mem::size_of::<BondryRawBodyResponseV1>(),
+            status_code: 204,
+            retry_after_seconds: 0,
+            has_retry_after: 0,
+        }
+    }
+
+    fn wait_for_raw_body_lifecycle(
+        registration: *const BondryRawBodyRegistrationHandle,
+        expected: u32,
+    ) -> bool {
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while Instant::now() < deadline {
+            let mut lifecycle = 0;
+            // SAFETY: The test keeps registration live and lifecycle is writable.
+            let status = unsafe {
+                bondry_server_raw_body_handler_lifecycle_v1(registration, &mut lifecycle)
+            };
+            if status == BONDRY_STATUS_OK && lifecycle == expected {
+                return true;
+            }
+            thread::sleep(Duration::from_millis(1));
+        }
+        false
+    }
+
     unsafe extern "C" fn test_handler(
         _context: *mut c_void,
         invocation: *const BondryInvocationV1,
@@ -1163,6 +1527,10 @@ mod tests {
             "headerReadTimeoutMilliseconds": 5_000,
             "requestTimeoutMilliseconds": 30_000,
             "shutdownGracePeriodMilliseconds": 2_000,
+            "rawBodyLimits": {
+                "aggregateRetainedBytes": 8 * 1_048_576,
+                "shutdownDrainDeadlineMilliseconds": 10_000,
+            },
             "allowCleartextNetwork": false,
             "allowUnauthenticatedNetwork": false,
         }))
@@ -1208,7 +1576,7 @@ mod tests {
             &SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port),
             Duration::from_secs(1),
         )?;
-        stream.set_read_timeout(Some(Duration::from_secs(1)))?;
+        stream.set_read_timeout(Some(Duration::from_secs(3)))?;
         let request = request.replacen("\r\n\r\n", "\r\nConnection: close\r\n\r\n", 1);
         stream.write_all(request.as_bytes())?;
         let mut response = String::new();
