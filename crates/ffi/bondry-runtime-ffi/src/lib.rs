@@ -14,6 +14,7 @@ use bondry_store_sqlcipher::{DatabaseKey, SqlCipherStore, SqlCipherStoreError};
 mod audit;
 mod auth;
 mod capabilities;
+mod delivery_log;
 mod grants;
 mod records;
 
@@ -29,6 +30,20 @@ pub use capabilities::{
     bondry_capabilities_list_v1, bondry_capability_register_v1,
     bondry_capability_register_with_schema_v1, bondry_capability_unregister_v1,
     bondry_dispatch_principal_v1, bondry_dispatch_token_v1,
+};
+pub use delivery_log::{
+    BONDRY_DELIVERY_FAILURE_CANCELLED_V1, BONDRY_DELIVERY_FAILURE_DEADLINE_EXCEEDED_V1,
+    BONDRY_DELIVERY_FAILURE_ENDPOINT_POLICY_V1, BONDRY_DELIVERY_FAILURE_INTERNAL_V1,
+    BONDRY_DELIVERY_FAILURE_NONE_V1, BONDRY_DELIVERY_FAILURE_RECEIVER_REJECTED_V1,
+    BONDRY_DELIVERY_FAILURE_RETRY_EXHAUSTED_V1, BONDRY_DELIVERY_FAILURE_SECRET_UNAVAILABLE_V1,
+    BONDRY_DELIVERY_FAILURE_TRANSPORT_UNAVAILABLE_V1, BONDRY_DELIVERY_LOG_ABI_VERSION_V1,
+    BONDRY_DELIVERY_OUTCOME_DELIVERED_V1, BONDRY_DELIVERY_OUTCOME_FAILED_V1,
+    BONDRY_DELIVERY_OUTCOME_LOST_ON_SHUTDOWN_V1, BONDRY_DELIVERY_OUTCOME_NONE_V1,
+    BONDRY_DELIVERY_OUTCOME_UNKNOWN_AFTER_CRASH_V1, BONDRY_DELIVERY_RESULT_FAILED_V1,
+    BONDRY_DELIVERY_RESULT_INVALID_V1, BONDRY_DELIVERY_RESULT_NONE_V1,
+    BONDRY_DELIVERY_RESULT_SUCCEEDED_V1, BONDRY_DELIVERY_STATE_PENDING_V1,
+    BONDRY_DELIVERY_STATE_TERMINAL_V1, BONDRY_STORE_THREADING_SERIALIZED_V1, BondryDeliveryLogV1,
+    BondryDeliveryRecordV1, bondry_store_delivery_log_v1,
 };
 pub use grants::{bondry_grant_add_v1, bondry_grant_remove_v1, bondry_grants_list_v1};
 pub use records::{
@@ -89,6 +104,10 @@ pub const BONDRY_STATUS_TIME_UNAVAILABLE: i32 = 26;
 pub const BONDRY_STATUS_GENERATION_EXHAUSTED: i32 = 27;
 /// A capability with the same identifier is already registered.
 pub const BONDRY_STATUS_ALREADY_EXISTS: i32 = 28;
+/// A configured logical capacity is exhausted.
+pub const BONDRY_STATUS_CAPACITY_EXHAUSTED: i32 = 32;
+/// A persisted state transition is not permitted.
+pub const BONDRY_STATUS_INVALID_TRANSITION: i32 = 33;
 /// Bondry stopped an internal failure at the ABI boundary.
 pub const BONDRY_STATUS_INTERNAL_FAILURE: i32 = 255;
 
