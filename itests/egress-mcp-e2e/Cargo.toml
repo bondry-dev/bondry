@@ -18,7 +18,7 @@ bondry-http-server = { path = "../../crates/engine/bondry-http-server" }
 bondry-mcp-proto = { path = "../../crates/proto/bondry-mcp-proto" }
 bondry-secrets = { path = "../../crates/contract/bondry-secrets" }
 bondry-transport = { path = "../../crates/contract/bondry-transport" }
-bondry-transport-net = { path = "../../crates/engine/bondry-transport-net" }
+bondry-transport-net = { path = "../../crates/engine/bondry-transport-net", default-features = false, features = ["http"] }
 bytes.workspace = true
 http.workspace = true
 serde_json.workspace = true
