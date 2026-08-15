@@ -136,6 +136,9 @@ impl RouteRegistry {
         if self.routes.len() >= usize::from(self.limit.get()) {
             return Err(RouteRegistryError::CapacityExhausted);
         }
+        if route.payload.limit().get() > route.kind.max_payload_bytes() {
+            return Err(RouteRegistryError::PayloadLimitUnsupported);
+        }
         let admission = TokenBucket::new(
             route.admission.refill_per_second(),
             route.admission.capacity(),
@@ -349,6 +352,9 @@ pub enum RouteRegistryError {
     /// The configured route capacity is exhausted.
     #[error("route registry capacity is exhausted")]
     CapacityExhausted,
+    /// The route can admit payloads its delivery kind cannot submit.
+    #[error("route payload limit exceeds the delivery kind limit")]
+    PayloadLimitUnsupported,
     /// The route does not exist.
     #[error("route was not found")]
     NotFound,
@@ -441,6 +447,7 @@ mod tests {
 
     struct MockKind {
         supports_call: bool,
+        max_payload_bytes: usize,
     }
 
     impl DeliveryKind for MockKind {
@@ -454,6 +461,10 @@ mod tests {
 
         fn supports_call(&self) -> bool {
             self.supports_call
+        }
+
+        fn max_payload_bytes(&self) -> usize {
+            self.max_payload_bytes
         }
 
         fn operation(
@@ -486,7 +497,10 @@ mod tests {
             RequestTimeout::default(),
             RetryPolicy::default(),
             admission,
-            Arc::new(MockKind { supports_call }),
+            Arc::new(MockKind {
+                supports_call,
+                max_payload_bytes: crate::MAX_EVENT_PAYLOAD_BYTES,
+            }),
         ))
     }
 
@@ -529,6 +543,35 @@ mod tests {
         ));
         assert!(registry.unregister(&disabled));
         assert!(!registry.unregister(&disabled));
+        Ok(())
+    }
+
+    #[test]
+    fn registry_rejects_incoherent_kind_payload_limits() -> Result<(), Box<dyn std::error::Error>> {
+        let payload = PayloadContract::new(
+            [PayloadField::new(
+                PayloadFieldName::new("event")?,
+                PayloadFieldType::String,
+                true,
+            )],
+            PayloadLimit::default(),
+        )?;
+        let route = Route::new(
+            RouteId::new("undersized-kind")?,
+            true,
+            payload,
+            RequestTimeout::default(),
+            RetryPolicy::default(),
+            RouteAdmissionLimit::default(),
+            Arc::new(MockKind {
+                supports_call: false,
+                max_payload_bytes: 1024,
+            }),
+        );
+        assert_eq!(
+            RouteRegistry::default().register(route),
+            Err(RouteRegistryError::PayloadLimitUnsupported)
+        );
         Ok(())
     }
 

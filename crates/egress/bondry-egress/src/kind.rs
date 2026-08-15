@@ -52,6 +52,9 @@ pub trait DeliveryKind: Send + Sync {
     /// Returns whether this kind supports the host `call` verb.
     fn supports_call(&self) -> bool;
 
+    /// Returns the largest exact payload this kind can submit.
+    fn max_payload_bytes(&self) -> usize;
+
     /// Creates fresh sans-I/O attempt state from validated exact bytes.
     fn operation(
         &self,
