@@ -11,17 +11,17 @@ license.workspace = true
 crate-type = ["rlib", "staticlib"]
 
 [dependencies]
-bondry-core = { version = "0.1.2", path = "../../contract/bondry-core" }
-bondry-http-server = { version = "0.1.2", path = "../../engine/bondry-http-server" }
-bondry-mcp-proto = { version = "0.1.2", path = "../../proto/bondry-mcp-proto" }
-bondry-rest-proto = { version = "0.1.2", path = "../../proto/bondry-rest-proto" }
+bondry-core = { version = "0.2.0", path = "../../contract/bondry-core" }
+bondry-http-server = { version = "0.2.0", path = "../../engine/bondry-http-server" }
+bondry-mcp-proto = { version = "0.2.0", path = "../../proto/bondry-mcp-proto" }
+bondry-rest-proto = { version = "0.2.0", path = "../../proto/bondry-rest-proto" }
 http.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tokio = { workspace = true, features = ["sync"] }
 
 [dev-dependencies]
-bondry-runtime-ffi = { version = "0.1.2", path = "../bondry-runtime-ffi" }
+bondry-runtime-ffi = { version = "0.2.0", path = "../bondry-runtime-ffi" }
 tempfile.workspace = true
 
 [lints.rust]
