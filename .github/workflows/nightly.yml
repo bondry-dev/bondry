@@ -64,8 +64,6 @@ jobs:
         run: cargo audit
       - name: Check dependency policy
         run: cargo deny check
-      - name: Enforce Rust egress linked size ceiling
-        run: scripts/measure-egress-size.sh
       - name: Test against self-hosted ntfy
         env:
           NTFY_ARCHIVE_SHA256: 56459cc96110d27f1d952351b7ea2883b894a122ca4cc2339c841003c61c138b
@@ -111,6 +109,32 @@ jobs:
               tests::self_hosted_ntfy_accepts_url_template_delivery -- --ignored --exact
       - name: Report dependency drift
         run: cargo update --dry-run
+
+  egress-size:
+    name: Rust egress linked size
+    runs-on: macos-26
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Select Xcode
+        run: |
+          sudo xcode-select --switch /Applications/Xcode_26.2.app/Contents/Developer
+          xcodebuild -version
+      - name: Install Rust
+        run: rustup toolchain install 1.90.0 --profile minimal
+      - name: Restore Rust cache
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: |
+            ~/.cargo/git
+            ~/.cargo/registry
+            target
+          key: ${{ runner.os }}-rust-1.90.0-egress-size-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-rust-1.90.0-egress-size-
+      - name: Enforce linked size ceiling
+        run: scripts/measure-egress-size.sh
 
   msrv:
     name: Rust 1.85 MSRV
