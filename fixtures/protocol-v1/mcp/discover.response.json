@@ -1,0 +1,21 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "supportedVersions": ["2026-07-28", "2025-11-25"],
+    "capabilities": {
+      "tools": {
+        "listChanged": false
+      }
+    },
+    "ttlMs": 0,
+    "cacheScope": "private",
+    "resultType": "complete",
+    "_meta": {
+      "io.modelcontextprotocol/serverInfo": {
+        "name": "fixture-server",
+        "version": "0.2.0"
+      }
+    }
+  }
+}

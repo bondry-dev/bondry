@@ -1,5 +1,7 @@
 #![doc = "Pure MCP Streamable HTTP protocol handling for Bondry."]
 
+mod client;
+mod client_info;
 mod protocol;
 mod server_info;
 mod version;
@@ -16,28 +18,26 @@ use bytes::Bytes;
 use http::{HeaderMap, Method, Request, Response, StatusCode, header};
 use serde_json::{Map, Value, json};
 
+pub use client::{
+    McpClient, McpClientError, McpClientRequest, McpClientRequestError, McpClientRequestParts,
+    McpClientResponse, McpDiscovery, McpInitialization, McpResponseDecoder, McpTool,
+    McpToolCallOutcome, McpToolCallResult, McpToolList,
+};
+pub use client_info::{McpClientInfo, McpClientInfoError};
 pub use server_info::{McpServerInfo, McpServerInfoError};
-pub use version::{LATEST_PROTOCOL_VERSION, SUPPORTED_PROTOCOL_VERSIONS};
+pub use version::{LATEST_PROTOCOL_VERSION, McpProtocolVersion, SUPPORTED_PROTOCOL_VERSIONS};
 
-use crate::{
-    protocol::{
-        Message, RpcNotification, RpcRequest, accepted_response, error_response, json_response,
-        rpc_error, rpc_error_with_data, rpc_result,
-    },
-    version::ProtocolVersion,
+use crate::protocol::{
+    CALL_TOOL_METHOD, CLIENT_CAPABILITIES_META, CLIENT_INFO_META, DISCOVER_METHOD,
+    INITIALIZE_METHOD, LIST_TOOLS_METHOD, METHOD_HEADER, Message, NAME_HEADER,
+    PROTOCOL_VERSION_HEADER, PROTOCOL_VERSION_META, RpcNotification, RpcRequest, SERVER_INFO_META,
+    accepted_response, error_response, json_response, rpc_error, rpc_error_with_data, rpc_result,
 };
 
 /// The standard Streamable HTTP endpoint owned by the adapter.
 pub const MCP_PATH: &str = "/mcp";
 
 const ADAPTER_ID: &str = "mcp";
-const PROTOCOL_VERSION_HEADER: &str = "mcp-protocol-version";
-const METHOD_HEADER: &str = "mcp-method";
-const NAME_HEADER: &str = "mcp-name";
-const PROTOCOL_VERSION_META: &str = "io.modelcontextprotocol/protocolVersion";
-const CLIENT_INFO_META: &str = "io.modelcontextprotocol/clientInfo";
-const CLIENT_CAPABILITIES_META: &str = "io.modelcontextprotocol/clientCapabilities";
-const SERVER_INFO_META: &str = "io.modelcontextprotocol/serverInfo";
 
 /// Exposes authorized Bondry capabilities as MCP tools over Streamable HTTP.
 pub struct McpAdapter {
@@ -133,11 +133,11 @@ impl McpAdapter {
         };
         let response_id = message_id(&message);
         let version = match single_header(request.request().headers(), PROTOCOL_VERSION_HEADER) {
-            Ok(Some(value)) => match ProtocolVersion::parse(value) {
+            Ok(Some(value)) => match McpProtocolVersion::parse(value) {
                 Some(version) => version,
                 None => return unsupported_version(response_id, value),
             },
-            Ok(None) if is_legacy_initialize(&message) => ProtocolVersion::V2025_11_25,
+            Ok(None) if is_legacy_initialize(&message) => McpProtocolVersion::V2025_11_25,
             Ok(None) | Err(()) => return header_mismatch(response_id),
         };
 
@@ -152,10 +152,10 @@ impl McpAdapter {
                 .await
             }
             Message::Notification(notification) => self.handle_notification(notification, version),
-            Message::Response if version.is_modern() => {
+            Message::Response(_) if version.is_modern() => {
                 rpc_error(StatusCode::BAD_REQUEST, None, -32_600, "Invalid Request")
             }
-            Message::Response => accepted_response(),
+            Message::Response(_) => accepted_response(),
         }
     }
 
@@ -164,7 +164,7 @@ impl McpAdapter {
         principal: &bondry_core::Principal,
         headers: &HeaderMap,
         request: RpcRequest,
-        version: ProtocolVersion,
+        version: McpProtocolVersion,
     ) -> Response<Bytes> {
         if version.is_modern() {
             if let Err(error) = validate_modern_request(headers, &request, version) {
@@ -182,13 +182,13 @@ impl McpAdapter {
         &self,
         principal: &bondry_core::Principal,
         request: RpcRequest,
-        version: ProtocolVersion,
+        version: McpProtocolVersion,
     ) -> Response<Bytes> {
         let RpcRequest { id, method, params } = request;
         match method.as_str() {
-            "server/discover" => self.discover(id, params.as_ref(), version),
-            "tools/list" => self.list_tools(principal, id, params.as_ref(), version),
-            "tools/call" => {
+            DISCOVER_METHOD => self.discover(id, params.as_ref(), version),
+            LIST_TOOLS_METHOD => self.list_tools(principal, id, params.as_ref(), version),
+            CALL_TOOL_METHOD => {
                 self.call_tool(principal, id, params.as_ref(), version)
                     .await
             }
@@ -200,14 +200,14 @@ impl McpAdapter {
         &self,
         principal: &bondry_core::Principal,
         request: RpcRequest,
-        version: ProtocolVersion,
+        version: McpProtocolVersion,
     ) -> Response<Bytes> {
         let RpcRequest { id, method, params } = request;
         match method.as_str() {
-            "initialize" => self.initialize(id, params.as_ref()),
+            INITIALIZE_METHOD => self.initialize(id, params.as_ref()),
             "ping" => empty_result(id, params.as_ref()),
-            "tools/list" => self.list_tools(principal, id, params.as_ref(), version),
-            "tools/call" => {
+            LIST_TOOLS_METHOD => self.list_tools(principal, id, params.as_ref(), version),
+            CALL_TOOL_METHOD => {
                 self.call_tool(principal, id, params.as_ref(), version)
                     .await
             }
@@ -218,7 +218,7 @@ impl McpAdapter {
     fn handle_notification(
         &self,
         notification: RpcNotification,
-        version: ProtocolVersion,
+        version: McpProtocolVersion,
     ) -> Response<Bytes> {
         if version.is_modern() {
             return match validate_modern_metadata(notification.params.as_ref(), version) {
@@ -244,7 +244,7 @@ impl McpAdapter {
         {
             return rpc_error_response(id, -32_602, "Invalid params");
         }
-        let version = ProtocolVersion::negotiate_legacy(requested_version);
+        let version = McpProtocolVersion::negotiate_legacy(requested_version);
         rpc_result(
             id,
             json!({
@@ -259,7 +259,7 @@ impl McpAdapter {
         &self,
         id: Value,
         params: Option<&Value>,
-        version: ProtocolVersion,
+        version: McpProtocolVersion,
     ) -> Response<Bytes> {
         if !valid_modern_metadata(params, version)
             || !params
@@ -285,7 +285,7 @@ impl McpAdapter {
         principal: &bondry_core::Principal,
         id: Value,
         params: Option<&Value>,
-        version: ProtocolVersion,
+        version: McpProtocolVersion,
     ) -> Response<Bytes> {
         if !valid_list_params(params) {
             return rpc_error_response(id, -32_602, "Invalid params");
@@ -312,7 +312,7 @@ impl McpAdapter {
         principal: &bondry_core::Principal,
         id: Value,
         params: Option<&Value>,
-        version: ProtocolVersion,
+        version: McpProtocolVersion,
     ) -> Response<Bytes> {
         let Some((name, arguments)) = tool_call(params) else {
             return rpc_error_response(id, -32_602, "Invalid params");
@@ -365,7 +365,7 @@ impl McpAdapter {
         &self,
         id: Value,
         mut result: Value,
-        version: ProtocolVersion,
+        version: McpProtocolVersion,
     ) -> Response<Bytes> {
         if version.is_modern() {
             result["resultType"] = json!("complete");
@@ -390,7 +390,7 @@ enum ModernValidationError {
 fn validate_modern_request(
     headers: &HeaderMap,
     request: &RpcRequest,
-    version: ProtocolVersion,
+    version: McpProtocolVersion,
 ) -> Result<(), ModernValidationError> {
     let method = single_header(headers, METHOD_HEADER)
         .map_err(|()| ModernValidationError::HeaderMismatch)?
@@ -398,7 +398,7 @@ fn validate_modern_request(
     if method != request.method {
         return Err(ModernValidationError::HeaderMismatch);
     }
-    if request.method == "tools/call" {
+    if request.method == CALL_TOOL_METHOD {
         let encoded_name = single_header(headers, NAME_HEADER)
             .map_err(|()| ModernValidationError::HeaderMismatch)?
             .ok_or(ModernValidationError::HeaderMismatch)?;
@@ -418,13 +418,13 @@ fn validate_modern_request(
     validate_modern_metadata(request.params.as_ref(), version)
 }
 
-fn valid_modern_metadata(params: Option<&Value>, version: ProtocolVersion) -> bool {
+fn valid_modern_metadata(params: Option<&Value>, version: McpProtocolVersion) -> bool {
     validate_modern_metadata(params, version).is_ok()
 }
 
 fn validate_modern_metadata(
     params: Option<&Value>,
-    version: ProtocolVersion,
+    version: McpProtocolVersion,
 ) -> Result<(), ModernValidationError> {
     let Some(metadata) = params
         .and_then(Value::as_object)
@@ -503,7 +503,7 @@ fn remove_custom_header_annotations(value: &mut Value) {
     }
 }
 
-fn tool_success(output: Value, invocation_id: &str, version: ProtocolVersion) -> Value {
+fn tool_success(output: Value, invocation_id: &str, version: McpProtocolVersion) -> Value {
     let text = serde_json::to_string(&output).unwrap_or_default();
     let mut result = json!({
         "content": [{ "type": "text", "text": text }],
@@ -581,12 +581,12 @@ fn transport_error(status: StatusCode, code: &'static str) -> Response<Bytes> {
 fn message_id(message: &Message) -> Option<Value> {
     match message {
         Message::Request(request) => Some(request.id.clone()),
-        Message::Notification(_) | Message::Response => None,
+        Message::Notification(_) | Message::Response(_) => None,
     }
 }
 
 fn is_legacy_initialize(message: &Message) -> bool {
-    matches!(message, Message::Request(request) if request.method == "initialize")
+    matches!(message, Message::Request(request) if request.method == INITIALIZE_METHOD)
 }
 
 fn single_header<'a>(headers: &'a HeaderMap, name: &str) -> Result<Option<&'a str>, ()> {

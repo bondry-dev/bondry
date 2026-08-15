@@ -1,0 +1,19 @@
+{
+  "jsonrpc": "2.0",
+  "id": 3,
+  "method": "tools/call",
+  "params": {
+    "name": "battery:status",
+    "arguments": {
+      "detail": true
+    },
+    "_meta": {
+      "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+      "io.modelcontextprotocol/clientInfo": {
+        "name": "bondry-egress",
+        "version": "0.2.0"
+      },
+      "io.modelcontextprotocol/clientCapabilities": {}
+    }
+  }
+}
