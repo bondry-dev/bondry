@@ -94,31 +94,55 @@ pub fn verify_webhook(
     bool::from(matched)
 }
 
-fn sign(secret: &SecretValue, input: WebhookSigningInput<'_>) -> HmacSignature {
-    let mut mac = HmacSha256::new_from_slice(secret.expose())
-        .unwrap_or_else(|_| unreachable!("HMAC accepts every key length admitted by SecretValue"));
-    update_webhook_mac(&mut mac, input);
-    HmacSignature(mac.finalize().into_bytes().into())
+/// Verifies hexadecimal candidates against concatenated canonical byte components.
+#[must_use]
+pub fn verify_hmac_sha256(
+    secrets: &ResolvedSecret,
+    canonical_components: &[&[u8]],
+    candidates: &[HmacSignature],
+) -> bool {
+    let current = sign_components(secrets.current_value(), canonical_components);
+    let mut matched = Choice::from(0);
+    for candidate in candidates {
+        matched |= current.0.ct_eq(&candidate.0);
+    }
+    if let Some(previous) = secrets.previous_value() {
+        let previous = sign_components(previous, canonical_components);
+        for candidate in candidates {
+            matched |= previous.0.ct_eq(&candidate.0);
+        }
+    }
+    bool::from(matched)
 }
 
-fn update_webhook_mac(mac: &mut HmacSha256, input: WebhookSigningInput<'_>) {
+fn sign(secret: &SecretValue, input: WebhookSigningInput<'_>) -> HmacSignature {
     let timestamp = input.timestamp_unix_seconds.to_string();
     let delivery_id_length = input.delivery_id.len().to_string();
     let body_length = input.body.len().to_string();
-    for component in [
-        b"bondry-webhook-v1\n".as_slice(),
-        timestamp.as_bytes(),
-        b"\n",
-        delivery_id_length.as_bytes(),
-        b"\n",
-        input.delivery_id,
-        b"\n",
-        body_length.as_bytes(),
-        b"\n",
-        input.body,
-    ] {
+    sign_components(
+        secret,
+        &[
+            b"bondry-webhook-v1\n",
+            timestamp.as_bytes(),
+            b"\n",
+            delivery_id_length.as_bytes(),
+            b"\n",
+            input.delivery_id,
+            b"\n",
+            body_length.as_bytes(),
+            b"\n",
+            input.body,
+        ],
+    )
+}
+
+fn sign_components(secret: &SecretValue, components: &[&[u8]]) -> HmacSignature {
+    let mut mac = HmacSha256::new_from_slice(secret.expose())
+        .unwrap_or_else(|_| unreachable!("HMAC accepts every key length admitted by SecretValue"));
+    for component in components {
         mac.update(component);
     }
+    HmacSignature(mac.finalize().into_bytes().into())
 }
 
 fn decode_nibble(value: u8) -> Option<u8> {
@@ -135,7 +159,9 @@ mod tests {
     use base64::{Engine as _, engine::general_purpose::STANDARD};
     use serde::Deserialize;
 
-    use super::{HmacSignature, constant_time_eq, sign_webhook, verify_webhook};
+    use super::{
+        HmacSignature, constant_time_eq, sign_webhook, verify_hmac_sha256, verify_webhook,
+    };
     use crate::{ResolvedSecret, SecretValue, WebhookSigningInput, canonical_webhook_bytes};
 
     #[derive(Deserialize)]
@@ -226,5 +252,23 @@ mod tests {
         assert!(!constant_time_eq(b"same", b"size"));
         assert!(!constant_time_eq(b"short", b"longer"));
         assert_eq!(format!("{signature:?}"), "HmacSignature([REDACTED])");
+    }
+
+    #[test]
+    fn verifies_streamed_canonical_components_and_rotation() {
+        let current = SecretValue::new(b"current".to_vec())
+            .unwrap_or_else(|error| unreachable!("valid secret: {error}"));
+        let previous = SecretValue::new(b"previous".to_vec())
+            .unwrap_or_else(|error| unreachable!("valid secret: {error}"));
+        let candidate = HmacSignature::from_hex(
+            "3612909ea8e7e923b55dab0abad5b1e6c1341a77a444c3f0f52c74652eae318e",
+        )
+        .unwrap_or_else(|error| unreachable!("valid fixture signature: {error}"));
+
+        assert!(verify_hmac_sha256(
+            &ResolvedSecret::rotating(current, previous),
+            &[b"time", b".", b"body"],
+            &[candidate]
+        ));
     }
 }

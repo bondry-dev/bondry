@@ -15,5 +15,6 @@ pub use secret::{
     SecretValueError,
 };
 pub use signature::{
-    HmacSignature, HmacSignatureError, constant_time_eq, sign_webhook, verify_webhook,
+    HmacSignature, HmacSignatureError, constant_time_eq, sign_webhook, verify_hmac_sha256,
+    verify_webhook,
 };

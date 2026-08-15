@@ -421,8 +421,12 @@ dependencies = [
 name = "bondry-webhook-verify"
 version = "0.1.2"
 dependencies = [
+ "base64",
  "bondry-delivery-store",
+ "bondry-secrets",
  "http",
+ "serde",
+ "serde_json",
  "sha2",
  "thiserror",
 ]
