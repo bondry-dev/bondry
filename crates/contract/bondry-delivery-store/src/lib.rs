@@ -6,7 +6,7 @@ mod identifier;
 mod limits;
 
 pub use dedup::{
-    DedupClaim, DedupRecord, DedupResolution, DedupState, DedupStore, DedupStoreError,
+    DedupClaim, DedupKey, DedupRecord, DedupResolution, DedupState, DedupStore, DedupStoreError,
     TrustedDeliveryIdHash,
 };
 pub use delivery::{
