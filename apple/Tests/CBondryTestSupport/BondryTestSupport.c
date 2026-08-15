@@ -19,6 +19,17 @@ struct BondryEgressHandle {
     BondrySecretProviderV1 secrets;
 };
 
+struct BondryEgressCallResult {
+    const uint8_t *json;
+    size_t length;
+    uint32_t category;
+};
+
+struct BondryEgressMcpDiscoveryResult {
+    const uint8_t *json;
+    size_t length;
+};
+
 static uint32_t abi_version = BONDRY_ABI_VERSION_V1;
 static BondryStatus open_status = BONDRY_STATUS_OK;
 static BondryStatus check_status = BONDRY_STATUS_OK;
@@ -783,6 +794,107 @@ BondryStatus bondry_egress_emit_v1(
         return BONDRY_STATUS_INVALID_ARGUMENT;
     }
     return BONDRY_STATUS_OK;
+}
+
+BondryStatus bondry_egress_call_v1(
+    const BondryEgressHandle *egress,
+    const uint8_t *route_id,
+    size_t route_id_length,
+    const uint8_t *delivery_id,
+    size_t delivery_id_length,
+    const uint8_t *payload_json,
+    size_t payload_json_length,
+    size_t max_result_bytes,
+    BondryEgressCallResult **out_result
+) {
+    static const uint8_t output[] =
+        "{\"content\":[{\"type\":\"text\",\"text\":\"ok\"}]}";
+    if (out_result != NULL) {
+        *out_result = NULL;
+    }
+    if (egress == NULL || route_id == NULL || delivery_id == NULL || payload_json == NULL ||
+        out_result == NULL) {
+        return BONDRY_STATUS_NULL_POINTER;
+    }
+    if (route_id_length == 0 || delivery_id_length == 0 || payload_json_length == 0) {
+        return BONDRY_STATUS_INVALID_LENGTH;
+    }
+    if (max_result_bytes < sizeof(output) - 1) {
+        return BONDRY_STATUS_EGRESS_RESULT_TOO_LARGE;
+    }
+    BondryEgressCallResult *result = malloc(sizeof(*result));
+    if (result == NULL) {
+        return BONDRY_STATUS_INTERNAL_FAILURE;
+    }
+    result->json = output;
+    result->length = sizeof(output) - 1;
+    result->category = BONDRY_DELIVERY_RESULT_SUCCEEDED_V1;
+    *out_result = result;
+    return BONDRY_STATUS_OK;
+}
+
+BondryStatus bondry_egress_call_result_json_v1(
+    const BondryEgressCallResult *result,
+    const uint8_t **out_json,
+    size_t *out_length,
+    uint32_t *out_category
+) {
+    if (result == NULL || out_json == NULL || out_length == NULL || out_category == NULL) {
+        return BONDRY_STATUS_NULL_POINTER;
+    }
+    *out_json = result->json;
+    *out_length = result->length;
+    *out_category = result->category;
+    return BONDRY_STATUS_OK;
+}
+
+void bondry_egress_call_result_release_v1(BondryEgressCallResult *result) {
+    free(result);
+}
+
+BondryStatus bondry_egress_mcp_discover_v1(
+    const BondryEgressHandle *egress,
+    const uint8_t *configuration_json,
+    size_t configuration_json_length,
+    BondryEgressMcpDiscoveryResult **out_result
+) {
+    static const uint8_t output[] =
+        "{\"protocol_version\":\"2026-07-28\",\"tools\":[{\"name\":\"battery:status\","
+        "\"description\":\"Battery status\",\"input_schema\":{\"type\":\"object\"}}]}";
+    if (out_result != NULL) {
+        *out_result = NULL;
+    }
+    if (egress == NULL || configuration_json == NULL || configuration_json_length == 0 ||
+        out_result == NULL) {
+        return BONDRY_STATUS_NULL_POINTER;
+    }
+    BondryEgressMcpDiscoveryResult *result = malloc(sizeof(*result));
+    if (result == NULL) {
+        return BONDRY_STATUS_INTERNAL_FAILURE;
+    }
+    result->json = output;
+    result->length = sizeof(output) - 1;
+    *out_result = result;
+    return BONDRY_STATUS_OK;
+}
+
+BondryStatus bondry_egress_mcp_discovery_result_json_v1(
+    const BondryEgressMcpDiscoveryResult *result,
+    const uint8_t **out_json,
+    size_t *out_length
+) {
+    if (result == NULL || out_json == NULL || out_length == NULL) {
+        return BONDRY_STATUS_NULL_POINTER;
+    }
+    *out_json = result->json;
+    *out_length = result->length;
+    return BONDRY_STATUS_OK;
+}
+
+void bondry_egress_mcp_discovery_result_release_v1(
+    BondryEgressMcpDiscoveryResult *result
+) {
+    free(result);
 }
 
 BondryStatus bondry_egress_delivery_status_v1(

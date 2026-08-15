@@ -57,7 +57,10 @@ typedef int32_t BondryStatus;
 
 #define BONDRY_EGRESS_MAX_RUNTIME_CONFIGURATION_BYTES_V1 ((size_t)65536)
 #define BONDRY_EGRESS_MAX_ROUTE_CONFIGURATION_BYTES_V1 ((size_t)131072)
+#define BONDRY_EGRESS_MAX_DISCOVERY_CONFIGURATION_BYTES_V1 ((size_t)131072)
 #define BONDRY_EGRESS_MAX_EVENT_PAYLOAD_BYTES_V1 ((size_t)229376)
+#define BONDRY_EGRESS_MIN_MCP_RESULT_BYTES_V1 ((size_t)4096)
+#define BONDRY_EGRESS_MAX_MCP_RESULT_BYTES_V1 ((size_t)1048576)
 
 #define BONDRY_STATUS_EGRESS_START_FAILED ((BondryStatus)34)
 #define BONDRY_STATUS_EGRESS_STOP_FAILED ((BondryStatus)35)
@@ -71,6 +74,20 @@ typedef int32_t BondryStatus;
 #define BONDRY_STATUS_EGRESS_ROUTE_DISABLED ((BondryStatus)43)
 #define BONDRY_STATUS_EGRESS_UNSUPPORTED_OPERATION ((BondryStatus)44)
 #define BONDRY_STATUS_EGRESS_DELIVERY_LOG ((BondryStatus)45)
+#define BONDRY_STATUS_EGRESS_CALL_CAPACITY ((BondryStatus)46)
+#define BONDRY_STATUS_EGRESS_CALL_FAILED ((BondryStatus)47)
+#define BONDRY_STATUS_EGRESS_RESULT_TOO_LARGE ((BondryStatus)48)
+#define BONDRY_STATUS_EGRESS_DISCOVERY_SECRET ((BondryStatus)49)
+#define BONDRY_STATUS_EGRESS_DISCOVERY_ENDPOINT_POLICY ((BondryStatus)50)
+#define BONDRY_STATUS_EGRESS_DISCOVERY_DEADLINE ((BondryStatus)51)
+#define BONDRY_STATUS_EGRESS_DISCOVERY_UNAVAILABLE ((BondryStatus)52)
+#define BONDRY_STATUS_EGRESS_DISCOVERY_RESPONSE_TOO_LARGE ((BondryStatus)53)
+#define BONDRY_STATUS_EGRESS_DISCOVERY_UNSUPPORTED_PROTOCOL ((BondryStatus)54)
+#define BONDRY_STATUS_EGRESS_DISCOVERY_UNSUPPORTED_RESPONSE_MODE ((BondryStatus)55)
+#define BONDRY_STATUS_EGRESS_DISCOVERY_REJECTED ((BondryStatus)56)
+#define BONDRY_STATUS_EGRESS_DISCOVERY_INVALID_RESPONSE ((BondryStatus)57)
+#define BONDRY_STATUS_EGRESS_DISCOVERY_TOOL_LIMIT ((BondryStatus)58)
+#define BONDRY_STATUS_EGRESS_DISCOVERY_INVALID_SCHEMA ((BondryStatus)59)
 
 #define BONDRY_HTTP_RESULT_RESPONSE_V1 ((uint32_t)1)
 #define BONDRY_HTTP_RESULT_ERROR_V1 ((uint32_t)2)
@@ -102,6 +119,8 @@ typedef int32_t BondryStatus;
 #define BONDRY_TRANSPORT_ERROR_INVALID_MESSAGE_V1 ((uint32_t)18)
 
 typedef struct BondryEgressHandle BondryEgressHandle;
+typedef struct BondryEgressCallResult BondryEgressCallResult;
+typedef struct BondryEgressMcpDiscoveryResult BondryEgressMcpDiscoveryResult;
 typedef struct BondryStoreHandle BondryStoreHandle;
 
 typedef struct BondryByteSliceV1 {
@@ -278,6 +297,51 @@ BondryStatus bondry_egress_emit_v1(
     size_t delivery_id_length,
     const uint8_t *payload_json,
     size_t payload_json_length
+);
+
+/* Call blocks until its independent lane completes or reaches its route deadline.
+ * max_result_bytes is a second, caller-owned return bound inside the public MCP
+ * range; the route's configured result limit remains the transport read bound.
+ * On success out_result owns one opaque result that must be released exactly once. */
+BondryStatus bondry_egress_call_v1(
+    const BondryEgressHandle *egress,
+    const uint8_t *route_id,
+    size_t route_id_length,
+    const uint8_t *delivery_id,
+    size_t delivery_id_length,
+    const uint8_t *payload_json,
+    size_t payload_json_length,
+    size_t max_result_bytes,
+    BondryEgressCallResult **out_result
+);
+
+/* Returned JSON is borrowed from result and remains valid only until release. */
+BondryStatus bondry_egress_call_result_json_v1(
+    const BondryEgressCallResult *result,
+    const uint8_t **out_json,
+    size_t *out_length,
+    uint32_t *out_category
+);
+void bondry_egress_call_result_release_v1(BondryEgressCallResult *result);
+
+/* Discovery is explicit, configuration-time only, and never scans or polls.
+ * Configuration selects one endpoint, credentials, policy, timeout, and bounds.
+ * On success out_result owns one opaque result that must be released exactly once. */
+BondryStatus bondry_egress_mcp_discover_v1(
+    const BondryEgressHandle *egress,
+    const uint8_t *configuration_json,
+    size_t configuration_json_length,
+    BondryEgressMcpDiscoveryResult **out_result
+);
+
+/* Returned JSON is borrowed from result and remains valid only until release. */
+BondryStatus bondry_egress_mcp_discovery_result_json_v1(
+    const BondryEgressMcpDiscoveryResult *result,
+    const uint8_t **out_json,
+    size_t *out_length
+);
+void bondry_egress_mcp_discovery_result_release_v1(
+    BondryEgressMcpDiscoveryResult *result
 );
 
 BondryStatus bondry_egress_delivery_status_v1(

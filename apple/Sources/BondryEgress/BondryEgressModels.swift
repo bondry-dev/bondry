@@ -230,6 +230,193 @@ public struct BondryWebhookRoute: Equatable, Sendable {
   }
 }
 
+public indirect enum BondryJSONValue: Codable, Equatable, Sendable {
+  case null
+  case boolean(Bool)
+  case integer(Int64)
+  case number(Double)
+  case string(String)
+  case array([BondryJSONValue])
+  case object([String: BondryJSONValue])
+
+  public init(from decoder: Decoder) throws {
+    let container = try decoder.singleValueContainer()
+    if container.decodeNil() {
+      self = .null
+    } else if let value = try? container.decode(Bool.self) {
+      self = .boolean(value)
+    } else if let value = try? container.decode(Int64.self) {
+      self = .integer(value)
+    } else if let value = try? container.decode(Double.self) {
+      self = .number(value)
+    } else if let value = try? container.decode(String.self) {
+      self = .string(value)
+    } else if let value = try? container.decode([BondryJSONValue].self) {
+      self = .array(value)
+    } else {
+      self = .object(try container.decode([String: BondryJSONValue].self))
+    }
+  }
+
+  public func encode(to encoder: Encoder) throws {
+    var container = encoder.singleValueContainer()
+    switch self {
+    case .null: try container.encodeNil()
+    case .boolean(let value): try container.encode(value)
+    case .integer(let value): try container.encode(value)
+    case .number(let value): try container.encode(value)
+    case .string(let value): try container.encode(value)
+    case .array(let value): try container.encode(value)
+    case .object(let value): try container.encode(value)
+    }
+  }
+}
+
+public enum BondryMCPProtocolVersion: String, Codable, Equatable, Sendable {
+  case v2026_07_28 = "2026-07-28"
+  case v2025_11_25 = "2025-11-25"
+}
+
+public struct BondryMCPTool: Codable, Equatable, Sendable {
+  public let name: String
+  public let description: String?
+  public let inputSchema: BondryJSONValue
+
+  public init(name: String, description: String? = nil, inputSchema: BondryJSONValue) {
+    self.name = name
+    self.description = description
+    self.inputSchema = inputSchema
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case name
+    case description
+    case inputSchema = "input_schema"
+  }
+}
+
+public struct BondryMCPDiscoveryResult: Decodable, Equatable, Sendable {
+  public let protocolVersion: BondryMCPProtocolVersion
+  public let tools: [BondryMCPTool]
+
+  private enum CodingKeys: String, CodingKey {
+    case protocolVersion = "protocol_version"
+    case tools
+  }
+}
+
+public enum BondryMCPAuthentication: Equatable, Sendable {
+  case none(endpoint: URL)
+  case bearer(endpoint: URL, secret: BondrySecretReference)
+}
+
+public struct BondryMCPLimits: Equatable, Sendable {
+  public static let standard = BondryMCPLimits(
+    schemaBytes: 16 * 1_024,
+    resultBytes: 256 * 1_024
+  )
+
+  public let schemaBytes: Int
+  public let resultBytes: Int
+
+  public init(schemaBytes: Int, resultBytes: Int) {
+    self.schemaBytes = schemaBytes
+    self.resultBytes = resultBytes
+  }
+}
+
+public struct BondryMCPDiscoveryLimits: Equatable, Sendable {
+  public static let standard = BondryMCPDiscoveryLimits(
+    tools: 128,
+    schemaBytes: 16 * 1_024,
+    responseBytes: 64 * 1_024
+  )
+
+  public let tools: Int
+  public let schemaBytes: Int
+  public let responseBytes: Int
+
+  public init(tools: Int, schemaBytes: Int, responseBytes: Int) {
+    self.tools = tools
+    self.schemaBytes = schemaBytes
+    self.responseBytes = responseBytes
+  }
+}
+
+public struct BondryMCPDiscoveryConfiguration: Equatable, Sendable {
+  public let authentication: BondryMCPAuthentication
+  public let endpointPolicy: BondryEndpointPolicy
+  public let limits: BondryMCPDiscoveryLimits
+  public let requestTimeoutMilliseconds: UInt64
+
+  public init(
+    authentication: BondryMCPAuthentication,
+    endpointPolicy: BondryEndpointPolicy = BondryEndpointPolicy(),
+    limits: BondryMCPDiscoveryLimits = .standard,
+    requestTimeoutMilliseconds: UInt64 = 30_000
+  ) {
+    self.authentication = authentication
+    self.endpointPolicy = endpointPolicy
+    self.limits = limits
+    self.requestTimeoutMilliseconds = requestTimeoutMilliseconds
+  }
+}
+
+public struct BondryMCPRoute: Equatable, Sendable {
+  public let id: String
+  public let enabled: Bool
+  public let payload: BondryPayloadContract
+  public let requestTimeoutMilliseconds: UInt64
+  public let retry: BondryEgressRetryPolicy
+  public let admission: BondryEgressAdmissionPolicy
+  public let authentication: BondryMCPAuthentication
+  public let endpointPolicy: BondryEndpointPolicy
+  public let protocolVersion: BondryMCPProtocolVersion
+  public let tool: BondryMCPTool
+  public let limits: BondryMCPLimits
+  public let automaticRetry: Bool
+
+  public init(
+    id: String,
+    enabled: Bool = true,
+    payload: BondryPayloadContract,
+    requestTimeoutMilliseconds: UInt64 = 30_000,
+    retry: BondryEgressRetryPolicy = .standard,
+    admission: BondryEgressAdmissionPolicy = .standard,
+    authentication: BondryMCPAuthentication,
+    endpointPolicy: BondryEndpointPolicy = BondryEndpointPolicy(),
+    protocolVersion: BondryMCPProtocolVersion,
+    tool: BondryMCPTool,
+    limits: BondryMCPLimits = .standard,
+    automaticRetry: Bool = false
+  ) {
+    self.id = id
+    self.enabled = enabled
+    self.payload = payload
+    self.requestTimeoutMilliseconds = requestTimeoutMilliseconds
+    self.retry = retry
+    self.admission = admission
+    self.authentication = authentication
+    self.endpointPolicy = endpointPolicy
+    self.protocolVersion = protocolVersion
+    self.tool = tool
+    self.limits = limits
+    self.automaticRetry = automaticRetry
+  }
+}
+
+public struct BondryMCPCallResult: Equatable, Sendable {
+  public let deliveryID: String
+  public let category: BondryDeliveryResultCategory
+  public let rawJSON: Data
+
+  public init(deliveryID: String, category: BondryDeliveryResultCategory, rawJSON: Data) {
+    self.deliveryID = deliveryID
+    self.category = category
+    self.rawJSON = rawJSON
+  }
+}
+
 public struct BondryEgressRouteSummary: Decodable, Equatable, Sendable {
   public let id: String
   public let enabled: Bool
@@ -305,6 +492,20 @@ public enum BondryEgressError: Error, Equatable, Sendable {
   case routeDisabled
   case unsupportedOperation
   case deliveryLog
+  case callCapacity
+  case callFailed
+  case resultTooLarge
+  case discoverySecretUnavailable
+  case discoveryEndpointPolicy
+  case discoveryDeadlineExceeded
+  case discoveryUnavailable
+  case discoveryResponseTooLarge
+  case discoveryUnsupportedProtocol
+  case discoveryUnsupportedResponseMode
+  case discoveryRejected
+  case discoveryInvalidResponse
+  case discoveryToolLimit
+  case discoveryInvalidSchema
   case internalFailure(Int32)
 
   init(status: BondryStatus) {
@@ -332,6 +533,22 @@ public enum BondryEgressError: Error, Equatable, Sendable {
     case BONDRY_STATUS_EGRESS_ROUTE_DISABLED: self = .routeDisabled
     case BONDRY_STATUS_EGRESS_UNSUPPORTED_OPERATION: self = .unsupportedOperation
     case BONDRY_STATUS_EGRESS_DELIVERY_LOG: self = .deliveryLog
+    case BONDRY_STATUS_EGRESS_CALL_CAPACITY: self = .callCapacity
+    case BONDRY_STATUS_EGRESS_CALL_FAILED: self = .callFailed
+    case BONDRY_STATUS_EGRESS_RESULT_TOO_LARGE: self = .resultTooLarge
+    case BONDRY_STATUS_EGRESS_DISCOVERY_SECRET: self = .discoverySecretUnavailable
+    case BONDRY_STATUS_EGRESS_DISCOVERY_ENDPOINT_POLICY: self = .discoveryEndpointPolicy
+    case BONDRY_STATUS_EGRESS_DISCOVERY_DEADLINE: self = .discoveryDeadlineExceeded
+    case BONDRY_STATUS_EGRESS_DISCOVERY_UNAVAILABLE: self = .discoveryUnavailable
+    case BONDRY_STATUS_EGRESS_DISCOVERY_RESPONSE_TOO_LARGE: self = .discoveryResponseTooLarge
+    case BONDRY_STATUS_EGRESS_DISCOVERY_UNSUPPORTED_PROTOCOL:
+      self = .discoveryUnsupportedProtocol
+    case BONDRY_STATUS_EGRESS_DISCOVERY_UNSUPPORTED_RESPONSE_MODE:
+      self = .discoveryUnsupportedResponseMode
+    case BONDRY_STATUS_EGRESS_DISCOVERY_REJECTED: self = .discoveryRejected
+    case BONDRY_STATUS_EGRESS_DISCOVERY_INVALID_RESPONSE: self = .discoveryInvalidResponse
+    case BONDRY_STATUS_EGRESS_DISCOVERY_TOOL_LIMIT: self = .discoveryToolLimit
+    case BONDRY_STATUS_EGRESS_DISCOVERY_INVALID_SCHEMA: self = .discoveryInvalidSchema
     default: self = .internalFailure(status)
     }
   }

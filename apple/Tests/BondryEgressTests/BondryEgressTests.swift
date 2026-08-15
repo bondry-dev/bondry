@@ -116,6 +116,68 @@ final class BondryEgressTests: XCTestCase {
     XCTAssertEqual(bondry_test_egress_stop_count(), 1)
   }
 
+  func testDiscoversRegistersAndCallsMCPRoute() async throws {
+    let runtime = try makeRuntime()
+    let egress = try runtime.startEgress(secretProvider: makeSecretProvider())
+    defer { try? egress.stop() }
+    let endpoint = try XCTUnwrap(URL(string: "https://example.com/mcp"))
+
+    let discovery = try await egress.discoverMCP(
+      BondryMCPDiscoveryConfiguration(authentication: .none(endpoint: endpoint))
+    )
+    XCTAssertEqual(discovery.protocolVersion, .v2026_07_28)
+    XCTAssertEqual(discovery.tools.count, 1)
+    XCTAssertEqual(discovery.tools[0].name, "battery:status")
+    XCTAssertEqual(
+      discovery.tools[0].inputSchema,
+      .object(["type": .string("object")])
+    )
+
+    let route = BondryMCPRoute(
+      id: "mcp-alerts",
+      payload: BondryPayloadContract(
+        fields: [BondryPayloadField(name: "detail", type: .boolean)]
+      ),
+      authentication: .none(endpoint: endpoint),
+      protocolVersion: discovery.protocolVersion,
+      tool: discovery.tools[0]
+    )
+    try egress.register(route)
+    let root = try XCTUnwrap(
+      try JSONSerialization.jsonObject(with: capturedEgressRoute()) as? [String: Any]
+    )
+    let kind = try XCTUnwrap(root["kind"] as? [String: Any])
+    XCTAssertEqual(kind["type"] as? String, "mcp")
+    XCTAssertEqual(kind["endpoint"] as? String, endpoint.absoluteString)
+    XCTAssertEqual(kind["protocol_version"] as? String, "2026-07-28")
+    XCTAssertEqual(kind["automatic_retry"] as? Bool, false)
+    let authentication = try XCTUnwrap(kind["authentication"] as? [String: Any])
+    XCTAssertEqual(authentication["type"] as? String, "none")
+
+    let result = try await egress.call(
+      routeID: route.id,
+      deliveryID: "mcp-call-1",
+      payload: ["detail": true]
+    )
+    XCTAssertEqual(result.deliveryID, "mcp-call-1")
+    XCTAssertEqual(result.category, .succeeded)
+    let output = try XCTUnwrap(
+      try JSONSerialization.jsonObject(with: result.rawJSON) as? [String: Any]
+    )
+    let content = try XCTUnwrap(output["content"] as? [[String: Any]])
+    XCTAssertEqual(content.first?["text"] as? String, "ok")
+
+    await XCTAssertThrowsErrorAsync(
+      try await egress.call(
+        routeID: route.id,
+        payload: ["detail": true],
+        maxResultBytes: 1
+      )
+    ) { error in
+      XCTAssertEqual(error as? BondryEgressError, .invalidArgument)
+    }
+  }
+
   private func makeRuntime() throws -> BondryRuntime {
     let key = try DatabaseKeyMaterial(rawRepresentation: Data(repeating: 0x55, count: 32))
     return try BondryRuntime.open(
@@ -144,5 +206,19 @@ final class BondryEgressTests: XCTestCase {
         bondry_test_egress_route_byte($0)
       }
     )
+  }
+}
+
+private func XCTAssertThrowsErrorAsync<T>(
+  _ expression: @autoclosure () async throws -> T,
+  _ errorHandler: (Error) -> Void,
+  file: StaticString = #filePath,
+  line: UInt = #line
+) async {
+  do {
+    _ = try await expression()
+    XCTFail("Expected an error", file: file, line: line)
+  } catch {
+    errorHandler(error)
   }
 }

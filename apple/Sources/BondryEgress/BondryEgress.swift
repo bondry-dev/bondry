@@ -4,11 +4,15 @@ import CBondryEgress
 import Foundation
 
 public final class BondryEgress: @unchecked Sendable {
-  private let lock = NSLock()
+  private let condition = NSCondition()
   private var handle: OpaquePointer?
+  private var activeOperations = 0
+  private var stopping = false
 
   public var isRunning: Bool {
-    lock.withLock { handle != nil }
+    condition.lock()
+    defer { condition.unlock() }
+    return handle != nil && !stopping
   }
 
   public func register(_ route: BondryWebhookRoute) throws {
@@ -21,6 +25,17 @@ public final class BondryEgress: @unchecked Sendable {
           bytes.baseAddress,
           bytes.count
         )
+      }
+      try requireEgressSuccess(status)
+    }
+  }
+
+  public func register(_ route: BondryMCPRoute) throws {
+    let input = try encodeRoute(route)
+    try withHandle { handle in
+      let status = input.withUnsafeBytes { buffer in
+        let bytes = buffer.bindMemory(to: UInt8.self)
+        return bondry_egress_route_register_v1(handle, bytes.baseAddress, bytes.count)
       }
       try requireEgressSuccess(status)
     }
@@ -90,6 +105,45 @@ public final class BondryEgress: @unchecked Sendable {
     )
   }
 
+  public func call(
+    routeID: String,
+    deliveryID: String = UUID().uuidString,
+    payloadJSON: Data,
+    maxResultBytes: Int = 256 * 1_024
+  ) async throws -> BondryMCPCallResult {
+    try await Task.detached {
+      try self.callSynchronously(
+        routeID: routeID,
+        deliveryID: deliveryID,
+        payloadJSON: payloadJSON,
+        maxResultBytes: maxResultBytes
+      )
+    }.value
+  }
+
+  public func call<Payload: Encodable & Sendable>(
+    routeID: String,
+    deliveryID: String = UUID().uuidString,
+    payload: Payload,
+    maxResultBytes: Int = 256 * 1_024
+  ) async throws -> BondryMCPCallResult {
+    try await call(
+      routeID: routeID,
+      deliveryID: deliveryID,
+      payloadJSON: try JSONEncoder().encode(payload),
+      maxResultBytes: maxResultBytes
+    )
+  }
+
+  public func discoverMCP(
+    _ configuration: BondryMCPDiscoveryConfiguration
+  ) async throws -> BondryMCPDiscoveryResult {
+    let input = try encodeDiscovery(configuration)
+    return try await Task.detached {
+      try self.discoverMCPSynchronously(input)
+    }.value
+  }
+
   public func deliveryStatus(for deliveryID: String) throws -> BondryDeliveryStatus? {
     try withHandle { handle in
       var found: UInt8 = 0
@@ -114,15 +168,28 @@ public final class BondryEgress: @unchecked Sendable {
   }
 
   public func stop() throws {
-    let handle = lock.withLock {
-      let value = self.handle
-      self.handle = nil
-      return value
+    condition.lock()
+    while stopping {
+      condition.wait()
     }
-    guard let handle else {
+    guard handle != nil else {
+      condition.unlock()
       return
     }
-    try requireEgressSuccess(bondry_egress_stop_v1(handle))
+    stopping = true
+    while activeOperations > 0 {
+      condition.wait()
+    }
+    let handle = self.handle
+    self.handle = nil
+    condition.unlock()
+
+    let status = bondry_egress_stop_v1(handle)
+    condition.lock()
+    stopping = false
+    condition.broadcast()
+    condition.unlock()
+    try requireEgressSuccess(status)
   }
 
   deinit {
@@ -134,11 +201,121 @@ public final class BondryEgress: @unchecked Sendable {
   }
 
   private func withHandle<Result>(_ operation: (OpaquePointer) throws -> Result) throws -> Result {
-    try lock.withLock {
-      guard let handle else {
-        throw BondryEgressError.stopped
+    condition.lock()
+    guard let handle, !stopping else {
+      condition.unlock()
+      throw BondryEgressError.stopped
+    }
+    activeOperations += 1
+    condition.unlock()
+    defer {
+      condition.lock()
+      activeOperations -= 1
+      if activeOperations == 0 {
+        condition.broadcast()
       }
-      return try operation(handle)
+      condition.unlock()
+    }
+    return try operation(handle)
+  }
+
+  private func callSynchronously(
+    routeID: String,
+    deliveryID: String,
+    payloadJSON: Data,
+    maxResultBytes: Int
+  ) throws -> BondryMCPCallResult {
+    guard maxResultBytes >= Int(BONDRY_EGRESS_MIN_MCP_RESULT_BYTES_V1),
+      maxResultBytes <= Int(BONDRY_EGRESS_MAX_MCP_RESULT_BYTES_V1)
+    else {
+      throw BondryEgressError.invalidArgument
+    }
+    return try withHandle { handle in
+      let routeBytes = Array(routeID.utf8)
+      let deliveryBytes = Array(deliveryID.utf8)
+      var result: OpaquePointer?
+      let status = routeBytes.withUnsafeBufferPointer { route in
+        deliveryBytes.withUnsafeBufferPointer { delivery in
+          payloadJSON.withUnsafeBytes { payload in
+            bondry_egress_call_v1(
+              handle,
+              route.baseAddress,
+              route.count,
+              delivery.baseAddress,
+              delivery.count,
+              payload.bindMemory(to: UInt8.self).baseAddress,
+              payload.count,
+              maxResultBytes,
+              &result
+            )
+          }
+        }
+      }
+      guard status == BONDRY_STATUS_OK else {
+        if let result {
+          bondry_egress_call_result_release_v1(result)
+        }
+        throw BondryEgressError(status: status)
+      }
+      guard let result else {
+        throw BondryEgressError.invalidHandle
+      }
+      defer { bondry_egress_call_result_release_v1(result) }
+      var bytes: UnsafePointer<UInt8>?
+      var length = 0
+      var category: UInt32 = 0
+      try requireEgressSuccess(
+        bondry_egress_call_result_json_v1(result, &bytes, &length, &category)
+      )
+      let data = try copyBorrowedBytes(bytes, length: length)
+      guard let decodedCategory = try decodeResultCategory(category, bytes: UInt32(length)) else {
+        throw BondryEgressError.invalidData
+      }
+      return BondryMCPCallResult(
+        deliveryID: deliveryID,
+        category: decodedCategory,
+        rawJSON: data
+      )
+    }
+  }
+
+  private func discoverMCPSynchronously(
+    _ input: Data
+  ) throws -> BondryMCPDiscoveryResult {
+    let data = try withHandle { handle in
+      var result: OpaquePointer?
+      let status = input.withUnsafeBytes { buffer in
+        let bytes = buffer.bindMemory(to: UInt8.self)
+        return bondry_egress_mcp_discover_v1(
+          handle,
+          bytes.baseAddress,
+          bytes.count,
+          &result
+        )
+      }
+      guard status == BONDRY_STATUS_OK else {
+        if let result {
+          bondry_egress_mcp_discovery_result_release_v1(result)
+        }
+        throw BondryEgressError(status: status)
+      }
+      guard let result else {
+        throw BondryEgressError.invalidHandle
+      }
+      defer { bondry_egress_mcp_discovery_result_release_v1(result) }
+      var bytes: UnsafePointer<UInt8>?
+      var length = 0
+      try requireEgressSuccess(
+        bondry_egress_mcp_discovery_result_json_v1(result, &bytes, &length)
+      )
+      return try copyBorrowedBytes(bytes, length: length)
+    }
+    do {
+      return try JSONDecoder().decode(BondryMCPDiscoveryResult.self, from: data)
+    } catch let error as BondryEgressError {
+      throw error
+    } catch {
+      throw BondryEgressError.invalidData
     }
   }
 
@@ -279,6 +456,27 @@ private struct RouteInput: Encodable {
   }
 }
 
+private struct MCPRouteInput: Encodable {
+  let version = 1
+  let id: String
+  let enabled: Bool
+  let payload: PayloadInput
+  let requestTimeoutMilliseconds: UInt64
+  let retry: RetryInput
+  let admission: AdmissionInput
+  let kind: MCPKindInput
+
+  init(_ route: BondryMCPRoute) {
+    id = route.id
+    enabled = route.enabled
+    payload = PayloadInput(route.payload)
+    requestTimeoutMilliseconds = route.requestTimeoutMilliseconds
+    retry = RetryInput(route.retry)
+    admission = AdmissionInput(route.admission)
+    kind = MCPKindInput(route)
+  }
+}
+
 private struct PayloadInput: Encodable {
   let maxBytes: Int
   let fields: [PayloadFieldInput]
@@ -333,6 +531,54 @@ private struct WebhookKindInput: Encodable {
     authentication = AuthenticationInput(route.authentication)
     policy = PolicyInput(route.endpointPolicy)
     limits = WebhookLimitsInput(route.limits)
+  }
+}
+
+private struct MCPKindInput: Encodable {
+  let type = "mcp"
+  let endpoint: String
+  let authentication: MCPAuthenticationInput
+  let policy: PolicyInput
+  let protocolVersion: String
+  let tool: BondryMCPTool
+  let limits: MCPLimitsInput
+  let automaticRetry: Bool
+
+  init(_ route: BondryMCPRoute) {
+    switch route.authentication {
+    case .none(let endpoint):
+      self.endpoint = endpoint.absoluteString
+      authentication = .none
+    case .bearer(let endpoint, let secret):
+      self.endpoint = endpoint.absoluteString
+      authentication = .bearer(secretRef: secret.rawValue)
+    }
+    policy = PolicyInput(route.endpointPolicy)
+    protocolVersion = route.protocolVersion.rawValue
+    tool = route.tool
+    limits = MCPLimitsInput(route.limits)
+    automaticRetry = route.automaticRetry
+  }
+}
+
+private enum MCPAuthenticationInput: Encodable {
+  case none
+  case bearer(secretRef: String)
+
+  func encode(to encoder: Encoder) throws {
+    var container = encoder.container(keyedBy: CodingKeys.self)
+    switch self {
+    case .none:
+      try container.encode("none", forKey: .type)
+    case .bearer(let secretRef):
+      try container.encode("bearer", forKey: .type)
+      try container.encode(secretRef, forKey: .secretRef)
+    }
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case type
+    case secretRef
   }
 }
 
@@ -412,12 +658,65 @@ private struct WebhookLimitsInput: Encodable {
   }
 }
 
+private struct MCPLimitsInput: Encodable {
+  let schemaBytes: Int
+  let resultBytes: Int
+
+  init(_ limits: BondryMCPLimits) {
+    schemaBytes = limits.schemaBytes
+    resultBytes = limits.resultBytes
+  }
+}
+
+private struct MCPDiscoveryLimitsInput: Encodable {
+  let tools: Int
+  let schemaBytes: Int
+  let responseBytes: Int
+
+  init(_ limits: BondryMCPDiscoveryLimits) {
+    tools = limits.tools
+    schemaBytes = limits.schemaBytes
+    responseBytes = limits.responseBytes
+  }
+}
+
+private struct MCPDiscoveryInput: Encodable {
+  let version = 1
+  let endpoint: String
+  let authentication: MCPAuthenticationInput
+  let policy: PolicyInput
+  let limits: MCPDiscoveryLimitsInput
+  let requestTimeoutMilliseconds: UInt64
+
+  init(_ configuration: BondryMCPDiscoveryConfiguration) {
+    switch configuration.authentication {
+    case .none(let endpoint):
+      self.endpoint = endpoint.absoluteString
+      authentication = .none
+    case .bearer(let endpoint, let secret):
+      self.endpoint = endpoint.absoluteString
+      authentication = .bearer(secretRef: secret.rawValue)
+    }
+    policy = PolicyInput(configuration.endpointPolicy)
+    limits = MCPDiscoveryLimitsInput(configuration.limits)
+    requestTimeoutMilliseconds = configuration.requestTimeoutMilliseconds
+  }
+}
+
 private func encodeRuntimeConfiguration(_ configuration: BondryEgressConfiguration) throws -> Data {
   try encodeEgressJSON(RuntimeConfigurationInput(configuration))
 }
 
 private func encodeRoute(_ route: BondryWebhookRoute) throws -> Data {
   try encodeEgressJSON(RouteInput(route))
+}
+
+private func encodeRoute(_ route: BondryMCPRoute) throws -> Data {
+  try encodeEgressJSON(MCPRouteInput(route))
+}
+
+private func encodeDiscovery(_ configuration: BondryMCPDiscoveryConfiguration) throws -> Data {
+  try encodeEgressJSON(MCPDiscoveryInput(configuration))
 }
 
 private func encodeEgressJSON<Value: Encodable>(_ value: Value) throws -> Data {
@@ -447,6 +746,19 @@ private func queryEgressBytes(
     throw BondryEgressError.invalidData
   }
   return data
+}
+
+private func copyBorrowedBytes(_ bytes: UnsafePointer<UInt8>?, length: Int) throws -> Data {
+  guard length >= 0 else {
+    throw BondryEgressError.invalidData
+  }
+  if length == 0 {
+    return Data()
+  }
+  guard let bytes else {
+    throw BondryEgressError.invalidData
+  }
+  return Data(bytes: bytes, count: length)
 }
 
 private func requireEgressSuccess(_ status: BondryStatus) throws {

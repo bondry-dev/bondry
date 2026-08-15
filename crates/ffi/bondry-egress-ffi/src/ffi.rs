@@ -2,6 +2,7 @@ use std::{
     panic::{AssertUnwindSafe, catch_unwind},
     ptr, slice,
     sync::Arc,
+    time::Instant,
 };
 
 use bondry_delivery_store::{
@@ -11,17 +12,24 @@ use bondry_delivery_store::{
 use bondry_egress::{
     AdmissionError, KindOperationError, PayloadError, RouteRegistryError, RouteSummary,
 };
+use bondry_egress_mcp::{
+    MAX_MCP_RESULT_BYTES, MIN_MCP_RESULT_BYTES, McpDiscoveryError, McpDiscoveryOperation,
+    McpDiscoveryResult, McpDiscoveryTransition,
+};
 use bondry_egress_runtime::{
     EgressRuntime, EgressRuntimeError, EgressRuntimeStartError, EgressRuntimeStopError,
 };
+use bondry_secrets::{SecretProvider, SecretProviderError};
+use bondry_transport::{HttpTransport, TransportError};
 use bytes::Bytes;
 use serde::Serialize;
 
 use crate::{
     BondryHTTPTransportV1, BondrySecretProviderV1,
     config::{
-        ConfigurationError, MAX_ROUTE_CONFIGURATION_BYTES, MAX_RUNTIME_CONFIGURATION_BYTES,
-        route_configuration, runtime_configuration,
+        ConfigurationError, MAX_DISCOVERY_CONFIGURATION_BYTES, MAX_ROUTE_CONFIGURATION_BYTES,
+        MAX_RUNTIME_CONFIGURATION_BYTES, mcp_discovery_configuration, route_configuration,
+        runtime_configuration,
     },
     secrets::ForeignSecretProvider,
     store::{BondryStoreHandle, ForeignDeliveryLog},
@@ -69,6 +77,30 @@ pub const BONDRY_STATUS_EGRESS_DELIVERY_LOG: i32 = 45;
 pub const BONDRY_STATUS_EGRESS_CALL_CAPACITY: i32 = 46;
 /// An accepted host call reached a terminal delivery failure.
 pub const BONDRY_STATUS_EGRESS_CALL_FAILED: i32 = 47;
+/// A completed call result exceeded the caller's explicit return bound.
+pub const BONDRY_STATUS_EGRESS_RESULT_TOO_LARGE: i32 = 48;
+/// Host-owned discovery credentials were absent or invalid.
+pub const BONDRY_STATUS_EGRESS_DISCOVERY_SECRET: i32 = 49;
+/// Discovery connection evidence violated endpoint or TLS policy.
+pub const BONDRY_STATUS_EGRESS_DISCOVERY_ENDPOINT_POLICY: i32 = 50;
+/// Discovery exceeded its absolute configuration-time deadline.
+pub const BONDRY_STATUS_EGRESS_DISCOVERY_DEADLINE: i32 = 51;
+/// The explicit discovery endpoint could not service the operation.
+pub const BONDRY_STATUS_EGRESS_DISCOVERY_UNAVAILABLE: i32 = 52;
+/// The discovery response exceeded its configured byte bound.
+pub const BONDRY_STATUS_EGRESS_DISCOVERY_RESPONSE_TOO_LARGE: i32 = 53;
+/// The discovery endpoint supports no compatible protocol revision.
+pub const BONDRY_STATUS_EGRESS_DISCOVERY_UNSUPPORTED_PROTOCOL: i32 = 54;
+/// The discovery endpoint selected an unsupported streaming response mode.
+pub const BONDRY_STATUS_EGRESS_DISCOVERY_UNSUPPORTED_RESPONSE_MODE: i32 = 55;
+/// The discovery endpoint rejected a valid request.
+pub const BONDRY_STATUS_EGRESS_DISCOVERY_REJECTED: i32 = 56;
+/// Discovery returned invalid MCP framing.
+pub const BONDRY_STATUS_EGRESS_DISCOVERY_INVALID_RESPONSE: i32 = 57;
+/// Discovery returned more tools than the configured bound.
+pub const BONDRY_STATUS_EGRESS_DISCOVERY_TOOL_LIMIT: i32 = 58;
+/// Discovery returned an invalid or oversized tool schema.
+pub const BONDRY_STATUS_EGRESS_DISCOVERY_INVALID_SCHEMA: i32 = 59;
 
 const IDENTIFIER_CAPACITY: usize = 129;
 
@@ -80,6 +112,29 @@ pub struct BondryEgressHandle {
 
 struct EgressHandle {
     runtime: EgressRuntime,
+    secrets: Arc<ForeignSecretProvider>,
+    transport: Arc<ForeignHttpTransport>,
+}
+
+/// Opaque owned result of one successful host `call`.
+#[repr(C)]
+pub struct BondryEgressCallResult {
+    _private: [u8; 0],
+}
+
+struct EgressCallResult {
+    json: Bytes,
+    category: u32,
+}
+
+/// Opaque owned JSON result of one successful MCP discovery operation.
+#[repr(C)]
+pub struct BondryEgressMcpDiscoveryResult {
+    _private: [u8; 0],
+}
+
+struct EgressMcpDiscoveryResult {
+    json: Bytes,
 }
 
 /// Fixed non-sensitive delivery status.
@@ -174,17 +229,23 @@ pub unsafe extern "C" fn bondry_egress_start_v1(
             Ok(transport) => Arc::new(transport),
             Err(()) => return BONDRY_STATUS_INVALID_ARGUMENT,
         };
+        let runtime_secrets: Arc<dyn SecretProvider> = secret_provider.clone();
+        let runtime_transport: Arc<dyn HttpTransport> = http_transport.clone();
         let runtime = match EgressRuntime::start(
             configuration.registry,
             configuration.runtime,
             log,
-            secret_provider,
-            http_transport,
+            runtime_secrets,
+            runtime_transport,
         ) {
             Ok(runtime) => runtime,
             Err(error) => return start_error_status(error),
         };
-        let handle = Box::new(EgressHandle { runtime });
+        let handle = Box::new(EgressHandle {
+            runtime,
+            secrets: secret_provider,
+            transport: http_transport,
+        });
         unsafe { out_egress.write(Box::into_raw(handle).cast()) };
         BONDRY_STATUS_OK
     })
@@ -370,6 +431,225 @@ pub unsafe extern "C" fn bondry_egress_emit_v1(
     })
 }
 
+/// Executes one MCP-only call and returns one opaque owned result.
+///
+/// # Safety
+///
+/// The handle must be live. Input buffers must remain readable for this call. `out_result` must be
+/// writable and receives ownership only on success.
+#[must_use]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn bondry_egress_call_v1(
+    egress: *const BondryEgressHandle,
+    route_id: *const u8,
+    route_id_length: usize,
+    delivery_id: *const u8,
+    delivery_id_length: usize,
+    payload_json: *const u8,
+    payload_json_length: usize,
+    max_result_bytes: usize,
+    out_result: *mut *mut BondryEgressCallResult,
+) -> i32 {
+    if out_result.is_null() {
+        return BONDRY_STATUS_NULL_POINTER;
+    }
+    unsafe { out_result.write(ptr::null_mut()) };
+    with_handle(egress, |handle| {
+        if !(MIN_MCP_RESULT_BYTES..=MAX_MCP_RESULT_BYTES).contains(&max_result_bytes) {
+            return BONDRY_STATUS_INVALID_ARGUMENT;
+        }
+        let route = match unsafe { required_identifier(route_id, route_id_length) }
+            .and_then(|value| RouteId::new(value).map_err(|_| BONDRY_STATUS_INVALID_ARGUMENT))
+        {
+            Ok(route) => route,
+            Err(status) => return status,
+        };
+        let delivery = match unsafe { required_identifier(delivery_id, delivery_id_length) }
+            .and_then(|value| DeliveryId::new(value).map_err(|_| BONDRY_STATUS_INVALID_ARGUMENT))
+        {
+            Ok(delivery) => delivery,
+            Err(status) => return status,
+        };
+        let payload = match unsafe {
+            required_bytes(
+                payload_json,
+                payload_json_length,
+                bondry_egress::MAX_EVENT_PAYLOAD_BYTES,
+            )
+        } {
+            Ok(payload) => Bytes::copy_from_slice(payload),
+            Err(status) => return status,
+        };
+        let result = match handle.runtime.call(route, delivery, payload) {
+            Ok(result) => result,
+            Err(error) => return runtime_error_status(error),
+        };
+        let (_, metadata, json) = result.into_parts();
+        if json.len() > max_result_bytes {
+            return BONDRY_STATUS_EGRESS_RESULT_TOO_LARGE;
+        }
+        let result = Box::new(EgressCallResult {
+            json,
+            category: encode_result_category(metadata.category()),
+        });
+        unsafe { out_result.write(Box::into_raw(result).cast()) };
+        BONDRY_STATUS_OK
+    })
+}
+
+/// Borrows raw JSON and non-sensitive category from one owned call result.
+///
+/// # Safety
+///
+/// The result must be live. All output pointers must be writable and non-overlapping. Returned
+/// bytes remain valid only until `bondry_egress_call_result_release_v1` consumes the result.
+#[must_use]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn bondry_egress_call_result_json_v1(
+    result: *const BondryEgressCallResult,
+    out_json: *mut *const u8,
+    out_length: *mut usize,
+    out_category: *mut u32,
+) -> i32 {
+    if out_json.is_null() || out_length.is_null() || out_category.is_null() {
+        return BONDRY_STATUS_NULL_POINTER;
+    }
+    unsafe {
+        out_json.write(ptr::null());
+        out_length.write(0);
+        out_category.write(0);
+    }
+    catch_status(|| {
+        if result.is_null() {
+            return BONDRY_STATUS_NULL_POINTER;
+        }
+        let result = unsafe { &*result.cast::<EgressCallResult>() };
+        unsafe {
+            out_json.write(result.json.as_ptr());
+            out_length.write(result.json.len());
+            out_category.write(result.category);
+        }
+        BONDRY_STATUS_OK
+    })
+}
+
+/// Releases one opaque call result. Null is allowed.
+///
+/// # Safety
+///
+/// A non-null result must be live and exclusively owned. It is consumed exactly once.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn bondry_egress_call_result_release_v1(result: *mut BondryEgressCallResult) {
+    if result.is_null() {
+        return;
+    }
+    let _ = catch_unwind(AssertUnwindSafe(|| unsafe {
+        drop(Box::from_raw(result.cast::<EgressCallResult>()));
+    }));
+}
+
+/// Runs one explicit configuration-time MCP discovery against a supplied endpoint.
+///
+/// # Safety
+///
+/// The egress handle must be live. Configuration bytes must remain readable for this call.
+/// `out_result` must be writable and receives ownership only on success.
+#[must_use]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn bondry_egress_mcp_discover_v1(
+    egress: *const BondryEgressHandle,
+    configuration_json: *const u8,
+    configuration_json_length: usize,
+    out_result: *mut *mut BondryEgressMcpDiscoveryResult,
+) -> i32 {
+    if out_result.is_null() {
+        return BONDRY_STATUS_NULL_POINTER;
+    }
+    unsafe { out_result.write(ptr::null_mut()) };
+    with_handle(egress, |handle| {
+        let bytes = match unsafe {
+            required_bytes(
+                configuration_json,
+                configuration_json_length,
+                MAX_DISCOVERY_CONFIGURATION_BYTES,
+            )
+        } {
+            Ok(bytes) => bytes,
+            Err(status) => return status,
+        };
+        let configuration = match mcp_discovery_configuration(bytes) {
+            Ok(configuration) => configuration,
+            Err(error) => return configuration_status(error),
+        };
+        let result = match execute_discovery(
+            configuration.operation,
+            configuration.timeout,
+            &handle.secrets,
+            Arc::clone(&handle.transport),
+        ) {
+            Ok(result) => result,
+            Err(error) => return discovery_error_status(error),
+        };
+        let json = match serde_json::to_vec(&McpDiscoveryResultJson::from(&result)) {
+            Ok(json) => Bytes::from(json),
+            Err(_) => return BONDRY_STATUS_INTERNAL_FAILURE,
+        };
+        let result = Box::new(EgressMcpDiscoveryResult { json });
+        unsafe { out_result.write(Box::into_raw(result).cast()) };
+        BONDRY_STATUS_OK
+    })
+}
+
+/// Borrows the validated host-facing JSON from one owned discovery result.
+///
+/// # Safety
+///
+/// The result must be live. Output pointers must be writable and non-overlapping. Returned bytes
+/// remain valid only until `bondry_egress_mcp_discovery_result_release_v1` consumes the result.
+#[must_use]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn bondry_egress_mcp_discovery_result_json_v1(
+    result: *const BondryEgressMcpDiscoveryResult,
+    out_json: *mut *const u8,
+    out_length: *mut usize,
+) -> i32 {
+    if out_json.is_null() || out_length.is_null() {
+        return BONDRY_STATUS_NULL_POINTER;
+    }
+    unsafe {
+        out_json.write(ptr::null());
+        out_length.write(0);
+    }
+    catch_status(|| {
+        if result.is_null() {
+            return BONDRY_STATUS_NULL_POINTER;
+        }
+        let result = unsafe { &*result.cast::<EgressMcpDiscoveryResult>() };
+        unsafe {
+            out_json.write(result.json.as_ptr());
+            out_length.write(result.json.len());
+        }
+        BONDRY_STATUS_OK
+    })
+}
+
+/// Releases one opaque discovery result. Null is allowed.
+///
+/// # Safety
+///
+/// A non-null result must be live and exclusively owned. It is consumed exactly once.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn bondry_egress_mcp_discovery_result_release_v1(
+    result: *mut BondryEgressMcpDiscoveryResult,
+) {
+    if result.is_null() {
+        return;
+    }
+    let _ = catch_unwind(AssertUnwindSafe(|| unsafe {
+        drop(Box::from_raw(result.cast::<EgressMcpDiscoveryResult>()));
+    }));
+}
+
 /// Loads one persisted delivery status without payload or credential data.
 ///
 /// # Safety
@@ -432,6 +712,82 @@ impl<'a> From<&'a RouteSummary> for RouteSummaryJson<'a> {
     }
 }
 
+#[derive(Serialize)]
+struct McpDiscoveryResultJson<'a> {
+    protocol_version: &'static str,
+    tools: Vec<McpDiscoveredToolJson<'a>>,
+}
+
+impl<'a> From<&'a McpDiscoveryResult> for McpDiscoveryResultJson<'a> {
+    fn from(result: &'a McpDiscoveryResult) -> Self {
+        Self {
+            protocol_version: result.version().as_str(),
+            tools: result
+                .tools()
+                .iter()
+                .map(McpDiscoveredToolJson::from)
+                .collect(),
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct McpDiscoveredToolJson<'a> {
+    name: &'a str,
+    description: Option<&'a str>,
+    input_schema: &'a serde_json::Value,
+}
+
+impl<'a> From<&'a bondry_egress_mcp::McpDiscoveredTool> for McpDiscoveredToolJson<'a> {
+    fn from(tool: &'a bondry_egress_mcp::McpDiscoveredTool) -> Self {
+        Self {
+            name: tool.name(),
+            description: tool.description(),
+            input_schema: tool.input_schema(),
+        }
+    }
+}
+
+fn execute_discovery(
+    mut operation: McpDiscoveryOperation,
+    timeout: std::time::Duration,
+    secrets: &ForeignSecretProvider,
+    transport: Arc<ForeignHttpTransport>,
+) -> Result<McpDiscoveryResult, McpDiscoveryError> {
+    let resolved = operation
+        .secret_references()
+        .iter()
+        .map(|reference| secrets.resolve(reference))
+        .collect::<Result<Vec<_>, SecretProviderError>>()
+        .map_err(|_| McpDiscoveryError::SecretUnavailable)?;
+    let executor = tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .build()
+        .map_err(|_| McpDiscoveryError::InvalidState)?;
+    let deadline = Instant::now() + timeout;
+    let mut transition = operation.start(bondry_transport::Deadline::at(deadline), resolved);
+    executor.block_on(async move {
+        loop {
+            match transition {
+                McpDiscoveryTransition::Complete(result) => return result,
+                McpDiscoveryTransition::Http(request) => {
+                    let remaining = deadline.saturating_duration_since(Instant::now());
+                    if remaining.is_zero() {
+                        transition = operation.resume(Err(TransportError::DeadlineExceeded));
+                        continue;
+                    }
+                    let completion =
+                        match tokio::time::timeout(remaining, transport.send(*request)).await {
+                            Ok(completion) => completion,
+                            Err(_) => Err(TransportError::DeadlineExceeded),
+                        };
+                    transition = operation.resume(completion);
+                }
+            }
+        }
+    })
+}
+
 fn with_handle(
     egress: *const BondryEgressHandle,
     operation: impl FnOnce(&EgressHandle) -> i32,
@@ -477,6 +833,29 @@ fn runtime_error_status(error: EgressRuntimeError) -> i32 {
         EgressRuntimeError::CallCapacity => BONDRY_STATUS_EGRESS_CALL_CAPACITY,
         EgressRuntimeError::CallFailed(_) => BONDRY_STATUS_EGRESS_CALL_FAILED,
         EgressRuntimeError::DeliveryLog(error) => delivery_log_error_status(error),
+    }
+}
+
+const fn discovery_error_status(error: McpDiscoveryError) -> i32 {
+    match error {
+        McpDiscoveryError::SecretUnavailable => BONDRY_STATUS_EGRESS_DISCOVERY_SECRET,
+        McpDiscoveryError::EndpointPolicy => BONDRY_STATUS_EGRESS_DISCOVERY_ENDPOINT_POLICY,
+        McpDiscoveryError::DeadlineExceeded => BONDRY_STATUS_EGRESS_DISCOVERY_DEADLINE,
+        McpDiscoveryError::Unavailable => BONDRY_STATUS_EGRESS_DISCOVERY_UNAVAILABLE,
+        McpDiscoveryError::ResponseTooLarge => BONDRY_STATUS_EGRESS_DISCOVERY_RESPONSE_TOO_LARGE,
+        McpDiscoveryError::UnsupportedProtocol => {
+            BONDRY_STATUS_EGRESS_DISCOVERY_UNSUPPORTED_PROTOCOL
+        }
+        McpDiscoveryError::UnsupportedResponseMode => {
+            BONDRY_STATUS_EGRESS_DISCOVERY_UNSUPPORTED_RESPONSE_MODE
+        }
+        McpDiscoveryError::Rejected => BONDRY_STATUS_EGRESS_DISCOVERY_REJECTED,
+        McpDiscoveryError::InvalidResponse => BONDRY_STATUS_EGRESS_DISCOVERY_INVALID_RESPONSE,
+        McpDiscoveryError::ToolLimitExceeded => BONDRY_STATUS_EGRESS_DISCOVERY_TOOL_LIMIT,
+        McpDiscoveryError::InvalidToolSchema => BONDRY_STATUS_EGRESS_DISCOVERY_INVALID_SCHEMA,
+        McpDiscoveryError::InvalidState | McpDiscoveryError::InvalidRequest => {
+            BONDRY_STATUS_INTERNAL_FAILURE
+        }
     }
 }
 
@@ -568,14 +947,18 @@ fn encode_delivery_status(record: &DeliveryRecord) -> BondryEgressDeliveryStatus
         }
     }
     if let Some(result) = record.result() {
-        status.result_category = match result.category() {
-            DeliveryResultCategory::Succeeded => 1,
-            DeliveryResultCategory::Failed => 2,
-            DeliveryResultCategory::Invalid => 3,
-        };
+        status.result_category = encode_result_category(result.category());
         status.result_bytes = result.bytes();
     }
     status
+}
+
+const fn encode_result_category(category: DeliveryResultCategory) -> u32 {
+    match category {
+        DeliveryResultCategory::Succeeded => 1,
+        DeliveryResultCategory::Failed => 2,
+        DeliveryResultCategory::Invalid => 3,
+    }
 }
 
 const fn encode_failure(failure: DeliveryFailure) -> u32 {
@@ -644,7 +1027,7 @@ fn write_bytes(bytes: &[u8], output: *mut u8, capacity: usize, out_length: *mut 
 mod tests {
     use std::{
         ffi::c_void,
-        ptr,
+        ptr, slice,
         sync::{
             Arc,
             atomic::{AtomicUsize, Ordering},
@@ -658,14 +1041,18 @@ mod tests {
     use crate::{
         BONDRY_CONNECTION_EVIDENCE_TLS_V1, BONDRY_HTTP_RESULT_RESPONSE_V1,
         BONDRY_HTTP_TRANSPORT_ABI_VERSION_V1, BONDRY_SECRET_PROVIDER_ABI_VERSION_V1,
-        BondryConnectionEvidenceV1, BondryHTTPCompletionV1, BondryHTTPRequestV1,
-        BondryHTTPResultV1, BondryHTTPTransportV1, BondrySecretProviderV1,
+        BondryConnectionEvidenceV1, BondryHTTPCompletionV1, BondryHTTPHeaderV1,
+        BondryHTTPRequestV1, BondryHTTPResultV1, BondryHTTPTransportV1, BondrySecretProviderV1,
         BondrySecretResolutionV1,
     };
 
     use super::{
-        BONDRY_STATUS_OK, BondryEgressDeliveryStatusV1, BondryEgressHandle, BondryStoreHandle,
-        bondry_egress_delivery_status_v1, bondry_egress_emit_v1, bondry_egress_route_register_v1,
+        BONDRY_STATUS_EGRESS_UNSUPPORTED_OPERATION, BONDRY_STATUS_OK, BondryEgressCallResult,
+        BondryEgressDeliveryStatusV1, BondryEgressHandle, BondryEgressMcpDiscoveryResult,
+        BondryStoreHandle, bondry_egress_call_result_json_v1, bondry_egress_call_result_release_v1,
+        bondry_egress_call_v1, bondry_egress_delivery_status_v1, bondry_egress_emit_v1,
+        bondry_egress_mcp_discover_v1, bondry_egress_mcp_discovery_result_json_v1,
+        bondry_egress_mcp_discovery_result_release_v1, bondry_egress_route_register_v1,
         bondry_egress_routes_json_v1, bondry_egress_start_v1, bondry_egress_stop_v1,
     };
 
@@ -708,15 +1095,92 @@ mod tests {
         }
         let host = unsafe { &*context.cast::<MockHost>() };
         host.sends.fetch_add(1, Ordering::Relaxed);
+        let request = unsafe { &*request };
+        let request_body = if request.body.is_null() {
+            &[]
+        } else {
+            unsafe { slice::from_raw_parts(request.body, request.body_length) }
+        };
+        let message = serde_json::from_slice::<serde_json::Value>(request_body).ok();
+        let method = message
+            .as_ref()
+            .and_then(|message| message.get("method"))
+            .and_then(serde_json::Value::as_str);
+        let id = message
+            .as_ref()
+            .and_then(|message| message.get("id"))
+            .cloned()
+            .unwrap_or(serde_json::Value::Null);
+        let (status_code, body) = match method {
+            Some("server/discover") => (
+                200,
+                serde_json::to_vec(&serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "result": {
+                        "resultType": "complete",
+                        "supportedVersions": ["2026-07-28"],
+                    },
+                }))
+                .unwrap_or_default(),
+            ),
+            Some("tools/list") => (
+                200,
+                serde_json::to_vec(&serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "result": {
+                        "resultType": "complete",
+                        "tools": [{
+                            "name": "battery:status",
+                            "description": "Battery status",
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": { "detail": { "type": "boolean" } },
+                            },
+                        }],
+                    },
+                }))
+                .unwrap_or_default(),
+            ),
+            Some("tools/call") => (
+                200,
+                serde_json::to_vec(&serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "result": {
+                        "resultType": "complete",
+                        "content": [{ "type": "text", "text": "ok" }],
+                    },
+                }))
+                .unwrap_or_default(),
+            ),
+            Some("notifications/initialized") => (202, Vec::new()),
+            _ => (204, Vec::new()),
+        };
+        let content_type = BondryHTTPHeaderV1 {
+            name: b"content-type".as_ptr(),
+            name_length: b"content-type".len(),
+            value: b"application/json".as_ptr(),
+            value_length: b"application/json".len(),
+        };
         let server_name = b"example.com";
         let result = BondryHTTPResultV1 {
             kind: BONDRY_HTTP_RESULT_RESPONSE_V1,
             error: 0,
-            status_code: 204,
-            headers: ptr::null(),
-            header_count: 0,
-            body: ptr::null(),
-            body_length: 0,
+            status_code,
+            headers: if body.is_empty() {
+                ptr::null()
+            } else {
+                &content_type
+            },
+            header_count: usize::from(!body.is_empty()),
+            body: if body.is_empty() {
+                ptr::null()
+            } else {
+                body.as_ptr()
+            },
+            body_length: body.len(),
             connection: BondryConnectionEvidenceV1 {
                 kind: BONDRY_CONNECTION_EVIDENCE_TLS_V1,
                 server_name: server_name.as_ptr(),
@@ -866,6 +1330,126 @@ mod tests {
             serde_json::from_slice::<serde_json::Value>(&routes)?[0]["target"],
             "https://example.com"
         );
+
+        let mcp_route = br#"{
+          "version":1,
+          "id":"mcp_receiver",
+          "payload":{"fields":[{"name":"detail","type":"boolean"}]},
+          "kind":{
+            "type":"mcp",
+            "endpoint":"https://example.com/mcp",
+            "authentication":{"type":"none"},
+            "protocol_version":"2026-07-28",
+            "tool":{
+              "name":"battery:status",
+              "input_schema":{
+                "type":"object",
+                "properties":{"detail":{"type":"boolean"}}
+              }
+            }
+          }
+        }"#;
+        assert_eq!(
+            unsafe { bondry_egress_route_register_v1(egress, mcp_route.as_ptr(), mcp_route.len()) },
+            BONDRY_STATUS_OK
+        );
+        let mcp_route_id = b"mcp_receiver";
+        let call_delivery = b"call_1";
+        let call_payload = br#"{"detail":true}"#;
+        let mut call_result: *mut BondryEgressCallResult = ptr::null_mut();
+        assert_eq!(
+            unsafe {
+                bondry_egress_call_v1(
+                    egress,
+                    mcp_route_id.as_ptr(),
+                    mcp_route_id.len(),
+                    call_delivery.as_ptr(),
+                    call_delivery.len(),
+                    call_payload.as_ptr(),
+                    call_payload.len(),
+                    256 * 1024,
+                    &mut call_result,
+                )
+            },
+            BONDRY_STATUS_OK
+        );
+        let mut call_json = ptr::null();
+        let mut call_json_length = 0;
+        let mut call_category = 0;
+        assert_eq!(
+            unsafe {
+                bondry_egress_call_result_json_v1(
+                    call_result,
+                    &mut call_json,
+                    &mut call_json_length,
+                    &mut call_category,
+                )
+            },
+            BONDRY_STATUS_OK
+        );
+        assert_eq!(call_category, 1);
+        let call_json = unsafe { slice::from_raw_parts(call_json, call_json_length) };
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(call_json)?["content"][0]["text"],
+            "ok"
+        );
+        unsafe { bondry_egress_call_result_release_v1(call_result) };
+
+        let mut unsupported: *mut BondryEgressCallResult = ptr::null_mut();
+        assert_eq!(
+            unsafe {
+                bondry_egress_call_v1(
+                    egress,
+                    route_id.as_ptr(),
+                    route_id.len(),
+                    b"unsupported_call".as_ptr(),
+                    b"unsupported_call".len(),
+                    payload.as_ptr(),
+                    payload.len(),
+                    256 * 1024,
+                    &mut unsupported,
+                )
+            },
+            BONDRY_STATUS_EGRESS_UNSUPPORTED_OPERATION
+        );
+        assert!(unsupported.is_null());
+
+        let discovery_configuration = br#"{
+          "version":1,
+          "endpoint":"https://example.com/mcp",
+          "authentication":{"type":"none"}
+        }"#;
+        let mut discovery_result: *mut BondryEgressMcpDiscoveryResult = ptr::null_mut();
+        assert_eq!(
+            unsafe {
+                bondry_egress_mcp_discover_v1(
+                    egress,
+                    discovery_configuration.as_ptr(),
+                    discovery_configuration.len(),
+                    &mut discovery_result,
+                )
+            },
+            BONDRY_STATUS_OK
+        );
+        let mut discovery_json = ptr::null();
+        let mut discovery_json_length = 0;
+        assert_eq!(
+            unsafe {
+                bondry_egress_mcp_discovery_result_json_v1(
+                    discovery_result,
+                    &mut discovery_json,
+                    &mut discovery_json_length,
+                )
+            },
+            BONDRY_STATUS_OK
+        );
+        let discovery_json =
+            unsafe { slice::from_raw_parts(discovery_json, discovery_json_length) };
+        let discovery: serde_json::Value = serde_json::from_slice(discovery_json)?;
+        assert_eq!(discovery["protocol_version"], "2026-07-28");
+        assert_eq!(discovery["tools"][0]["name"], "battery:status");
+        unsafe { bondry_egress_mcp_discovery_result_release_v1(discovery_result) };
+        assert_eq!(host.sends.load(Ordering::Relaxed), 4);
 
         assert_eq!(unsafe { bondry_egress_stop_v1(egress) }, BONDRY_STATUS_OK);
         assert_eq!(unsafe { bondry_store_close_v1(store) }, BONDRY_STATUS_OK);
