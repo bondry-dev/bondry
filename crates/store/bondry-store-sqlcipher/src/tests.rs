@@ -14,11 +14,20 @@ use bondry_core::{
     CapabilityGrant, CapabilityId, CapabilityRegistry, Dispatcher, GrantStore, Invocation,
     InvocationId, Principal, PrincipalId, PrincipalKind, StoredGrantPolicy,
 };
+use bondry_delivery_store::{
+    DeliveryId, DeliveryIntent, DeliveryLog, DeliveryLogError, DeliveryOutcome,
+    DeliveryResultCategory, DeliveryResultMetadata, DeliveryState,
+    MIN_PERSISTENT_DELIVERY_LOG_BYTES, MIN_PERSISTENT_DELIVERY_LOG_RECORDS,
+    MIN_PERSISTENT_DELIVERY_LOG_RETENTION, PersistentDeliveryLogLimits, RouteId, StoreDurability,
+};
 use futures::executor::block_on;
 use serde_json::json;
 use tempfile::TempDir;
 
-use crate::{AuditQueryLimit, DatabaseKey, DatabaseKeyError, SqlCipherStore, SqlCipherStoreError};
+use crate::{
+    AuditQueryLimit, DatabaseKey, DatabaseKeyError, SqlCipherDeliveryLog, SqlCipherStore,
+    SqlCipherStoreError,
+};
 
 fn database_path(directory: &TempDir) -> std::path::PathBuf {
     directory.path().join("bondry.db")
@@ -26,6 +35,16 @@ fn database_path(directory: &TempDir) -> std::path::PathBuf {
 
 fn fixed_key(value: u8) -> DatabaseKey {
     DatabaseKey::from_bytes([value; 32])
+}
+
+fn delivery_intent(id: impl Into<String>, timestamp: u64) -> DeliveryIntent {
+    let id = id.into();
+    DeliveryIntent::new(
+        RouteId::new("watchdog.power")
+            .unwrap_or_else(|error| unreachable!("valid route ID: {error}")),
+        DeliveryId::new(id).unwrap_or_else(|error| unreachable!("valid delivery ID: {error}")),
+        timestamp,
+    )
 }
 
 #[test]
@@ -46,7 +65,15 @@ fn encrypts_the_database_and_rejects_the_wrong_key() -> Result<(), Box<dyn std::
         AdapterId::new("private_adapter")?,
         CapabilityId::new("private.capability")?,
     ))?);
+    let delivery_log =
+        SqlCipherDeliveryLog::new(store.clone(), PersistentDeliveryLogLimits::default());
+    delivery_log.insert_intent(DeliveryIntent::new(
+        RouteId::new("private.route.marker")?,
+        DeliveryId::new("private.delivery.marker")?,
+        1,
+    ))?;
     assert!(manager.authenticate(issued.secret().expose()).is_ok());
+    drop(delivery_log);
     drop(manager);
     drop(store);
 
@@ -67,6 +94,8 @@ fn encrypts_the_database_and_rejects_the_wrong_key() -> Result<(), Box<dyn std::
         b"Private Token Marker".as_slice(),
         b"private_adapter".as_slice(),
         b"private.capability".as_slice(),
+        b"private.route.marker".as_slice(),
+        b"private.delivery.marker".as_slice(),
         issued.secret().expose().as_bytes(),
     ] {
         assert!(!contains_bytes(&persisted, marker));
@@ -274,7 +303,13 @@ fn persists_and_filters_protocol_neutral_audit_events() -> Result<(), Box<dyn st
 fn schema_contains_no_credential_or_payload_columns() -> Result<(), Box<dyn std::error::Error>> {
     let store = SqlCipherStore::open_in_memory(&fixed_key(14))?;
     let connection = store.connection()?;
-    for table in ["clients", "tokens", "audit_events", "grants"] {
+    for table in [
+        "clients",
+        "tokens",
+        "audit_events",
+        "grants",
+        "delivery_log",
+    ] {
         let mut statement = connection.prepare(&format!("PRAGMA table_info({table})"))?;
         let names = statement
             .query_map([], |row| row.get::<_, String>(1))?
@@ -341,6 +376,7 @@ fn migrates_version_one_without_losing_authentication_state()
     let issued = manager.issue_token(client.id(), None, None)?;
     store.connection()?.execute_batch(
         "DROP TABLE grants;
+         DROP TABLE delivery_log;
          PRAGMA user_version = 1;",
     )?;
     drop(manager);
@@ -374,6 +410,7 @@ fn migrates_version_two_without_losing_audit_events() -> Result<(), Box<dyn std:
         AuditOutcome::Succeeded,
     ))?;
     store.connection()?.pragma_update(None, "user_version", 2)?;
+    store.connection()?.execute("DROP TABLE delivery_log", [])?;
     drop(store);
 
     let store = SqlCipherStore::open(&path, &key)?;
@@ -393,6 +430,176 @@ fn migrates_version_two_without_losing_audit_events() -> Result<(), Box<dyn std:
             .event()
             .outcome(),
         &AuditOutcome::InvalidInput
+    );
+    Ok(())
+}
+
+#[test]
+fn migrates_version_three_and_adds_delivery_persistence() -> Result<(), Box<dyn std::error::Error>>
+{
+    let directory = TempDir::new()?;
+    let path = database_path(&directory);
+    let key = fixed_key(25);
+    let store = SqlCipherStore::open(&path, &key)?;
+    store.connection()?.execute_batch(
+        "DROP TABLE delivery_log;
+         PRAGMA user_version = 3;",
+    )?;
+    drop(store);
+
+    let store = Arc::new(SqlCipherStore::open(&path, &key)?);
+    let log = SqlCipherDeliveryLog::new(store, PersistentDeliveryLogLimits::default());
+    let intent = delivery_intent("delivery_migrated", 100);
+    let id = intent.delivery().clone();
+    log.insert_intent(intent)?;
+    assert_eq!(
+        log.delivery(&id)?.map(|record| record.state()),
+        Some(DeliveryState::Pending)
+    );
+    Ok(())
+}
+
+#[test]
+fn persists_delivery_transitions_without_sensitive_fields() -> Result<(), Box<dyn std::error::Error>>
+{
+    let store = Arc::new(SqlCipherStore::open_in_memory(&fixed_key(26))?);
+    let log = SqlCipherDeliveryLog::new(store, PersistentDeliveryLogLimits::default());
+    assert_eq!(log.durability(), StoreDurability::Persistent);
+    let intent = delivery_intent("delivery_status", 100);
+    let id = intent.delivery().clone();
+    log.insert_intent(intent)?;
+    log.record_attempt(&id, 1, 110)?;
+    log.record_outcome(
+        &id,
+        DeliveryOutcome::Delivered,
+        120,
+        Some(DeliveryResultMetadata::new(
+            DeliveryResultCategory::Succeeded,
+            24,
+        )),
+    )?;
+
+    let record = log
+        .delivery(&id)?
+        .ok_or(std::io::Error::other("record missing"))?;
+    assert_eq!(record.attempts(), 1);
+    assert_eq!(
+        record.state(),
+        DeliveryState::Terminal(DeliveryOutcome::Delivered)
+    );
+    assert_eq!(record.result().map(DeliveryResultMetadata::bytes), Some(24));
+    let rendered = format!("{record:?}");
+    assert!(!rendered.contains("payload"));
+    assert!(!rendered.contains("endpoint"));
+    assert_eq!(
+        log.record_outcome(&id, DeliveryOutcome::Delivered, 130, None),
+        Err(DeliveryLogError::InvalidTransition)
+    );
+    assert_eq!(
+        log.record_attempt(&id, 2, 130),
+        Err(DeliveryLogError::InvalidTransition)
+    );
+    Ok(())
+}
+
+#[test]
+fn restart_marks_only_unfinished_delivery_intents_unknown() -> Result<(), Box<dyn std::error::Error>>
+{
+    let directory = TempDir::new()?;
+    let path = database_path(&directory);
+    let key = fixed_key(27);
+    let store = Arc::new(SqlCipherStore::open(&path, &key)?);
+    let log = SqlCipherDeliveryLog::new(store, PersistentDeliveryLogLimits::default());
+    let pending = delivery_intent("delivery_pending", 100);
+    let pending_id = pending.delivery().clone();
+    let delivered = delivery_intent("delivery_delivered", 100);
+    let delivered_id = delivered.delivery().clone();
+    log.insert_intent(pending)?;
+    log.insert_intent(delivered)?;
+    log.record_outcome(&delivered_id, DeliveryOutcome::Delivered, 110, None)?;
+    drop(log);
+
+    let store = Arc::new(SqlCipherStore::open(&path, &key)?);
+    let log = SqlCipherDeliveryLog::new(store, PersistentDeliveryLogLimits::default());
+    assert_eq!(log.recover_unfinished(200)?, 1);
+    assert_eq!(
+        log.delivery(&pending_id)?.map(|record| record.state()),
+        Some(DeliveryState::Terminal(DeliveryOutcome::UnknownAfterCrash))
+    );
+    assert_eq!(
+        log.delivery(&delivered_id)?.map(|record| record.state()),
+        Some(DeliveryState::Terminal(DeliveryOutcome::Delivered))
+    );
+    assert_eq!(log.recover_unfinished(300)?, 0);
+    Ok(())
+}
+
+#[test]
+fn delivery_log_capacity_is_bounded_and_expired_terminal_records_are_reclaimed()
+-> Result<(), Box<dyn std::error::Error>> {
+    let limits = PersistentDeliveryLogLimits::new(
+        MIN_PERSISTENT_DELIVERY_LOG_RECORDS,
+        MIN_PERSISTENT_DELIVERY_LOG_BYTES,
+        MIN_PERSISTENT_DELIVERY_LOG_RETENTION,
+    )?;
+    let store = Arc::new(SqlCipherStore::open_in_memory(&fixed_key(28))?);
+    let log = SqlCipherDeliveryLog::new(store, limits);
+    let expired = delivery_intent("delivery_expired", 0);
+    let expired_id = expired.delivery().clone();
+    log.insert_intent(expired)?;
+    log.record_outcome(&expired_id, DeliveryOutcome::Delivered, 0, None)?;
+    for index in 1..MIN_PERSISTENT_DELIVERY_LOG_RECORDS {
+        log.insert_intent(delivery_intent(format!("delivery_{index}"), 1))?;
+    }
+    assert_eq!(
+        log.insert_intent(delivery_intent("delivery_over_capacity", 1)),
+        Err(DeliveryLogError::CapacityExhausted)
+    );
+
+    let after_retention = MIN_PERSISTENT_DELIVERY_LOG_RETENTION.as_millis() as u64 + 1;
+    log.insert_intent(delivery_intent("delivery_after_retention", after_retention))?;
+    assert!(log.delivery(&expired_id)?.is_none());
+    Ok(())
+}
+
+#[test]
+fn independent_connections_admit_one_delivery_intent() -> Result<(), Box<dyn std::error::Error>> {
+    let directory = TempDir::new()?;
+    let path = database_path(&directory);
+    let key = fixed_key(29);
+    let first = SqlCipherDeliveryLog::new(
+        Arc::new(SqlCipherStore::open(&path, &key)?),
+        PersistentDeliveryLogLimits::default(),
+    );
+    let second = SqlCipherDeliveryLog::new(
+        Arc::new(SqlCipherStore::open(&path, &key)?),
+        PersistentDeliveryLogLimits::default(),
+    );
+    let barrier = Arc::new(Barrier::new(3));
+    let mut handles = Vec::new();
+    for log in [first, second] {
+        let barrier = Arc::clone(&barrier);
+        handles.push(std::thread::spawn(move || {
+            barrier.wait();
+            log.insert_intent(delivery_intent("delivery_race", 100))
+        }));
+    }
+    barrier.wait();
+    let mut results = Vec::new();
+    for handle in handles {
+        results.push(
+            handle
+                .join()
+                .map_err(|_| std::io::Error::other("delivery thread panicked"))?,
+        );
+    }
+    assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 1);
+    assert_eq!(
+        results
+            .iter()
+            .filter(|result| **result == Err(DeliveryLogError::Conflict))
+            .count(),
+        1
     );
     Ok(())
 }
