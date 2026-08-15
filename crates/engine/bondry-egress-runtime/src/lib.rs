@@ -16,6 +16,6 @@ pub use memory_log::{
     InMemoryDeliveryLog, InMemoryDeliveryLogLimit, InMemoryDeliveryLogLimitError,
 };
 pub use runtime::{
-    DeliveryReceipt, EgressRuntime, EgressRuntimeError, EgressRuntimeStartError,
+    CallResult, DeliveryReceipt, EgressRuntime, EgressRuntimeError, EgressRuntimeStartError,
     EgressRuntimeStopError,
 };

@@ -123,8 +123,26 @@ impl DeliveryKind for WebhookDeliveryKind {
         false
     }
 
+    fn permits_automatic_retry(&self) -> bool {
+        true
+    }
+
     fn max_payload_bytes(&self) -> usize {
         self.configuration.limits.body_bytes()
+    }
+
+    fn validate_payload(
+        &self,
+        mode: OperationMode,
+        payload: &EventPayload,
+    ) -> Result<(), KindOperationError> {
+        if mode != OperationMode::Emit {
+            return Err(KindOperationError::UnsupportedOperation);
+        }
+        if payload.len() > self.configuration.limits.body_bytes() {
+            return Err(KindOperationError::InvalidEvent);
+        }
+        Ok(())
     }
 
     fn operation(
@@ -133,12 +151,7 @@ impl DeliveryKind for WebhookDeliveryKind {
         delivery: DeliveryId,
         payload: EventPayload,
     ) -> Result<Box<dyn DeliveryOperation>, KindOperationError> {
-        if mode != OperationMode::Emit {
-            return Err(KindOperationError::UnsupportedOperation);
-        }
-        if payload.len() > self.configuration.limits.body_bytes() {
-            return Err(KindOperationError::InvalidEvent);
-        }
+        self.validate_payload(mode, &payload)?;
         Ok(Box::new(WebhookOperation {
             configuration: Arc::clone(&self.configuration),
             delivery,

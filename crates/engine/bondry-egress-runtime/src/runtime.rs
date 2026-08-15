@@ -11,8 +11,8 @@ use std::{
 };
 
 use bondry_delivery_store::{
-    DeliveryId, DeliveryIntent, DeliveryLog, DeliveryLogError, DeliveryOutcome, DeliveryRecord,
-    DeliveryResultMetadata, DeliveryState, RouteId, StoreDurability,
+    DeliveryFailure, DeliveryId, DeliveryIntent, DeliveryLog, DeliveryLogError, DeliveryOutcome,
+    DeliveryRecord, DeliveryResultMetadata, DeliveryState, RouteId, StoreDurability,
 };
 use bondry_egress::{
     AdmissionError, AdmittedDeliveryParts, DeliveryAction, DeliveryEvent, DeliveryLifecycle,
@@ -145,6 +145,21 @@ impl EgressRuntime {
         })
     }
 
+    /// Executes one MCP-only call in the independent bounded call lane.
+    pub fn call(
+        &self,
+        route: RouteId,
+        delivery: DeliveryId,
+        payload: Bytes,
+    ) -> Result<CallResult, EgressRuntimeError> {
+        self.request(|reply| Command::Call {
+            route,
+            delivery,
+            payload,
+            reply,
+        })
+    }
+
     /// Returns persisted or fail-closed process-local status without payload data.
     pub fn delivery(
         &self,
@@ -189,6 +204,45 @@ impl Drop for EgressRuntime {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DeliveryReceipt {
     delivery: DeliveryId,
+}
+
+/// One bounded untrusted JSON result returned by a host `call`.
+#[derive(Clone, Eq, PartialEq)]
+pub struct CallResult {
+    delivery: DeliveryId,
+    metadata: DeliveryResultMetadata,
+    json: Bytes,
+}
+
+impl std::fmt::Debug for CallResult {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("CallResult")
+            .field("delivery", &self.delivery)
+            .field("metadata", &self.metadata)
+            .field("json_bytes", &self.json.len())
+            .finish()
+    }
+}
+
+impl CallResult {
+    /// Returns the persisted delivery identifier.
+    #[must_use]
+    pub const fn delivery(&self) -> &DeliveryId {
+        &self.delivery
+    }
+
+    /// Returns the non-sensitive result category and size.
+    #[must_use]
+    pub const fn metadata(&self) -> DeliveryResultMetadata {
+        self.metadata
+    }
+
+    /// Returns the bounded untrusted raw JSON result.
+    #[must_use]
+    pub const fn json(&self) -> &Bytes {
+        &self.json
+    }
 }
 
 impl DeliveryReceipt {
@@ -240,6 +294,12 @@ pub enum EgressRuntimeError {
     /// The retained payload-byte budget is exhausted.
     #[error("egress pending byte capacity is exhausted")]
     PendingBytes,
+    /// The independent host-call lane is full.
+    #[error("egress call lane capacity is exhausted")]
+    CallCapacity,
+    /// An accepted host call reached a terminal delivery failure.
+    #[error("egress call failed")]
+    CallFailed(DeliveryFailure),
     /// Delivery persistence could not safely accept or report the operation.
     #[error("egress delivery log is unavailable")]
     DeliveryLog(#[from] DeliveryLogError),
@@ -281,6 +341,12 @@ enum Command {
         payload: Bytes,
         reply: Reply<DeliveryReceipt>,
     },
+    Call {
+        route: RouteId,
+        delivery: DeliveryId,
+        payload: Bytes,
+        reply: Reply<CallResult>,
+    },
     Delivery {
         delivery: DeliveryId,
         reply: Reply<Option<DeliveryRecord>>,
@@ -301,13 +367,16 @@ struct Engine {
     ready: BTreeMap<RouteId, VecDeque<DeliveryId>>,
     ready_routes: VecDeque<RouteId>,
     retries: BinaryHeap<Reverse<(EgressInstant, DeliveryId)>>,
-    attempts: JoinSet<(DeliveryId, bondry_egress::AttemptDisposition)>,
+    attempts: JoinSet<(DeliveryId, crate::attempt::AttemptCompletion)>,
+    active_calls: BTreeMap<DeliveryId, ActiveCall>,
+    calls: JoinSet<(DeliveryId, crate::attempt::AttemptCompletion)>,
     drains: BTreeMap<RouteId, RouteDrain>,
     overrides: BTreeMap<DeliveryId, DeliveryRecord>,
     persistence_degraded: bool,
     global_pending: u16,
     global_bytes: usize,
     global_in_flight: u8,
+    call_in_flight: u8,
 }
 
 impl Engine {
@@ -331,12 +400,15 @@ impl Engine {
             ready_routes: VecDeque::new(),
             retries: BinaryHeap::new(),
             attempts: JoinSet::new(),
+            active_calls: BTreeMap::new(),
+            calls: JoinSet::new(),
             drains: BTreeMap::new(),
             overrides: BTreeMap::new(),
             persistence_degraded: false,
             global_pending: 0,
             global_bytes: 0,
             global_in_flight: 0,
+            call_in_flight: 0,
         }
     }
 
@@ -351,7 +423,7 @@ impl Engine {
             self.dispatch_ready();
             self.complete_empty_drains();
             self.discard_stale_retries();
-            if stopping && self.active.is_empty() {
+            if stopping && self.active.is_empty() && self.active_calls.is_empty() {
                 break;
             }
             let next_deadline = self.next_deadline(shutdown_deadline);
@@ -381,6 +453,9 @@ impl Engine {
                 }
                 completed = self.attempts.join_next(), if !self.attempts.is_empty() => {
                     self.handle_attempt_join(completed);
+                }
+                completed = self.calls.join_next(), if !self.calls.is_empty() => {
+                    self.handle_call_join(completed);
                 }
                 () = wait_for_deadline(self.clock, next_deadline) => {
                     self.process_retry_deadlines();
@@ -423,6 +498,12 @@ impl Engine {
                 let result = self.admit_emit(route, delivery, payload);
                 let _ = reply.send(result);
             }
+            Command::Call {
+                route,
+                delivery,
+                payload,
+                reply,
+            } => self.admit_call(route, delivery, payload, reply),
             Command::Delivery { delivery, reply } => {
                 let result = self.delivery_status(&delivery);
                 let _ = reply.send(result);
@@ -470,6 +551,59 @@ impl Engine {
         Ok(DeliveryReceipt { delivery })
     }
 
+    fn admit_call(
+        &mut self,
+        route: RouteId,
+        delivery: DeliveryId,
+        payload: Bytes,
+        reply: Reply<CallResult>,
+    ) {
+        let result = self.prepare_call(route, delivery, payload, reply.clone());
+        if let Err(error) = result {
+            let _ = reply.send(Err(error));
+        }
+    }
+
+    fn prepare_call(
+        &mut self,
+        route: RouteId,
+        delivery: DeliveryId,
+        payload: Bytes,
+        reply: Reply<CallResult>,
+    ) -> Result<(), EgressRuntimeError> {
+        if self.persistence_degraded {
+            return Err(EgressRuntimeError::DeliveryLog(
+                DeliveryLogError::Unavailable,
+            ));
+        }
+        self.registry.validate_call_route(&route)?;
+        if self.active_calls.len() >= usize::from(self.limits.call_in_flight()) {
+            return Err(EgressRuntimeError::CallCapacity);
+        }
+        let time = self.clock.transition_time();
+        let admitted =
+            self.registry
+                .admit_call(&route, delivery.clone(), payload, time.monotonic())?;
+        let action = admitted.persistence_action(time.unix_ms());
+        self.persist(&action)?;
+        let parts = admitted.into_parts();
+        let lifecycle =
+            DeliveryLifecycle::new(parts.route.clone(), parts.delivery.clone(), parts.retry);
+        self.active_calls.insert(
+            delivery.clone(),
+            ActiveCall {
+                accepted_at_unix_ms: time.unix_ms(),
+                parts,
+                lifecycle,
+                abort: None,
+                reply,
+            },
+        );
+        self.usage.entry(route).or_default().calls += 1;
+        self.start_call(delivery);
+        Ok(())
+    }
+
     fn check_pending_capacity(
         &self,
         route: &RouteId,
@@ -508,11 +642,7 @@ impl Engine {
             let _ = reply.send(Err(error.into()));
             return;
         }
-        if self
-            .usage
-            .get(&route)
-            .is_none_or(|usage| usage.pending == 0)
-        {
+        if self.usage.get(&route).is_none_or(RouteUsage::is_idle) {
             if remove {
                 self.registry.unregister(&route);
             }
@@ -623,7 +753,7 @@ impl Engine {
         let transport = Arc::clone(&self.transport);
         let task_delivery = delivery.clone();
         let abort = self.attempts.spawn(async move {
-            let disposition = execute_attempt(
+            let completion = execute_attempt(
                 kind,
                 mode,
                 task_delivery.clone(),
@@ -633,7 +763,7 @@ impl Engine {
                 transport,
             )
             .await;
-            (task_delivery, disposition)
+            (task_delivery, completion)
         });
         if let Some(active) = self.active.get_mut(&delivery) {
             active.abort = Some(abort);
@@ -642,14 +772,91 @@ impl Engine {
         self.usage.entry(route).or_default().in_flight += 1;
     }
 
+    fn start_call(&mut self, delivery: DeliveryId) {
+        let time = self.clock.transition_time();
+        let transition = match self
+            .active_calls
+            .get_mut(&delivery)
+            .map(|active| active.lifecycle.transition(time, DeliveryEvent::Drive))
+        {
+            Some(Ok(transition)) => transition,
+            _ => {
+                self.force_call_terminal(
+                    &delivery,
+                    DeliveryOutcome::Failed(DeliveryFailure::Internal),
+                    None,
+                    Err(EgressRuntimeError::CallFailed(DeliveryFailure::Internal)),
+                );
+                return;
+            }
+        };
+        let Some(persistence) = transition.persistence().cloned() else {
+            self.force_call_terminal(
+                &delivery,
+                DeliveryOutcome::Failed(DeliveryFailure::Internal),
+                None,
+                Err(EgressRuntimeError::CallFailed(DeliveryFailure::Internal)),
+            );
+            return;
+        };
+        if self.persist(&persistence).is_err() {
+            self.persistence_degraded = true;
+            self.force_call_terminal(
+                &delivery,
+                DeliveryOutcome::Failed(DeliveryFailure::Internal),
+                None,
+                Err(EgressRuntimeError::DeliveryLog(
+                    DeliveryLogError::Unavailable,
+                )),
+            );
+            return;
+        }
+        if !matches!(transition.action(), DeliveryAction::StartAttempt { .. }) {
+            self.force_call_terminal(
+                &delivery,
+                DeliveryOutcome::Failed(DeliveryFailure::Internal),
+                None,
+                Err(EgressRuntimeError::CallFailed(DeliveryFailure::Internal)),
+            );
+            return;
+        }
+        let Some(active) = self.active_calls.get(&delivery) else {
+            return;
+        };
+        let kind = Arc::clone(&active.parts.kind);
+        let mode = active.parts.mode;
+        let payload = active.parts.payload.clone();
+        let deadline = Deadline::at(Instant::now() + active.parts.timeout.get());
+        let secrets = Arc::clone(&self.secrets);
+        let transport = Arc::clone(&self.transport);
+        let task_delivery = delivery.clone();
+        let abort = self.calls.spawn(async move {
+            let completion = execute_attempt(
+                kind,
+                mode,
+                task_delivery.clone(),
+                payload,
+                deadline,
+                secrets,
+                transport,
+            )
+            .await;
+            (task_delivery, completion)
+        });
+        if let Some(active) = self.active_calls.get_mut(&delivery) {
+            active.abort = Some(abort);
+        }
+        self.call_in_flight += 1;
+    }
+
     fn handle_attempt_join(
         &mut self,
         completed: Option<
-            Result<(DeliveryId, bondry_egress::AttemptDisposition), tokio::task::JoinError>,
+            Result<(DeliveryId, crate::attempt::AttemptCompletion), tokio::task::JoinError>,
         >,
     ) {
         match completed {
-            Some(Ok((delivery, disposition))) => self.complete_attempt(delivery, disposition),
+            Some(Ok((delivery, completion))) => self.complete_attempt(delivery, completion),
             Some(Err(error)) if error.is_cancelled() => {}
             Some(Err(_)) => {
                 let deliveries = self
@@ -670,15 +877,46 @@ impl Engine {
         }
     }
 
+    fn handle_call_join(
+        &mut self,
+        completed: Option<
+            Result<(DeliveryId, crate::attempt::AttemptCompletion), tokio::task::JoinError>,
+        >,
+    ) {
+        match completed {
+            Some(Ok((delivery, completion))) => self.complete_call(delivery, completion),
+            Some(Err(error)) if error.is_cancelled() => {}
+            Some(Err(_)) => {
+                let deliveries = self
+                    .active_calls
+                    .iter()
+                    .filter(|(_, active)| active.abort.is_some())
+                    .map(|(delivery, _)| delivery.clone())
+                    .collect::<Vec<_>>();
+                for delivery in deliveries {
+                    self.abort_call(&delivery);
+                    self.force_call_terminal(
+                        &delivery,
+                        DeliveryOutcome::Failed(DeliveryFailure::Internal),
+                        None,
+                        Err(EgressRuntimeError::CallFailed(DeliveryFailure::Internal)),
+                    );
+                }
+            }
+            None => {}
+        }
+    }
+
     fn complete_attempt(
         &mut self,
         delivery: DeliveryId,
-        disposition: bondry_egress::AttemptDisposition,
+        completion: crate::attempt::AttemptCompletion,
     ) {
         if !self.clear_in_flight(&delivery) {
             return;
         }
-        let event = match disposition {
+        drop(completion.result);
+        let event = match completion.disposition {
             bondry_egress::AttemptDisposition::Delivered(result) => {
                 DeliveryEvent::Delivered(result)
             }
@@ -686,6 +924,9 @@ impl Engine {
                 DeliveryEvent::Retryable(failure)
             }
             bondry_egress::AttemptDisposition::Failed(failure) => DeliveryEvent::Failed(failure),
+            bondry_egress::AttemptDisposition::FailedWithResult { failure, result } => {
+                DeliveryEvent::FailedWithResult { failure, result }
+            }
         };
         let time = self.clock.transition_time();
         let transition = match self
@@ -722,6 +963,61 @@ impl Engine {
         }
     }
 
+    fn complete_call(
+        &mut self,
+        delivery: DeliveryId,
+        completion: crate::attempt::AttemptCompletion,
+    ) {
+        if !self.clear_call_in_flight(&delivery) {
+            return;
+        }
+        let raw_result = completion.result;
+        let event = disposition_event(completion.disposition);
+        let time = self.clock.transition_time();
+        let transition = match self
+            .active_calls
+            .get_mut(&delivery)
+            .map(|active| active.lifecycle.transition(time, event))
+        {
+            Some(Ok(transition)) => transition,
+            _ => {
+                self.force_call_terminal(
+                    &delivery,
+                    DeliveryOutcome::Failed(DeliveryFailure::Internal),
+                    None,
+                    Err(EgressRuntimeError::CallFailed(DeliveryFailure::Internal)),
+                );
+                return;
+            }
+        };
+        let DeliveryAction::Terminal { outcome, result } = transition.action() else {
+            self.force_call_terminal(
+                &delivery,
+                DeliveryOutcome::Failed(DeliveryFailure::Internal),
+                None,
+                Err(EgressRuntimeError::CallFailed(DeliveryFailure::Internal)),
+            );
+            return;
+        };
+        self.persist_call_terminal(&delivery, outcome, result, transition.persistence());
+        let response = match (outcome, result, raw_result) {
+            (DeliveryOutcome::Delivered, Some(metadata), Some(json)) => Ok(CallResult {
+                delivery: delivery.clone(),
+                metadata,
+                json,
+            }),
+            (DeliveryOutcome::Failed(failure), _, _) => {
+                Err(EgressRuntimeError::CallFailed(failure))
+            }
+            (DeliveryOutcome::LostOnShutdown, _, _)
+            | (DeliveryOutcome::UnknownAfterCrash, _, _) => Err(EgressRuntimeError::Stopped),
+            (DeliveryOutcome::Delivered, _, _) => {
+                Err(EgressRuntimeError::CallFailed(DeliveryFailure::Internal))
+            }
+        };
+        self.finish_call(&delivery, response);
+    }
+
     fn clear_in_flight(&mut self, delivery: &DeliveryId) -> bool {
         let Some(active) = self.active.get_mut(delivery) else {
             return false;
@@ -748,6 +1044,29 @@ impl Engine {
         if let Some(usage) = self.usage.get_mut(&active.parts.route) {
             usage.in_flight = usage.in_flight.saturating_sub(1);
         }
+        true
+    }
+
+    fn clear_call_in_flight(&mut self, delivery: &DeliveryId) -> bool {
+        let Some(active) = self.active_calls.get_mut(delivery) else {
+            return false;
+        };
+        if active.abort.take().is_none() {
+            return false;
+        }
+        self.call_in_flight = self.call_in_flight.saturating_sub(1);
+        true
+    }
+
+    fn abort_call(&mut self, delivery: &DeliveryId) -> bool {
+        let Some(active) = self.active_calls.get_mut(delivery) else {
+            return false;
+        };
+        let Some(abort) = active.abort.take() else {
+            return false;
+        };
+        abort.abort();
+        self.call_in_flight = self.call_in_flight.saturating_sub(1);
         true
     }
 
@@ -788,6 +1107,19 @@ impl Engine {
             for delivery in deliveries {
                 self.apply_terminal_event(&delivery, DeliveryEvent::Cancel);
             }
+            let calls = self
+                .active_calls
+                .iter()
+                .filter(|(_, active)| active.parts.route == route)
+                .map(|(delivery, _)| delivery.clone())
+                .collect::<Vec<_>>();
+            for delivery in calls {
+                self.apply_call_terminal_event(
+                    &delivery,
+                    DeliveryEvent::Cancel,
+                    Err(EgressRuntimeError::CallFailed(DeliveryFailure::Cancelled)),
+                );
+            }
         }
     }
 
@@ -795,6 +1127,14 @@ impl Engine {
         let deliveries = self.active.keys().cloned().collect::<Vec<_>>();
         for delivery in deliveries {
             self.apply_terminal_event(&delivery, DeliveryEvent::ShutdownDeadline);
+        }
+        let calls = self.active_calls.keys().cloned().collect::<Vec<_>>();
+        for delivery in calls {
+            self.apply_call_terminal_event(
+                &delivery,
+                DeliveryEvent::ShutdownDeadline,
+                Err(EgressRuntimeError::Stopped),
+            );
         }
     }
 
@@ -826,6 +1166,42 @@ impl Engine {
         }
     }
 
+    fn apply_call_terminal_event(
+        &mut self,
+        delivery: &DeliveryId,
+        event: DeliveryEvent,
+        response: Result<CallResult, EgressRuntimeError>,
+    ) {
+        let time = self.clock.transition_time();
+        let transition = match self
+            .active_calls
+            .get_mut(delivery)
+            .map(|active| active.lifecycle.transition(time, event))
+        {
+            Some(Ok(transition)) => transition,
+            _ => {
+                self.force_call_terminal(
+                    delivery,
+                    DeliveryOutcome::Failed(DeliveryFailure::Internal),
+                    None,
+                    Err(EgressRuntimeError::CallFailed(DeliveryFailure::Internal)),
+                );
+                return;
+            }
+        };
+        let DeliveryAction::Terminal { outcome, result } = transition.action() else {
+            self.force_call_terminal(
+                delivery,
+                DeliveryOutcome::Failed(DeliveryFailure::Internal),
+                None,
+                Err(EgressRuntimeError::CallFailed(DeliveryFailure::Internal)),
+            );
+            return;
+        };
+        self.persist_call_terminal(delivery, outcome, result, transition.persistence());
+        self.finish_call(delivery, response);
+    }
+
     fn persist_terminal(
         &mut self,
         delivery: &DeliveryId,
@@ -839,6 +1215,38 @@ impl Engine {
             self.insert_override(delivery, outcome, result);
         }
         self.finish_delivery(delivery);
+    }
+
+    fn persist_call_terminal(
+        &mut self,
+        delivery: &DeliveryId,
+        outcome: DeliveryOutcome,
+        result: Option<DeliveryResultMetadata>,
+        persistence: Option<&DeliveryPersistenceAction>,
+    ) {
+        let persisted = persistence.is_some_and(|action| self.persist(action).is_ok());
+        if !persisted && !self.persisted_terminal_matches(delivery, outcome, result) {
+            self.persistence_degraded = true;
+            self.insert_call_override(delivery, outcome, result);
+        }
+    }
+
+    fn force_call_terminal(
+        &mut self,
+        delivery: &DeliveryId,
+        outcome: DeliveryOutcome,
+        result: Option<DeliveryResultMetadata>,
+        response: Result<CallResult, EgressRuntimeError>,
+    ) {
+        let persisted = self
+            .log
+            .record_outcome(delivery, outcome, unix_milliseconds(), result)
+            .is_ok();
+        if !persisted && !self.persisted_terminal_matches(delivery, outcome, result) {
+            self.persistence_degraded = true;
+            self.insert_call_override(delivery, outcome, result);
+        }
+        self.finish_call(delivery, response);
     }
 
     fn force_terminal(
@@ -898,6 +1306,32 @@ impl Engine {
         );
     }
 
+    fn insert_call_override(
+        &mut self,
+        delivery: &DeliveryId,
+        outcome: DeliveryOutcome,
+        result: Option<DeliveryResultMetadata>,
+    ) {
+        let Some(active) = self.active_calls.get(delivery) else {
+            return;
+        };
+        let intent = DeliveryIntent::new(
+            active.parts.route.clone(),
+            delivery.clone(),
+            active.accepted_at_unix_ms,
+        );
+        self.overrides.insert(
+            delivery.clone(),
+            DeliveryRecord::from_stored_parts(
+                intent,
+                active.lifecycle.attempts(),
+                DeliveryState::Terminal(outcome),
+                unix_milliseconds(),
+                result,
+            ),
+        );
+    }
+
     fn finish_delivery(&mut self, delivery: &DeliveryId) {
         let Some(mut active) = self.active.remove(delivery) else {
             return;
@@ -915,10 +1349,31 @@ impl Engine {
         if let Some(usage) = self.usage.get_mut(&active.parts.route) {
             usage.pending = usage.pending.saturating_sub(1);
             usage.bytes = usage.bytes.saturating_sub(bytes);
-            if usage.pending == 0 && usage.in_flight == 0 {
+            if usage.is_idle() {
                 self.usage.remove(&active.parts.route);
             }
         }
+    }
+
+    fn finish_call(
+        &mut self,
+        delivery: &DeliveryId,
+        response: Result<CallResult, EgressRuntimeError>,
+    ) {
+        let Some(mut active) = self.active_calls.remove(delivery) else {
+            return;
+        };
+        if let Some(abort) = active.abort.take() {
+            abort.abort();
+            self.call_in_flight = self.call_in_flight.saturating_sub(1);
+        }
+        if let Some(usage) = self.usage.get_mut(&active.parts.route) {
+            usage.calls = usage.calls.saturating_sub(1);
+            if usage.pending == 0 && usage.in_flight == 0 && usage.calls == 0 {
+                self.usage.remove(&active.parts.route);
+            }
+        }
+        let _ = active.reply.send(response);
     }
 
     fn enqueue_ready(&mut self, route: RouteId, delivery: DeliveryId) {
@@ -956,11 +1411,7 @@ impl Engine {
         let complete = self
             .drains
             .keys()
-            .filter(|route| {
-                self.usage
-                    .get(*route)
-                    .is_none_or(|usage| usage.pending == 0)
-            })
+            .filter(|route| self.usage.get(*route).is_none_or(RouteUsage::is_idle))
             .cloned()
             .collect::<Vec<_>>();
         for route in complete {
@@ -1014,6 +1465,13 @@ struct RouteUsage {
     pending: u16,
     bytes: usize,
     in_flight: u8,
+    calls: u8,
+}
+
+impl RouteUsage {
+    const fn is_idle(&self) -> bool {
+        self.pending == 0 && self.in_flight == 0 && self.calls == 0
+    }
 }
 
 struct ActiveDelivery {
@@ -1021,6 +1479,14 @@ struct ActiveDelivery {
     parts: AdmittedDeliveryParts,
     lifecycle: DeliveryLifecycle,
     abort: Option<AbortHandle>,
+}
+
+struct ActiveCall {
+    accepted_at_unix_ms: u64,
+    parts: AdmittedDeliveryParts,
+    lifecycle: DeliveryLifecycle,
+    abort: Option<AbortHandle>,
+    reply: Reply<CallResult>,
 }
 
 struct RouteDrain {
@@ -1073,8 +1539,22 @@ fn reject_command(command: Command) {
         Command::Emit { reply, .. } => {
             let _ = reply.send(Err(EgressRuntimeError::Stopped));
         }
+        Command::Call { reply, .. } => {
+            let _ = reply.send(Err(EgressRuntimeError::Stopped));
+        }
         Command::Delivery { reply, .. } => {
             let _ = reply.send(Err(EgressRuntimeError::Stopped));
+        }
+    }
+}
+
+fn disposition_event(disposition: bondry_egress::AttemptDisposition) -> DeliveryEvent {
+    match disposition {
+        bondry_egress::AttemptDisposition::Delivered(result) => DeliveryEvent::Delivered(result),
+        bondry_egress::AttemptDisposition::Retryable(failure) => DeliveryEvent::Retryable(failure),
+        bondry_egress::AttemptDisposition::Failed(failure) => DeliveryEvent::Failed(failure),
+        bondry_egress::AttemptDisposition::FailedWithResult { failure, result } => {
+            DeliveryEvent::FailedWithResult { failure, result }
         }
     }
 }
@@ -1097,14 +1577,17 @@ mod tests {
         PayloadContract, PayloadField, PayloadFieldName, PayloadFieldType, PayloadLimit,
         RequestTimeout, RetryPolicy, Route, RouteAdmissionLimit, RouteRegistry,
     };
+    use bondry_egress_mcp::{McpAuthentication, McpDeliveryKind, McpLimits, McpToolBinding};
     use bondry_egress_webhook::{WebhookAuthentication, WebhookDeliveryKind, WebhookLimits};
+    use bondry_mcp_proto::{McpClient, McpClientInfo, McpProtocolVersion};
     use bondry_secrets::{SecretProvider, SecretProviderError};
     use bondry_transport::{
         ConnectionEvidence, HttpRequest, HttpResponse, HttpTransport, TlsConnectionEvidence,
         TransportError, TransportFuture,
     };
     use bytes::Bytes;
-    use http::{HeaderMap, StatusCode};
+    use http::{HeaderMap, HeaderValue, StatusCode, header};
+    use serde_json::{Value, json};
 
     use super::{EgressRuntime, EgressRuntimeError};
     use crate::{EgressRuntimeLimits, InMemoryDeliveryLog};
@@ -1250,6 +1733,56 @@ mod tests {
         sends: mpsc::Sender<String>,
     }
 
+    struct McpTransport {
+        delay: Duration,
+        sends: mpsc::Sender<String>,
+        response: Bytes,
+    }
+
+    impl McpTransport {
+        fn new(delay: Duration, sends: mpsc::Sender<String>) -> Self {
+            let mut response: Value = serde_json::from_str(include_str!(
+                "../../../../fixtures/protocol-v1/mcp/tools-call.response.json"
+            ))
+            .unwrap_or_else(|error| unreachable!("valid MCP fixture: {error}"));
+            response["id"] = Value::from(1);
+            Self {
+                delay,
+                sends,
+                response: Bytes::from(
+                    serde_json::to_vec(&response)
+                        .unwrap_or_else(|error| unreachable!("encodable MCP fixture: {error}")),
+                ),
+            }
+        }
+    }
+
+    impl HttpTransport for McpTransport {
+        fn send(
+            &self,
+            request: HttpRequest,
+        ) -> TransportFuture<'_, Result<HttpResponse, TransportError>> {
+            let parts = request.into_parts();
+            let delay = self.delay;
+            let sends = self.sends.clone();
+            let response = self.response.clone();
+            Box::pin(async move {
+                let _ = sends.send(parts.endpoint.path_and_query().to_owned());
+                tokio::time::sleep(delay).await;
+                let connection = parts.policy.verify_connection(
+                    &parts.endpoint,
+                    ConnectionEvidence::Tls(TlsConnectionEvidence::verified(parts.endpoint.host())),
+                )?;
+                let mut headers = HeaderMap::new();
+                headers.insert(
+                    header::CONTENT_TYPE,
+                    HeaderValue::from_static("application/json"),
+                );
+                HttpResponse::new(StatusCode::OK, headers, response, connection, parts.limits)
+            })
+        }
+    }
+
     impl MockTransport {
         fn new(
             delay: Duration,
@@ -1342,8 +1875,51 @@ mod tests {
         ))
     }
 
+    fn mcp_route(id: &str) -> Result<Route, Box<dyn std::error::Error>> {
+        let payload = PayloadContract::new(
+            [PayloadField::new(
+                PayloadFieldName::new("detail")?,
+                PayloadFieldType::Any,
+                true,
+            )],
+            PayloadLimit::default(),
+        )?;
+        let tool = McpToolBinding::from_parts(
+            "battery:status",
+            json!({
+                "type": "object",
+                "properties": { "detail": { "type": "boolean" } },
+                "required": ["detail"],
+                "additionalProperties": false,
+            }),
+            McpLimits::default(),
+        )?;
+        let kind = McpDeliveryKind::new(
+            bondry_transport::NetworkEndpoint::new(format!("https://example.com/{id}").parse()?)?,
+            McpAuthentication::None,
+            bondry_transport::EndpointPolicy::default(),
+            McpClient::new(McpClientInfo::new("runtime-test", "0.2.0")?),
+            McpProtocolVersion::V2026_07_28,
+            tool,
+            McpLimits::default(),
+        )?;
+        Ok(Route::new(
+            RouteId::new(id)?,
+            true,
+            payload,
+            RequestTimeout::new(Duration::from_secs(10))?,
+            RetryPolicy::default(),
+            RouteAdmissionLimit::default(),
+            Arc::new(kind),
+        ))
+    }
+
     fn event(marker: &str) -> Bytes {
         Bytes::from(format!("{{\"event\":\"{marker}\"}}"))
+    }
+
+    fn mcp_input(detail: bool) -> Bytes {
+        Bytes::from(format!("{{\"detail\":{detail}}}"))
     }
 
     fn start_runtime(
@@ -1652,6 +2228,213 @@ mod tests {
                 DeliveryLogError::Unavailable
             ))
         );
+        runtime.stop()?;
+        Ok(())
+    }
+
+    #[test]
+    fn call_returns_bounded_result_and_persists_only_metadata()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (sends, sent) = mpsc::channel();
+        let transport = Arc::new(McpTransport::new(Duration::ZERO, sends));
+        let log = Arc::new(InMemoryDeliveryLog::default());
+        let mut runtime = EgressRuntime::start(
+            RouteRegistry::default(),
+            limits(8, 1, Duration::from_secs(1))?,
+            Arc::clone(&log) as Arc<dyn DeliveryLog>,
+            Arc::new(NoSecrets),
+            transport,
+        )?;
+        runtime.register_route(mcp_route("rpc")?)?;
+        let rejected = DeliveryId::new("mcp_schema_rejected")?;
+        assert!(matches!(
+            runtime.call(
+                RouteId::new("rpc")?,
+                rejected.clone(),
+                Bytes::from_static(br#"{"detail":"yes"}"#),
+            ),
+            Err(EgressRuntimeError::Admission(
+                bondry_egress::AdmissionError::Kind(
+                    bondry_egress::KindOperationError::InvalidEvent
+                )
+            ))
+        ));
+        assert!(log.delivery(&rejected)?.is_none());
+        assert!(sent.recv_timeout(Duration::from_millis(50)).is_err());
+        let delivery = DeliveryId::new("mcp_call")?;
+        let result = runtime.call(RouteId::new("rpc")?, delivery.clone(), mcp_input(true))?;
+        assert_eq!(sent.recv_timeout(Duration::from_secs(1))?, "/rpc");
+        assert_eq!(result.delivery(), &delivery);
+        assert_eq!(
+            result.metadata().category(),
+            bondry_delivery_store::DeliveryResultCategory::Succeeded
+        );
+        assert!(!result.json().is_empty());
+        assert!(!format!("{result:?}").contains("charging"));
+
+        let record = log
+            .delivery(&delivery)?
+            .ok_or(std::io::Error::other("call status missing"))?;
+        assert_eq!(
+            record.state(),
+            DeliveryState::Terminal(DeliveryOutcome::Delivered)
+        );
+        assert_eq!(record.result(), Some(result.metadata()));
+        assert!(!format!("{record:?}").contains("charging"));
+
+        runtime.register_route(route("webhook", RetryPolicy::without_retries())?)?;
+        assert!(matches!(
+            runtime.call(
+                RouteId::new("webhook")?,
+                DeliveryId::new("unsupported_call")?,
+                event("blocked"),
+            ),
+            Err(EgressRuntimeError::Admission(
+                bondry_egress::AdmissionError::UnsupportedOperation
+            ))
+        ));
+        runtime.stop()?;
+        Ok(())
+    }
+
+    #[test]
+    fn route_drain_cancels_active_calls_with_one_terminal_status()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (sends, sent) = mpsc::channel();
+        let transport = Arc::new(McpTransport::new(Duration::from_secs(5), sends));
+        let log = Arc::new(InMemoryDeliveryLog::default());
+        let runtime = Arc::new(EgressRuntime::start(
+            RouteRegistry::default(),
+            limits(8, 1, Duration::from_secs(1))?,
+            log.clone(),
+            Arc::new(NoSecrets),
+            transport,
+        )?);
+        runtime.register_route(mcp_route("drain_call")?)?;
+        let call_runtime = Arc::clone(&runtime);
+        let call = thread::spawn(move || {
+            call_runtime.call(
+                RouteId::new("drain_call")
+                    .unwrap_or_else(|error| unreachable!("valid route: {error}")),
+                DeliveryId::new("drained_call")
+                    .unwrap_or_else(|error| unreachable!("valid delivery: {error}")),
+                mcp_input(true),
+            )
+        });
+        assert_eq!(sent.recv_timeout(Duration::from_secs(1))?, "/drain_call");
+        runtime.disable_route(RouteId::new("drain_call")?)?;
+        assert_eq!(
+            call.join()
+                .map_err(|_| std::io::Error::other("call thread panicked"))?,
+            Err(EgressRuntimeError::CallFailed(DeliveryFailure::Cancelled))
+        );
+        let delivery = DeliveryId::new("drained_call")?;
+        let record = log
+            .delivery(&delivery)?
+            .ok_or(std::io::Error::other("cancelled call status missing"))?;
+        assert_eq!(
+            record.state(),
+            DeliveryState::Terminal(DeliveryOutcome::Failed(DeliveryFailure::Cancelled))
+        );
+
+        let mut runtime =
+            Arc::try_unwrap(runtime).map_err(|_| std::io::Error::other("runtime still shared"))?;
+        runtime.stop()?;
+        Ok(())
+    }
+
+    #[test]
+    fn call_lane_rejects_immediately_and_bypasses_emit_backlog()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (sends, sent) = mpsc::channel();
+        let transport = Arc::new(McpTransport::new(Duration::from_millis(150), sends));
+        let runtime = Arc::new(EgressRuntime::start(
+            RouteRegistry::default(),
+            limits(8, 1, Duration::from_secs(1))?,
+            Arc::new(InMemoryDeliveryLog::default()),
+            Arc::new(NoSecrets),
+            transport,
+        )?);
+        runtime.register_route(mcp_route("rpc_lane")?)?;
+        runtime.register_route(route("slow", RetryPolicy::without_retries())?)?;
+        runtime.emit(
+            RouteId::new("slow")?,
+            DeliveryId::new("slow_first")?,
+            event("first"),
+        )?;
+        runtime.emit(
+            RouteId::new("slow")?,
+            DeliveryId::new("slow_second")?,
+            event("second"),
+        )?;
+        assert_eq!(sent.recv_timeout(Duration::from_secs(1))?, "/slow");
+
+        let first_runtime = Arc::clone(&runtime);
+        let first = thread::spawn(move || {
+            first_runtime.call(
+                RouteId::new("rpc_lane")
+                    .unwrap_or_else(|error| unreachable!("valid route: {error}")),
+                DeliveryId::new("lane_first")
+                    .unwrap_or_else(|error| unreachable!("valid delivery: {error}")),
+                mcp_input(true),
+            )
+        });
+        assert_eq!(sent.recv_timeout(Duration::from_secs(1))?, "/rpc_lane");
+        let started = Instant::now();
+        assert_eq!(
+            runtime.call(
+                RouteId::new("rpc_lane")?,
+                DeliveryId::new("lane_second")?,
+                mcp_input(true),
+            ),
+            Err(EgressRuntimeError::CallCapacity)
+        );
+        assert!(started.elapsed() < Duration::from_millis(50));
+        let result = first
+            .join()
+            .map_err(|_| std::io::Error::other("call thread panicked"))??;
+        assert!(!result.json().is_empty());
+
+        let mut runtime =
+            Arc::try_unwrap(runtime).map_err(|_| std::io::Error::other("runtime still shared"))?;
+        runtime.stop()?;
+        Ok(())
+    }
+
+    #[test]
+    fn mcp_emit_does_not_retry_without_explicit_kind_opt_in()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (sends, sent) = mpsc::channel();
+        let transport = Arc::new(MockTransport::new(
+            Duration::ZERO,
+            [Err(TransportError::ConnectionFailed)],
+            sends,
+        ));
+        let log = Arc::new(InMemoryDeliveryLog::default());
+        let mut runtime = EgressRuntime::start(
+            RouteRegistry::default(),
+            limits(8, 1, Duration::from_secs(1))?,
+            Arc::clone(&log) as Arc<dyn DeliveryLog>,
+            Arc::new(NoSecrets),
+            transport,
+        )?;
+        runtime.register_route(mcp_route("no_retry")?)?;
+        let delivery = DeliveryId::new("mcp_no_retry")?;
+        runtime.emit(
+            RouteId::new("no_retry")?,
+            delivery.clone(),
+            mcp_input(false),
+        )?;
+        let record = wait_for_terminal(&runtime, &delivery, Duration::from_secs(1))?;
+        assert_eq!(record.attempts(), 1);
+        assert_eq!(
+            record.state(),
+            DeliveryState::Terminal(DeliveryOutcome::Failed(
+                DeliveryFailure::TransportUnavailable
+            ))
+        );
+        assert_eq!(sent.recv_timeout(Duration::from_secs(1))?, "/no_retry");
+        assert!(sent.recv_timeout(Duration::from_millis(50)).is_err());
         runtime.stop()?;
         Ok(())
     }

@@ -194,6 +194,21 @@ impl RouteRegistry {
         self.admit(route, delivery, payload, OperationMode::Call, now)
     }
 
+    /// Validates call routing before an independent runtime lane capacity check.
+    pub fn validate_call_route(&self, route: &RouteId) -> Result<(), AdmissionError> {
+        let entry = self
+            .routes
+            .get(route)
+            .ok_or(AdmissionError::RouteNotFound)?;
+        if !entry.route.enabled {
+            return Err(AdmissionError::RouteDisabled);
+        }
+        if !entry.route.kind.supports_call() {
+            return Err(AdmissionError::UnsupportedOperation);
+        }
+        Ok(())
+    }
+
     fn admit(
         &mut self,
         route: &RouteId,
@@ -213,6 +228,7 @@ impl RouteRegistry {
             return Err(AdmissionError::UnsupportedOperation);
         }
         let payload = entry.route.payload.validate(payload)?;
+        entry.route.kind.validate_payload(mode, &payload)?;
         if mode == OperationMode::Emit {
             self.global_admission.refill(now);
             entry.admission.refill(now);
@@ -463,8 +479,23 @@ mod tests {
             self.supports_call
         }
 
+        fn permits_automatic_retry(&self) -> bool {
+            true
+        }
+
         fn max_payload_bytes(&self) -> usize {
             self.max_payload_bytes
+        }
+
+        fn validate_payload(
+            &self,
+            mode: OperationMode,
+            _payload: &EventPayload,
+        ) -> Result<(), KindOperationError> {
+            if mode == OperationMode::Call && !self.supports_call {
+                return Err(KindOperationError::UnsupportedOperation);
+            }
+            Ok(())
         }
 
         fn operation(

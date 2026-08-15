@@ -65,6 +65,10 @@ pub const BONDRY_STATUS_EGRESS_ROUTE_DISABLED: i32 = 43;
 pub const BONDRY_STATUS_EGRESS_UNSUPPORTED_OPERATION: i32 = 44;
 /// Durable delivery state could not be safely read or written.
 pub const BONDRY_STATUS_EGRESS_DELIVERY_LOG: i32 = 45;
+/// The independent host-call lane is full.
+pub const BONDRY_STATUS_EGRESS_CALL_CAPACITY: i32 = 46;
+/// An accepted host call reached a terminal delivery failure.
+pub const BONDRY_STATUS_EGRESS_CALL_FAILED: i32 = 47;
 
 const IDENTIFIER_CAPACITY: usize = 129;
 
@@ -470,6 +474,8 @@ fn runtime_error_status(error: EgressRuntimeError) -> i32 {
         EgressRuntimeError::RouteDraining => BONDRY_STATUS_EGRESS_ROUTE_DRAINING,
         EgressRuntimeError::PendingCapacity => BONDRY_STATUS_EGRESS_PENDING_CAPACITY,
         EgressRuntimeError::PendingBytes => BONDRY_STATUS_EGRESS_PENDING_BYTES,
+        EgressRuntimeError::CallCapacity => BONDRY_STATUS_EGRESS_CALL_CAPACITY,
+        EgressRuntimeError::CallFailed(_) => BONDRY_STATUS_EGRESS_CALL_FAILED,
         EgressRuntimeError::DeliveryLog(error) => delivery_log_error_status(error),
     }
 }

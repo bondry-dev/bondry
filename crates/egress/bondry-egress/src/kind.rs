@@ -1,6 +1,7 @@
 use bondry_delivery_store::{DeliveryFailure, DeliveryId, DeliveryResultMetadata};
 use bondry_secrets::{ResolvedSecret, SecretRef};
 use bondry_transport::{Deadline, HttpRequest, HttpResponse, TransportError};
+use bytes::Bytes;
 use thiserror::Error;
 
 use crate::{EventPayload, RetryableFailure};
@@ -52,8 +53,18 @@ pub trait DeliveryKind: Send + Sync {
     /// Returns whether this kind supports the host `call` verb.
     fn supports_call(&self) -> bool;
 
+    /// Returns whether retryable failures may enter the route retry policy.
+    fn permits_automatic_retry(&self) -> bool;
+
     /// Returns the largest exact payload this kind can submit.
     fn max_payload_bytes(&self) -> usize;
+
+    /// Validates kind-specific payload constraints before runtime admission.
+    fn validate_payload(
+        &self,
+        mode: OperationMode,
+        payload: &EventPayload,
+    ) -> Result<(), KindOperationError>;
 
     /// Creates fresh sans-I/O attempt state from validated exact bytes.
     fn operation(
@@ -92,6 +103,13 @@ pub enum KindTransition {
     Http(Box<HttpRequest>),
     /// Finish the current attempt.
     Complete(AttemptDisposition),
+    /// Finish with a bounded untrusted result for the host `call` verb.
+    CompleteWithResult {
+        /// Delivery classification and non-sensitive result metadata.
+        disposition: AttemptDisposition,
+        /// Validated raw JSON result bytes.
+        result: Bytes,
+    },
 }
 
 /// Delivery-kind classification consumed by the generic retry lifecycle.
@@ -103,6 +121,13 @@ pub enum AttemptDisposition {
     Retryable(RetryableFailure),
     /// The failure is terminal regardless of remaining retries.
     Failed(DeliveryFailure),
+    /// A bounded response was invalid and only its metadata may be retained.
+    FailedWithResult {
+        /// Stable terminal delivery category.
+        failure: DeliveryFailure,
+        /// Non-sensitive invalid-result category and size.
+        result: DeliveryResultMetadata,
+    },
 }
 
 /// Stable failure to create a delivery-kind operation.

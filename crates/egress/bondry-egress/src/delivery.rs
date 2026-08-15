@@ -88,6 +88,12 @@ impl DeliveryLifecycle {
                 }
                 Ok(self.terminal(time, DeliveryOutcome::Failed(failure), None))
             }
+            DeliveryEvent::FailedWithResult { failure, result } => {
+                if !matches!(self.state, State::InFlight) {
+                    return Err(DeliveryLifecycleError);
+                }
+                Ok(self.terminal(time, DeliveryOutcome::Failed(failure), Some(result)))
+            }
             DeliveryEvent::Cancel => Ok(self.terminal(
                 time,
                 DeliveryOutcome::Failed(DeliveryFailure::Cancelled),
@@ -205,6 +211,13 @@ pub enum DeliveryEvent {
     Retryable(RetryableFailure),
     /// The delivery kind reported a terminal failure.
     Failed(DeliveryFailure),
+    /// The delivery kind reported a bounded invalid result and terminal failure.
+    FailedWithResult {
+        /// Stable terminal delivery category.
+        failure: DeliveryFailure,
+        /// Non-sensitive invalid-result category and size.
+        result: DeliveryResultMetadata,
+    },
     /// Route disable or host cancellation terminates pending work.
     Cancel,
     /// The graceful shutdown deadline expired.
