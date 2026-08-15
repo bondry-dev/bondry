@@ -1,0 +1,28 @@
+[package]
+name = "bondry-egress-mcp-e2e"
+description = "End-to-end tests for Bondry MCP egress"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+bondry-core = { path = "../../crates/contract/bondry-core" }
+bondry-delivery-store = { path = "../../crates/contract/bondry-delivery-store" }
+bondry-egress = { path = "../../crates/egress/bondry-egress" }
+bondry-egress-mcp = { path = "../../crates/egress/bondry-egress-mcp" }
+bondry-egress-runtime = { path = "../../crates/engine/bondry-egress-runtime", features = ["network-io"] }
+bondry-http-server = { path = "../../crates/engine/bondry-http-server" }
+bondry-mcp-proto = { path = "../../crates/proto/bondry-mcp-proto" }
+bondry-secrets = { path = "../../crates/contract/bondry-secrets" }
+bondry-transport = { path = "../../crates/contract/bondry-transport" }
+bondry-transport-net = { path = "../../crates/engine/bondry-transport-net" }
+bytes.workspace = true
+http.workspace = true
+serde_json.workspace = true
+tokio = { workspace = true, features = ["macros", "rt", "time"] }
+
+[lints]
+workspace = true
