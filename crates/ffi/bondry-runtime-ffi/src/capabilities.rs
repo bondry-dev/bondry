@@ -42,6 +42,7 @@ use crate::{
 };
 
 const MAX_JSON_PAYLOAD_LENGTH: usize = 1_048_576;
+pub(crate) const MAX_AUTOMATION_INPUT_LENGTH: usize = 10 * 1_048_576;
 
 /// Completes one foreign capability invocation exactly once.
 pub type BondryCapabilityCompletionV1 = unsafe extern "C" fn(
@@ -801,6 +802,7 @@ pub unsafe extern "C" fn bondry_dispatch_token_v1(
                 RawBuffer::new(adapter_id, adapter_id_length),
                 RawBuffer::new(capability_id, capability_id_length),
                 RawBuffer::new(input_json, input_json_length),
+                MAX_JSON_PAYLOAD_LENGTH,
             )
         } {
             Ok(dispatch) => dispatch,
@@ -850,6 +852,45 @@ pub unsafe extern "C" fn bondry_dispatch_principal_v1(
     completion: Option<BondryDispatchCompletionV1>,
     completion_context: *mut c_void,
 ) -> i32 {
+    unsafe {
+        dispatch_principal_with_limit(
+            store,
+            invocation_id,
+            invocation_id_length,
+            adapter_id,
+            adapter_id_length,
+            principal_id,
+            principal_id_length,
+            principal_kind,
+            capability_id,
+            capability_id_length,
+            input_json,
+            input_json_length,
+            completion,
+            completion_context,
+            MAX_JSON_PAYLOAD_LENGTH,
+        )
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) unsafe fn dispatch_principal_with_limit(
+    store: *const BondryStoreHandle,
+    invocation_id: *const u8,
+    invocation_id_length: usize,
+    adapter_id: *const u8,
+    adapter_id_length: usize,
+    principal_id: *const u8,
+    principal_id_length: usize,
+    principal_kind: u32,
+    capability_id: *const u8,
+    capability_id_length: usize,
+    input_json: *const u8,
+    input_json_length: usize,
+    completion: Option<BondryDispatchCompletionV1>,
+    completion_context: *mut c_void,
+    maximum_input_length: usize,
+) -> i32 {
     catch_status(|| {
         let Ok(handle) = crate::auth::store_handle(store) else {
             return BONDRY_STATUS_NULL_POINTER;
@@ -863,6 +904,7 @@ pub unsafe extern "C" fn bondry_dispatch_principal_v1(
                 RawBuffer::new(adapter_id, adapter_id_length),
                 RawBuffer::new(capability_id, capability_id_length),
                 RawBuffer::new(input_json, input_json_length),
+                maximum_input_length,
             )
         } {
             Ok(dispatch) => dispatch,
@@ -925,6 +967,7 @@ unsafe fn parse_dispatch(
     adapter: RawBuffer,
     capability: RawBuffer,
     input: RawBuffer,
+    maximum_input_length: usize,
 ) -> Result<ParsedDispatch, i32> {
     let invocation_id = unsafe { required_utf8(invocation.bytes, invocation.length) }
         .and_then(|value| InvocationId::new(value).map_err(|_| BONDRY_STATUS_INVALID_ARGUMENT))?;
@@ -937,7 +980,7 @@ unsafe fn parse_dispatch(
     if input.length > isize::MAX as usize {
         return Err(BONDRY_STATUS_INVALID_LENGTH);
     }
-    if input.length > MAX_JSON_PAYLOAD_LENGTH {
+    if input.length > maximum_input_length {
         return Err(BONDRY_STATUS_PAYLOAD_TOO_LARGE);
     }
     Ok(ParsedDispatch {

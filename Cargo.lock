@@ -418,6 +418,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "bondry-webhook-ingress-ffi"
+version = "0.1.2"
+dependencies = [
+ "bondry-core",
+ "bondry-delivery-store",
+ "bondry-secrets",
+ "bondry-webhook-ingress",
+ "bondry-webhook-verify",
+ "http",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "bondry-webhook-verify"
 version = "0.1.2"
 dependencies = [

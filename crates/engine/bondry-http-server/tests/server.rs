@@ -680,7 +680,8 @@ fn disabled_authentication_uses_an_explicit_local_principal()
 }
 
 #[test]
-fn validates_configuration_bounds_and_adapter_presence() -> Result<(), Box<dyn std::error::Error>> {
+fn validates_configuration_bounds_and_allows_raw_body_only_startup()
+-> Result<(), Box<dyn std::error::Error>> {
     assert!(RateLimits::new(0, 1).is_err());
     assert!(RateLimits::new(1, 60_001).is_err());
     assert!(OriginPolicy::default().allowing("not-an-origin").is_err());
@@ -703,10 +704,8 @@ fn validates_configuration_bounds_and_adapter_presence() -> Result<(), Box<dyn s
             )
             .is_err()
     );
-    assert!(matches!(
-        LocalHttpServer::start(configuration, Vec::new()),
-        Err(ServerStartError::NoAdapters)
-    ));
+    let mut raw_body_only = LocalHttpServer::start(configuration, Vec::new())?;
+    raw_body_only.stop()?;
     let network_configuration =
         authenticated_configuration().with_bind_address(IpAddr::V4(Ipv4Addr::UNSPECIFIED));
     assert!(matches!(

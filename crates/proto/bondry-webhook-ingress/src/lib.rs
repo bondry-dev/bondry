@@ -10,12 +10,12 @@ mod tests;
 
 pub use limiter::{AuthenticatedRequestLimitError, AuthenticatedRequestLimiter};
 pub use limits::{
-    DEFAULT_WEBHOOK_BODY_BYTES, DEFAULT_WEBHOOK_RETAINED_BYTES, MAX_WEBHOOK_BODY_BYTES,
-    MAX_WEBHOOK_RETAINED_BYTES, MIN_WEBHOOK_BODY_BYTES, WebhookIngressLimitError,
-    WebhookIngressLimits,
+    DEFAULT_WEBHOOK_BODY_BYTES, DEFAULT_WEBHOOK_RETAINED_BYTES, DEFAULT_WEBHOOK_SELECTED_HEADERS,
+    MAX_WEBHOOK_BODY_BYTES, MAX_WEBHOOK_RETAINED_BYTES, MAX_WEBHOOK_SELECTED_HEADERS,
+    MIN_WEBHOOK_BODY_BYTES, WebhookIngressLimitError, WebhookIngressLimits,
 };
 pub use response::WebhookIngressResponse;
 pub use route::{
-    CapabilitySemantics, PayloadMapping, WebhookIngressContext, WebhookIngressTime, WebhookRoute,
-    WebhookRouteConfiguration, WebhookRouteError,
+    CapabilitySemantics, PayloadMapping, WebhookDispatch, WebhookIngressContext,
+    WebhookIngressTime, WebhookRoute, WebhookRouteConfiguration, WebhookRouteError,
 };

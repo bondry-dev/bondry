@@ -532,7 +532,7 @@ fn start_server(
     runtime: Arc<RuntimeHandle>,
     input: InputConfiguration,
 ) -> Result<LocalHttpServer, i32> {
-    if input.version != BONDRY_SERVER_CONFIGURATION_VERSION_V1 || input.adapters.is_empty() {
+    if input.version != BONDRY_SERVER_CONFIGURATION_VERSION_V1 {
         return Err(BONDRY_STATUS_INVALID_ARGUMENT);
     }
     let bind_address = input
@@ -879,7 +879,6 @@ mod tests {
         assert!(address.address.iter().all(|byte| *byte == 0));
 
         for invalid in [
-            configuration(json!([]), Value::Null, bearer_authentication()),
             configuration(
                 json!(["rest", "rest"]),
                 Value::Null,
@@ -913,6 +912,23 @@ mod tests {
             unsafe { bondry_server_stop_v1(ptr::null_mut()) },
             BONDRY_STATUS_OK
         );
+        Ok(())
+    }
+
+    #[test]
+    fn starts_without_protocol_adapters_for_dynamic_routes()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let store = TestStore::open()?;
+        let input = configuration(json!([]), Value::Null, bearer_authentication());
+        let (server, address) = start_successfully(store.server_handle(), &input)?;
+
+        let response = request(
+            address.port,
+            "GET /api/v1 HTTP/1.1\r\nHost: localhost\r\n\r\n",
+        )?;
+        assert!(response.starts_with("HTTP/1.1 404 Not Found"));
+
+        assert_eq!(unsafe { bondry_server_stop_v1(server) }, BONDRY_STATUS_OK);
         Ok(())
     }
 
