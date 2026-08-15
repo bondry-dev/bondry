@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "github": {
+    "source": "https://docs.github.com/en/webhooks/using-webhooks/validating-webhook-deliveries",
+    "secret_base64": "SXQncyBhIFNlY3JldCB0byBFdmVyeWJvZHk=",
+    "body_base64": "SGVsbG8sIFdvcmxkIQ==",
+    "signature_header": "sha256=757107ea0eb2509fc211221cce984b8a37570b6d7586c22c46f4379c8b043e17"
+  },
+  "stripe": {
+    "source": "https://docs.stripe.com/webhooks#verify-webhook-signatures-manually",
+    "secret_base64": "d2hzZWNfdGVzdF9zZWNyZXQ=",
+    "timestamp_unix_seconds": 1723723200,
+    "body_base64": "eyJpZCI6ImV2dF90ZXN0X3dlYmhvb2siLCJvYmplY3QiOiJldmVudCJ9",
+    "canonical_base64": "MTcyMzcyMzIwMC57ImlkIjoiZXZ0X3Rlc3Rfd2ViaG9vayIsIm9iamVjdCI6ImV2ZW50In0=",
+    "signature_header": "t=1723723200,v1=c6423b0b32e794719bc782fe012c3f4038e3534d3bc49aa7cf4127ef3149b079"
+  }
+}
