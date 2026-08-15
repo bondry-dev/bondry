@@ -40,7 +40,7 @@ Capability handlers are host-application code. They are trusted to enforce domai
 - C authentication failures do not distinguish malformed, unknown, mismatched, expired, revoked, or disabled-client bearer tokens.
 - C results use caller-owned fixed-capacity records. One-time token records have an explicit clearing operation, and audit records exclude credentials and payloads.
 - Swift keeps each newly issued token in a private C record, redacts its debug representation, and clears it when the last shared owner is released. Deliberate `String` copies remain the host's responsibility.
-- The local HTTP runtime defaults to loopback, an operating-system-selected port, rejected browser origins, bounded headers, a 1 MiB body limit, connection and request limits, finite timeouts, and no keep-alive.
+- The local HTTP runtime defaults to loopback, an operating-system-selected port, rejected browser origins, bounded headers, a 1 MiB body limit, connection and request limits, finite timeouts, and a bounded keep-alive connection lifetime.
 - HTTP authenticators receive request metadata but adapters receive only the resulting principal after credential-bearing headers are removed.
 - Non-loopback cleartext listening and non-loopback disabled authentication require separate explicit acknowledgements.
 - REST discovery returns only capabilities authorized for the authenticated principal and the REST adapter.
@@ -53,12 +53,17 @@ Capability handlers are host-application code. They are trusted to enforce domai
 - The Shortcuts adapter discovers only registered capabilities granted to its configured principal under the `shortcuts` adapter identifier, and authorization is evaluated again for every invocation.
 - The generic Shortcuts action requires authentication and returns only stable, non-sensitive error descriptions.
 - Swift server handles are single-owner, stop idempotently, and perform bounded shutdown during explicit stop or deinitialization.
+- Webhook routes fix the principal, `webhook` adapter, and capability at registration; external input cannot override any of them.
+- Raw-body routes apply per-peer and per-route limits before body collection, reserve from a server-wide retained-byte budget, and expose only selected bounded headers.
+- Webhook verifiers consume exact bounded bodies, resolve secrets through host-owned references, compare HMAC values in constant time, and never expose credential material to capability input or audit.
+- Trusted delivery identities are verifier-produced and hash-keyed in persistent replay storage. In-flight and uncertain duplicates never trigger a second automatic dispatch, and capacity exhaustion fails closed.
+- Disabling webhook ingress closes admission atomically, drains accepted work without REST or MCP fallback, and releases its generation only after all completions finish.
 
 ## Known Gaps
 
-The core does not yet provide invocation cancellation or idempotency. Payload-size limits currently exist at the C ABI and local HTTP boundaries rather than in every native Rust entry point. The HTTP runtime does not provide TLS; network listening is an explicitly acknowledged advanced mode and must be protected by a trusted local network or host-supplied secure transport. The REST, MCP, and Shortcuts adapters are pre-alpha and their public contracts may change. The MCP adapter does not yet implement OAuth discovery, SSE response streams, multi-round-trip responses, or subscriptions. Other protocol adapters must not be considered production-ready until their own controls are implemented and tested.
+The core does not provide general invocation cancellation or idempotency. Webhook ingress adds route-scoped replay handling, but it cannot prove whether a host side effect completed when required audit persistence fails; such deliveries become `unknown` and require explicit reconciliation. Payload-size limits currently exist at the C ABI and local HTTP boundaries rather than in every native Rust entry point. The HTTP runtime does not provide TLS; network listening is an explicitly acknowledged advanced mode and must be protected by a trusted TLS terminator and network isolation. The REST, MCP, Shortcuts, and webhook adapters are pre-alpha and their public contracts may change. The MCP adapter does not yet implement OAuth discovery, SSE response streams, multi-round-trip responses, or subscriptions. Other protocol adapters must not be considered production-ready until their own controls are implemented and tested.
 
-An audit completion can still fail after a handler has changed state. Mutating capabilities require an idempotency design before production use so that an adapter can safely handle this ambiguous outcome.
+An audit completion can still fail after a handler has changed state. Generic adapters need a host idempotency design before production use. Webhook ingress records a trusted delivery as `unknown` and refuses automatic re-dispatch, but the host still has to reconcile and resolve it.
 
 The encrypted reference store does not yet implement database-key rotation or backup APIs. Only Apple Keychain is implemented as a platform-secure key provider; other platforms still require host implementations. C callers remain responsible for supplying valid memory, completing each accepted handler invocation exactly once, keeping callback contexts live for their documented duration, and closing each handle exactly once without racing an ABI entry point. File encryption and Keychain do not protect data after a valid key is loaded into a compromised host process. Host applications must place database files inside an access-controlled app container and store the key separately.
 

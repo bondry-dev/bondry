@@ -65,3 +65,27 @@ These capacities are part of the versioned C layouts or defensive
 implementation behavior. Changing a C record capacity requires a new ABI
 shape; changing another bound requires its owning API and tests to be reviewed
 for observable behavior.
+
+## Webhook ingress
+
+The 0.2.0 inbound webhook implementation adds plan-owned bounds without
+changing the preserved v0.1.2 HTTP limits above:
+
+| Bound | Default | Maximum |
+| --- | --- | --- |
+| Raw webhook body | 1 MiB | 4 MiB |
+| Retained bytes per request lifecycle | 3 MiB | 10 MiB |
+| Aggregate retained raw-body bytes | 8 MiB | 32 MiB |
+| Selected headers | 16 | 32 |
+| Selected header value | 2 KiB | 8 KiB |
+| Selected header names and values | 32 KiB | 64 KiB |
+| Raw-body handlers per server | — | 16 |
+| Webhook configuration JSON | — | 65,536 bytes |
+| Ingress automation input | — | 10 MiB |
+
+The larger internal automation-input ceiling is available only through the
+retained add-on service vtable. Public token and principal dispatch remain at
+1 MiB. The server reserves each route's complete retained-byte budget before
+body collection, so accepted concurrent requests cannot exceed the aggregate
+budget. See [Webhook ingress](webhook-ingress.md) for configurable minima,
+rate limits, deduplication limits, and lifecycle behavior.

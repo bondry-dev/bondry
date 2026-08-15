@@ -18,7 +18,7 @@ Release preparation deliberately refuses to run while the repository is private.
 
 Update every workspace package to the same numeric semantic version, commit the source changes, push them to `main`, and wait for CI to pass. From the Actions tab, run `Prepare Release` from `main` and enter the version without a `v` prefix.
 
-Preparation builds and verifies the binary once, computes the SwiftPM checksum from that exact archive, renders `Package.swift`, and creates the release commit and annotated tag as Cocoa. It stores the archive, checksum, and preparation metadata together as a workflow artifact, then queues `Publish Release` from the new tag. Approve the `release` environment deployment after preparation succeeds.
+Preparation builds and verifies each binary once, computes SwiftPM checksums from those exact archives, renders `Package.swift`, and creates the release commit and annotated tag as Cocoa. It stores the four archives, checksums, and preparation metadata together as a workflow artifact, then queues `Publish Release` from the new tag. Approve the `release` environment deployment after preparation succeeds.
 
 ## Publication Contract
 
@@ -27,17 +27,17 @@ The preparation workflow:
 1. Verifies repository visibility, branch, version consistency, and tag availability.
 2. Runs the Rust, Swift, formatting, lint, and shell checks.
 3. Builds and verifies every XCFramework slice with pinned Rust and Xcode versions.
-4. Computes the archive checksum and writes it into the release manifest.
-5. Stores the exact archive with its checksum and release metadata.
+4. Computes each archive checksum and writes it into the release manifest.
+5. Stores the exact archives with their checksums and release metadata.
 6. Creates the release commit and annotated `v<version>` tag.
 
 The publication deployment:
 
-1. Downloads the exact archive produced by the successful preparation run.
-2. Verifies the workflow run, tag, release commit, metadata, archive, checksum file, and `Package.swift` agree.
-3. Creates a public provenance attestation for that archive.
-4. Uses a pinned release action to upload both assets to a draft with bounded API retries.
+1. Downloads the exact archives produced by the successful preparation run.
+2. Verifies the workflow run, tag, release commit, metadata, archives, checksum files, and `Package.swift` agree.
+3. Creates a public provenance attestation for every archive.
+4. Uses a pinned release action to upload all eight assets to a draft with bounded API retries.
 5. Publishes the draft as a GitHub prerelease protected by the repository's immutable-release policy.
-6. Downloads both published assets and compares them with the prepared files.
+6. Downloads all published assets and compares them with the prepared files.
 
-Publication never rebuilds the binary. A failed publication can retry the prepared artifact without changing its checksum. Published versions and their assets must never be replaced.
+Publication never rebuilds a binary. A failed publication can retry the prepared artifacts without changing their checksums. Published versions and their assets must never be replaced.

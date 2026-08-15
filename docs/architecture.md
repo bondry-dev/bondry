@@ -3,8 +3,8 @@
 Bondry separates application capabilities from the interfaces that invoke them.
 
 ```text
-REST       MCP       Shortcuts       Future adapters
-  \         |           /                   /
+REST       MCP       Webhooks       Shortcuts       Future adapters
+  \         |           |              /                   /
    Authentication and protocol translation
                      |
                   Principal
@@ -34,7 +34,7 @@ Bondry depends on storage contracts, not a particular database. Host application
 
 `BondryApple` is a separate Swift product that stores the SQLCipher database key in Apple Data Protection Keychain. The Rust core remains independent of Security.framework and Apple platform behavior.
 
-`bondry-runtime-ffi` exposes runtime ownership through a versioned C ABI. `Bondry` wraps that ABI for Swift without exposing Rust layouts or pointers to application code. `bondry-local-server-ffi` is a separate native boundary that depends on the runtime ABI rather than its Rust implementation.
+`bondry-runtime-ffi` exposes runtime ownership through a versioned C ABI. `Bondry` wraps that ABI for Swift without exposing Rust layouts or pointers to application code. `bondry-local-server-ffi` is a separate native boundary that depends on the runtime ABI rather than its Rust implementation. `bondry-webhook-ingress-ffi` composes retained runtime services with the server's versioned raw-body registration hook without a Rust dependency on either FFI implementation.
 
 ## Adapters
 
@@ -43,6 +43,8 @@ Adapters translate external protocols into core invocations. Each adapter is res
 An adapter passes only a trusted principal into the core. Network adapters authenticate credentials before this boundary. Platform adapters may instead rely on an operating-system-owned invocation path and a principal selected by the host. Raw bearer tokens, cookies, passkeys, security-key responses, and other credentials must not cross this boundary.
 
 REST and MCP share `bondry-http-server` without sharing protocol translation or authorization grants. The server owns transport concerns and invokes the pure `bondry-rest-proto` and `bondry-mcp-proto` request/response interfaces. The optional `BondryLocalServer` product authenticates and rate-limits before removing credentials and handing a bounded request to a protocol. Applications that use only `Bondry` or `BondryAppIntents` do not link the HTTP, REST, or MCP implementation. `BondryAppIntents` exposes Apple Shortcuts through a host-selected local system principal and the dedicated `shortcuts` adapter identifier.
+
+Inbound webhook routes use the same server through a protocol-neutral raw-body registration seam. `bondry-webhook-verify` verifies exact bounded requests, while `bondry-webhook-ingress` fixes the principal, `webhook` adapter, and capability, claims replay state, and dispatches through the same `AutomationService` as REST and MCP. The server does not depend on either webhook crate, and hosts that do not select `BondryWebhookIngress` link none of that code.
 
 `bondry-rest-proto` exposes authorized descriptors and generic capability invocation under `/api/v1`. It relies on the shared dispatcher for exact grants, input validation, handler execution, and audit outcomes.
 
@@ -67,4 +69,4 @@ The host application defines capabilities and decides which principals and adapt
 
 The core targets platforms supported by Rust's standard library. Platform behavior belongs in adapters. Persistent local servers are not assumed on platforms that suspend background applications.
 
-Language bindings build on versioned C ABIs. The runtime ABI covers retained runtime ownership, client and token administration, bearer-token authentication, exact authorization grants, bounded audit queries, complete capability descriptors, capability registration, and asynchronous dispatch. The separate local-server ABI covers HTTP server ownership and reaches the runtime only through that stable boundary. Foreign handlers receive protocol-neutral JSON and trusted invocation metadata only after exact-grant authorization.
+Language bindings build on versioned C ABIs. The runtime ABI covers retained runtime ownership, client and token administration, bearer-token authentication, exact authorization grants, bounded audit queries, complete capability descriptors, capability registration, asynchronous dispatch, and retained service/store vtables for add-ons. The separate local-server ABI covers HTTP server ownership and versioned raw-body handler registration while reaching the runtime only through its stable boundary. Foreign handlers receive protocol-neutral JSON and trusted invocation metadata only after exact-grant authorization.
