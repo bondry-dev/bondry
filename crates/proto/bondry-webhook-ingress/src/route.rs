@@ -5,7 +5,8 @@ use bondry_core::{
     Invocation, InvocationIdGenerator, Principal, SystemInvocationIdGenerator,
 };
 use bondry_delivery_store::{
-    DedupClaim, DedupKey, DedupState, DedupStore, DedupStoreError, RouteId, StoreDurability,
+    DedupClaim, DedupClaimPolicy, DedupKey, DedupState, DedupStore, DedupStoreError, RouteId,
+    StoreDurability,
 };
 use bondry_webhook_verify::{
     IdentityGuarantee, VerificationError, VerificationRequest, WebhookVerifier,
@@ -308,7 +309,19 @@ impl WebhookRoute {
                     identity.namespace().clone(),
                     *identity.hash(),
                 );
-                match self.context.store.claim(key.clone(), now.unix_milliseconds) {
+                let policy = if self.configuration.semantics
+                    == CapabilitySemantics::NonIdempotentMutation
+                    && identity.freshness().is_none()
+                {
+                    DedupClaimPolicy::RetainCompleted
+                } else {
+                    DedupClaimPolicy::ExpireCompleted
+                };
+                match self
+                    .context
+                    .store
+                    .claim(key.clone(), policy, now.unix_milliseconds)
+                {
                     Ok(DedupClaim::Claimed) => Some(DedupGuard::new(
                         Arc::clone(&self.context.store),
                         key,

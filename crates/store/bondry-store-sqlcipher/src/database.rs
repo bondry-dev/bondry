@@ -10,7 +10,7 @@ use thiserror::Error;
 
 use crate::DatabaseKey;
 
-const SCHEMA_VERSION: i64 = 4;
+const SCHEMA_VERSION: i64 = 5;
 
 /// SQLCipher-backed authentication and audit persistence.
 pub struct SqlCipherStore {
@@ -92,6 +92,7 @@ fn migrate(connection: &mut Connection) -> Result<(), SqlCipherStoreError> {
     let version: i64 = connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
     match version {
         SCHEMA_VERSION => Ok(()),
+        4 => migrate_from_version_four(connection),
         3 => migrate_from_version_three(connection),
         2 => migrate_from_version_two(connection),
         1 => migrate_from_version_one(connection),
@@ -157,6 +158,7 @@ fn migrate_from_empty(connection: &mut Connection) -> Result<(), SqlCipherStoreE
          );",
     )?;
     create_delivery_log_table(&transaction)?;
+    create_webhook_dedup_table(&transaction)?;
     transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     transaction.commit()?;
     Ok(())
@@ -174,6 +176,7 @@ fn migrate_from_version_one(connection: &mut Connection) -> Result<(), SqlCipher
     )?;
     rebuild_audit_table(&transaction)?;
     create_delivery_log_table(&transaction)?;
+    create_webhook_dedup_table(&transaction)?;
     transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     transaction.commit()?;
     Ok(())
@@ -183,6 +186,7 @@ fn migrate_from_version_two(connection: &mut Connection) -> Result<(), SqlCipher
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
     rebuild_audit_table(&transaction)?;
     create_delivery_log_table(&transaction)?;
+    create_webhook_dedup_table(&transaction)?;
     transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     transaction.commit()?;
     Ok(())
@@ -191,6 +195,15 @@ fn migrate_from_version_two(connection: &mut Connection) -> Result<(), SqlCipher
 fn migrate_from_version_three(connection: &mut Connection) -> Result<(), SqlCipherStoreError> {
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
     create_delivery_log_table(&transaction)?;
+    create_webhook_dedup_table(&transaction)?;
+    transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+    transaction.commit()?;
+    Ok(())
+}
+
+fn migrate_from_version_four(connection: &mut Connection) -> Result<(), SqlCipherStoreError> {
+    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    create_webhook_dedup_table(&transaction)?;
     transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     transaction.commit()?;
     Ok(())
@@ -230,6 +243,32 @@ fn create_delivery_log_table(transaction: &rusqlite::Transaction<'_>) -> rusqlit
          );
          CREATE INDEX delivery_log_by_state ON delivery_log(state, updated_at_ms);
          CREATE INDEX delivery_log_by_route ON delivery_log(route_id, sequence DESC);",
+    )
+}
+
+fn create_webhook_dedup_table(transaction: &rusqlite::Transaction<'_>) -> rusqlite::Result<()> {
+    transaction.execute_batch(
+        "CREATE TABLE webhook_dedup (
+             route_id TEXT NOT NULL,
+             verifier_namespace TEXT NOT NULL,
+             delivery_hash BLOB NOT NULL CHECK (length(delivery_hash) = 32),
+             state TEXT NOT NULL CHECK (state IN ('in_flight', 'completed', 'unknown')),
+             automatic_expiry INTEGER NOT NULL CHECK (automatic_expiry IN (0, 1)),
+             updated_at_ms INTEGER NOT NULL CHECK (updated_at_ms >= 0),
+             expires_at_ms INTEGER,
+             charged_bytes INTEGER NOT NULL CHECK (charged_bytes >= 96),
+             PRIMARY KEY (route_id, verifier_namespace, delivery_hash),
+             CHECK (
+                 (state = 'completed' AND automatic_expiry = 1 AND expires_at_ms IS NOT NULL)
+                 OR (state = 'completed' AND automatic_expiry = 0 AND expires_at_ms IS NULL)
+                 OR (state != 'completed' AND expires_at_ms IS NULL)
+             )
+         );
+         CREATE INDEX webhook_dedup_by_state
+             ON webhook_dedup(state, updated_at_ms);
+         CREATE INDEX webhook_dedup_by_expiry
+             ON webhook_dedup(expires_at_ms)
+             WHERE expires_at_ms IS NOT NULL;",
     )
 }
 
