@@ -36,6 +36,8 @@ typedef int32_t BondryStatus;
 #define BONDRY_STATUS_TIME_UNAVAILABLE ((BondryStatus)26)
 #define BONDRY_STATUS_GENERATION_EXHAUSTED ((BondryStatus)27)
 #define BONDRY_STATUS_ALREADY_EXISTS ((BondryStatus)28)
+#define BONDRY_STATUS_CAPACITY_EXHAUSTED ((BondryStatus)32)
+#define BONDRY_STATUS_INVALID_TRANSITION ((BondryStatus)33)
 #define BONDRY_STATUS_INTERNAL_FAILURE ((BondryStatus)255)
 
 #define BONDRY_IDENTIFIER_CAPACITY_V1 ((size_t)129)
@@ -68,6 +70,33 @@ typedef int32_t BondryStatus;
 #define BONDRY_DISPATCH_OUTCOME_AUDIT_UNAVAILABLE_V1 ((uint32_t)4)
 #define BONDRY_DISPATCH_OUTCOME_HANDLER_FAILED_V1 ((uint32_t)5)
 #define BONDRY_DISPATCH_OUTCOME_INVALID_INPUT_V1 ((uint32_t)6)
+
+#define BONDRY_DELIVERY_LOG_ABI_VERSION_V1 ((uint32_t)1)
+#define BONDRY_STORE_THREADING_SERIALIZED_V1 ((uint32_t)1)
+
+#define BONDRY_DELIVERY_STATE_PENDING_V1 ((uint32_t)1)
+#define BONDRY_DELIVERY_STATE_TERMINAL_V1 ((uint32_t)2)
+
+#define BONDRY_DELIVERY_OUTCOME_NONE_V1 ((uint32_t)0)
+#define BONDRY_DELIVERY_OUTCOME_DELIVERED_V1 ((uint32_t)1)
+#define BONDRY_DELIVERY_OUTCOME_FAILED_V1 ((uint32_t)2)
+#define BONDRY_DELIVERY_OUTCOME_LOST_ON_SHUTDOWN_V1 ((uint32_t)3)
+#define BONDRY_DELIVERY_OUTCOME_UNKNOWN_AFTER_CRASH_V1 ((uint32_t)4)
+
+#define BONDRY_DELIVERY_FAILURE_NONE_V1 ((uint32_t)0)
+#define BONDRY_DELIVERY_FAILURE_CANCELLED_V1 ((uint32_t)1)
+#define BONDRY_DELIVERY_FAILURE_DEADLINE_EXCEEDED_V1 ((uint32_t)2)
+#define BONDRY_DELIVERY_FAILURE_ENDPOINT_POLICY_V1 ((uint32_t)3)
+#define BONDRY_DELIVERY_FAILURE_SECRET_UNAVAILABLE_V1 ((uint32_t)4)
+#define BONDRY_DELIVERY_FAILURE_TRANSPORT_UNAVAILABLE_V1 ((uint32_t)5)
+#define BONDRY_DELIVERY_FAILURE_RECEIVER_REJECTED_V1 ((uint32_t)6)
+#define BONDRY_DELIVERY_FAILURE_RETRY_EXHAUSTED_V1 ((uint32_t)7)
+#define BONDRY_DELIVERY_FAILURE_INTERNAL_V1 ((uint32_t)8)
+
+#define BONDRY_DELIVERY_RESULT_NONE_V1 ((uint32_t)0)
+#define BONDRY_DELIVERY_RESULT_SUCCEEDED_V1 ((uint32_t)1)
+#define BONDRY_DELIVERY_RESULT_FAILED_V1 ((uint32_t)2)
+#define BONDRY_DELIVERY_RESULT_INVALID_V1 ((uint32_t)3)
 
 typedef struct BondryStoreHandle BondryStoreHandle;
 
@@ -142,6 +171,71 @@ typedef struct BondryDispatchResultV1 {
     uint8_t has_detail_code;
 } BondryDispatchResultV1;
 
+typedef struct BondryDeliveryRecordV1 {
+    uint8_t route_id[BONDRY_IDENTIFIER_CAPACITY_V1];
+    uint8_t delivery_id[BONDRY_IDENTIFIER_CAPACITY_V1];
+    uint64_t accepted_at_unix_ms;
+    uint64_t updated_at_unix_ms;
+    uint16_t attempts;
+    uint32_t state;
+    uint32_t outcome;
+    uint32_t failure;
+    uint32_t result_category;
+    uint32_t result_bytes;
+} BondryDeliveryRecordV1;
+
+typedef void (*BondryDeliveryLogReleaseV1)(void *context);
+typedef BondryStatus (*BondryDeliveryLogInsertIntentV1)(
+    void *context,
+    const uint8_t *route_id,
+    size_t route_id_length,
+    const uint8_t *delivery_id,
+    size_t delivery_id_length,
+    uint64_t accepted_at_unix_ms
+);
+typedef BondryStatus (*BondryDeliveryLogRecordAttemptV1)(
+    void *context,
+    const uint8_t *delivery_id,
+    size_t delivery_id_length,
+    uint16_t attempts,
+    uint64_t updated_at_unix_ms
+);
+typedef BondryStatus (*BondryDeliveryLogRecordOutcomeV1)(
+    void *context,
+    const uint8_t *delivery_id,
+    size_t delivery_id_length,
+    uint32_t outcome,
+    uint32_t failure,
+    uint32_t result_category,
+    uint32_t result_bytes,
+    uint64_t updated_at_unix_ms
+);
+typedef BondryStatus (*BondryDeliveryLogQueryV1)(
+    void *context,
+    const uint8_t *delivery_id,
+    size_t delivery_id_length,
+    uint8_t *out_found,
+    BondryDeliveryRecordV1 *out_record
+);
+typedef BondryStatus (*BondryDeliveryLogRecoverV1)(
+    void *context,
+    uint64_t updated_at_unix_ms,
+    uint64_t *out_recovered
+);
+
+typedef struct BondryDeliveryLogV1 {
+    uint32_t abi_version;
+    size_t struct_size;
+    uint32_t threading_model;
+    void *context;
+    BondryDeliveryLogReleaseV1 release;
+    BondryDeliveryLogInsertIntentV1 insert_intent;
+    BondryDeliveryLogRecordAttemptV1 record_attempt;
+    BondryDeliveryLogRecordOutcomeV1 record_outcome;
+    BondryDeliveryLogQueryV1 query;
+    BondryDeliveryLogRecoverV1 recover;
+} BondryDeliveryLogV1;
+
 typedef void (*BondryCapabilityCompletionV1)(
     void *completion_context,
     uint32_t outcome,
@@ -185,6 +279,16 @@ BondryStatus bondry_store_retain_v1(
 
 /* The handle must remain live and must not be closed concurrently. */
 BondryStatus bondry_store_check_v1(const BondryStoreHandle *store);
+
+/* Derives one persistent delivery-log descriptor. On success, the caller must
+ * invoke descriptor.release(descriptor.context) exactly once. */
+BondryStatus bondry_store_delivery_log_v1(
+    const BondryStoreHandle *store,
+    uint32_t max_records,
+    uint64_t max_bytes,
+    uint64_t retention_seconds,
+    BondryDeliveryLogV1 *out_log
+);
 
 /* A non-null handle must be live and must not be used again. Null is allowed. */
 BondryStatus bondry_store_close_v1(BondryStoreHandle *store);

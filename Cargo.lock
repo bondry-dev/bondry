@@ -215,6 +215,7 @@ version = "0.1.2"
 dependencies = [
  "bondry-auth",
  "bondry-core",
+ "bondry-delivery-store",
  "bondry-store-sqlcipher",
  "serde",
  "serde_json",
