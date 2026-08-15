@@ -36,10 +36,13 @@ hyper-util = { workspace = true, features = ["client-legacy", "http1"], optional
 nix = { workspace = true, optional = true }
 rustls = { workspace = true, optional = true }
 rustls-platform-verifier = { workspace = true, optional = true }
-tokio = { workspace = true, optional = true }
+tokio = { workspace = true, features = ["io-util", "net", "rt", "sync", "time"], optional = true }
 tokio-rustls = { workspace = true, optional = true }
 tower-service = { workspace = true, optional = true }
 thiserror.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros"] }
 
 [lints]
 workspace = true

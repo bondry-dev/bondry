@@ -14,7 +14,7 @@ bondry-secrets = { version = "0.1.2", path = "../../contract/bondry-secrets" }
 bondry-transport = { version = "0.1.2", path = "../../contract/bondry-transport" }
 bytes.workspace = true
 thiserror.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["macros", "rt", "sync", "time"] }
 
 [lints]
 workspace = true
