@@ -16,5 +16,9 @@ bytes.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["macros", "rt", "sync", "time"] }
 
+[dev-dependencies]
+bondry-egress-webhook = { path = "../../egress/bondry-egress-webhook" }
+http.workspace = true
+
 [lints]
 workspace = true
