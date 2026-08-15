@@ -95,6 +95,24 @@ impl EndpointPolicy {
         self
     }
 
+    /// Returns whether a hostname may connect to a verified loopback peer over cleartext.
+    #[must_use]
+    pub const fn allows_hostname_loopback_cleartext(&self) -> bool {
+        self.allow_hostname_loopback_cleartext
+    }
+
+    /// Returns whether verified private-network peers may use cleartext.
+    #[must_use]
+    pub const fn allows_private_cleartext(&self) -> bool {
+        self.allow_private_cleartext
+    }
+
+    /// Returns whether verified scoped link-local peers may use cleartext.
+    #[must_use]
+    pub const fn allows_link_local_cleartext(&self) -> bool {
+        self.allow_link_local_cleartext
+    }
+
     /// Adds a root without changing any other certificate verification rule.
     pub fn with_additional_trust_anchor(
         mut self,
