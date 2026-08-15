@@ -1,0 +1,14 @@
+[package]
+name = "bondry-delivery-store"
+description = "Persistence contracts for Bondry delivery and deduplication state"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+license.workspace = true
+
+[dependencies]
+thiserror.workspace = true
+
+[lints]
+workspace = true
