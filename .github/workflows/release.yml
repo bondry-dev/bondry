@@ -129,9 +129,10 @@ jobs:
           cargo test --workspace --all-features --locked
           cargo audit
           cargo deny check
-          swift format lint --recursive --strict Package.swift apple/Package.swift apple/Fuzz/Package.swift apple/Distribution/Package.release.swift apple/Fuzz/Sources apple/Sources apple/Tests apple/IntegrationTests/KeychainProbe/Sources
+          scripts/measure-egress-size.sh
+          swift format lint --recursive --strict Package.swift apple/Package.swift apple/Fuzz/Package.swift apple/Distribution/Package.release.swift apple/Fuzz/Sources apple/Sources apple/Tests apple/IntegrationTests
           swift test --package-path apple
-          shellcheck .github/scripts/*.sh apple/scripts/*.sh
+          shellcheck .github/scripts/*.sh apple/scripts/*.sh scripts/*.sh
       - name: Build release artifact
         run: SOURCE_DATE_EPOCH=946684800 apple/scripts/build-xcframework.sh
       - name: Upload prepared binary
@@ -143,6 +144,8 @@ jobs:
             target/apple/distribution/BondryRuntime.xcframework.zip.sha256
             target/apple/distribution/BondryLocalServer.xcframework.zip
             target/apple/distribution/BondryLocalServer.xcframework.zip.sha256
+            target/apple/distribution/BondryEgress.xcframework.zip
+            target/apple/distribution/BondryEgress.xcframework.zip.sha256
           if-no-files-found: error
           retention-days: 1
           compression-level: 0
@@ -179,17 +182,21 @@ jobs:
           set -eu
           runtime_archive="$RUNNER_TEMP/release/BondryRuntime.xcframework.zip"
           local_server_archive="$RUNNER_TEMP/release/BondryLocalServer.xcframework.zip"
+          egress_archive="$RUNNER_TEMP/release/BondryEgress.xcframework.zip"
           runtime_checksum=$(sed -n '1p' "$runtime_archive.sha256")
           local_server_checksum=$(sed -n '1p' "$local_server_archive.sha256")
-          if ! printf '%s\n%s\n' "$runtime_checksum" "$local_server_checksum" \
+          egress_checksum=$(sed -n '1p' "$egress_archive.sha256")
+          if ! printf '%s\n%s\n%s\n' "$runtime_checksum" "$local_server_checksum" "$egress_checksum" \
             | awk 'length != 64 || !/^[0-9a-f]+$/ { invalid = 1 } END { exit invalid }'; then
             printf 'A prepared artifact checksum is invalid.\n' >&2
             exit 1
           fi
           actual_runtime_checksum=$(swift package compute-checksum "$runtime_archive")
           actual_local_server_checksum=$(swift package compute-checksum "$local_server_archive")
+          actual_egress_checksum=$(swift package compute-checksum "$egress_archive")
           if [ "$actual_runtime_checksum" != "$runtime_checksum" ] || \
-             [ "$actual_local_server_checksum" != "$local_server_checksum" ]; then
+             [ "$actual_local_server_checksum" != "$local_server_checksum" ] || \
+             [ "$actual_egress_checksum" != "$egress_checksum" ]; then
             printf 'A prepared artifact does not match its checksum file.\n' >&2
             exit 1
           fi
@@ -202,6 +209,7 @@ jobs:
             "$VERSION" \
             "$runtime_checksum" \
             "$local_server_checksum" \
+            "$egress_checksum" \
             Package.swift
           swift package dump-package > /dev/null
           git diff --check
@@ -217,6 +225,7 @@ jobs:
             --arg version "$VERSION" \
             --arg runtime_checksum "$runtime_checksum" \
             --arg local_server_checksum "$local_server_checksum" \
+            --arg egress_checksum "$egress_checksum" \
             --arg source_commit "$GITHUB_SHA" \
             --arg release_commit "$release_commit" \
             --arg preparation_run_id "$GITHUB_RUN_ID" \
@@ -224,6 +233,7 @@ jobs:
               version: $version,
               runtime_checksum: $runtime_checksum,
               local_server_checksum: $local_server_checksum,
+              egress_checksum: $egress_checksum,
               source_commit: $source_commit,
               release_commit: $release_commit,
               preparation_run_id: $preparation_run_id
@@ -231,6 +241,7 @@ jobs:
           {
             printf 'runtime_checksum=%s\n' "$runtime_checksum"
             printf 'local_server_checksum=%s\n' "$local_server_checksum"
+            printf 'egress_checksum=%s\n' "$egress_checksum"
             printf 'release_commit=%s\n' "$release_commit"
           } >> "$GITHUB_OUTPUT"
       - name: Upload release artifact
@@ -242,6 +253,8 @@ jobs:
             ${{ runner.temp }}/release/BondryRuntime.xcframework.zip.sha256
             ${{ runner.temp }}/release/BondryLocalServer.xcframework.zip
             ${{ runner.temp }}/release/BondryLocalServer.xcframework.zip.sha256
+            ${{ runner.temp }}/release/BondryEgress.xcframework.zip
+            ${{ runner.temp }}/release/BondryEgress.xcframework.zip.sha256
             ${{ runner.temp }}/release/release-metadata.json
           if-no-files-found: error
           retention-days: 7
@@ -254,6 +267,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           LOCAL_SERVER_CHECKSUM: ${{ steps.release.outputs.local_server_checksum }}
+          EGRESS_CHECKSUM: ${{ steps.release.outputs.egress_checksum }}
           RELEASE_COMMIT: ${{ steps.release.outputs.release_commit }}
           RUNTIME_CHECKSUM: ${{ steps.release.outputs.runtime_checksum }}
           VERSION: ${{ inputs.version }}
@@ -264,4 +278,5 @@ jobs:
             --raw-field preparation_run_id="$GITHUB_RUN_ID" \
             --raw-field runtime_checksum="$RUNTIME_CHECKSUM" \
             --raw-field local_server_checksum="$LOCAL_SERVER_CHECKSUM" \
+            --raw-field egress_checksum="$EGRESS_CHECKSUM" \
             --raw-field release_commit="$RELEASE_COMMIT"

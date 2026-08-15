@@ -15,14 +15,18 @@ runtime_checksum=$(sed -n '1p' \
     "$bondry_root/target/apple/distribution/BondryRuntime.xcframework.zip.sha256")
 local_server_checksum=$(sed -n '1p' \
     "$bondry_root/target/apple/distribution/BondryLocalServer.xcframework.zip.sha256")
+egress_checksum=$(sed -n '1p' \
+    "$bondry_root/target/apple/distribution/BondryEgress.xcframework.zip.sha256")
 "$script_directory/render-release-package.sh" \
     "$version" \
     "$runtime_checksum" \
     "$local_server_checksum" \
+    "$egress_checksum" \
     "$bondry_root/Package.swift"
 swift package dump-package --package-path "$bondry_root" > /dev/null
 
-printf 'Prepared Package.swift for v%s with runtime checksum %s and local-server checksum %s\n' \
+printf 'Prepared Package.swift for v%s with runtime checksum %s, local-server checksum %s, and egress checksum %s\n' \
     "$version" \
     "$runtime_checksum" \
-    "$local_server_checksum"
+    "$local_server_checksum" \
+    "$egress_checksum"

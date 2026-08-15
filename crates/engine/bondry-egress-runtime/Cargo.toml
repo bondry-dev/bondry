@@ -7,6 +7,10 @@ rust-version.workspace = true
 repository.workspace = true
 license.workspace = true
 
+[features]
+default = []
+network-io = ["tokio/net"]
+
 [dependencies]
 bondry-delivery-store = { version = "0.1.2", path = "../../contract/bondry-delivery-store" }
 bondry-egress = { version = "0.1.2", path = "../../egress/bondry-egress" }

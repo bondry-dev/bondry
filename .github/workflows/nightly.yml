@@ -64,6 +64,51 @@ jobs:
         run: cargo audit
       - name: Check dependency policy
         run: cargo deny check
+      - name: Enforce Rust egress linked size ceiling
+        run: scripts/measure-egress-size.sh
+      - name: Test against self-hosted ntfy
+        env:
+          NTFY_ARCHIVE_SHA256: 56459cc96110d27f1d952351b7ea2883b894a122ca4cc2339c841003c61c138b
+          NTFY_VERSION: 2.26.3
+        run: |
+          set -euo pipefail
+          ntfy_directory="$RUNNER_TEMP/ntfy"
+          ntfy_archive="$ntfy_directory/ntfy.tar.gz"
+          ntfy_log="$ntfy_directory/server.log"
+          mkdir -p "$ntfy_directory"
+          curl --fail --location --retry 3 \
+            "https://github.com/binwiederhier/ntfy/releases/download/v$NTFY_VERSION/ntfy_${NTFY_VERSION}_linux_amd64.tar.gz" \
+            --output "$ntfy_archive"
+          printf '%s  %s\n' "$NTFY_ARCHIVE_SHA256" "$ntfy_archive" | sha256sum --check
+          tar --extract --gzip --file "$ntfy_archive" --directory "$ntfy_directory"
+          ntfy_binary="$ntfy_directory/ntfy_${NTFY_VERSION}_linux_amd64/ntfy"
+          "$ntfy_binary" serve --listen-http 127.0.0.1:18080 > "$ntfy_log" 2>&1 &
+          ntfy_pid=$!
+          cleanup() {
+            status=$?
+            kill "$ntfy_pid" 2>/dev/null || true
+            wait "$ntfy_pid" 2>/dev/null || true
+            if [ "$status" -ne 0 ]; then
+              cat "$ntfy_log"
+            fi
+            exit "$status"
+          }
+          trap cleanup EXIT
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:18080/v1/health \
+              | grep -q '"healthy":true'; then
+              break
+            fi
+            if [ "$attempt" -eq 30 ]; then
+              printf 'ntfy did not become healthy.\n' >&2
+              exit 1
+            fi
+            sleep 1
+          done
+          BONDRY_NTFY_BASE_URL=http://127.0.0.1:18080 \
+          BONDRY_NTFY_TOPIC=bondry-nightly \
+            cargo +1.90.0 test --locked -p bondry-egress-e2e \
+              tests::self_hosted_ntfy_accepts_url_template_delivery -- --ignored --exact
       - name: Report dependency drift
         run: cargo update --dry-run
 

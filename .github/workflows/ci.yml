@@ -190,6 +190,34 @@ jobs:
       - name: Run architecture gates
         run: cargo +1.90.0 xtask gate
 
+  egress-size:
+    name: Rust egress linked size
+    if: >-
+      github.event_name != 'pull_request' ||
+      needs.changes.outputs.full == 'true' ||
+      contains(needs.changes.outputs.package_args, '-p bondry-egress') ||
+      contains(needs.changes.outputs.package_args, '-p bondry-transport-net')
+    needs: changes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Install Rust
+        run: rustup toolchain install 1.90.0 --profile minimal
+      - name: Restore Rust cache
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: |
+            ~/.cargo/git
+            ~/.cargo/registry
+            target
+          key: ${{ runner.os }}-rust-1.90.0-egress-size-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-rust-1.90.0-egress-size-
+      - name: Enforce linked size ceiling
+        run: scripts/measure-egress-size.sh
+
   dependencies:
     name: Dependency policy
     if: needs.changes.outputs.manifests == 'true'
@@ -327,10 +355,10 @@ jobs:
         run: actionlint .github/workflows/*.yml
       - name: Check shell scripts
         run: |
-          shellcheck .github/scripts/*.sh apple/scripts/*.sh
+          shellcheck .github/scripts/*.sh apple/scripts/*.sh scripts/*.sh
           sh .github/scripts/test-install-homebrew-tools.sh
       - name: Check Swift formatting
-        run: swift format lint --recursive --strict Package.swift apple/Package.swift apple/Fuzz/Package.swift apple/Distribution/Package.release.swift apple/Fuzz/Sources apple/Sources apple/Tests apple/IntegrationTests/KeychainProbe/Sources
+        run: swift format lint --recursive --strict Package.swift apple/Package.swift apple/Fuzz/Package.swift apple/Distribution/Package.release.swift apple/Fuzz/Sources apple/Sources apple/Tests apple/IntegrationTests
       - name: Test Rust on Apple
         run: cargo test --workspace --all-features --locked
       - name: Test Swift
