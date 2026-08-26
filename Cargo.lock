@@ -81,7 +81,7 @@ dependencies = [
 
 [[package]]
 name = "bondry-auth"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "base64",
  "bondry-core",
@@ -94,7 +94,7 @@ dependencies = [
 
 [[package]]
 name = "bondry-core"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "base64",
  "futures",
@@ -107,14 +107,14 @@ dependencies = [
 
 [[package]]
 name = "bondry-delivery-store"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "thiserror",
 ]
 
 [[package]]
 name = "bondry-egress"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "bondry-delivery-store",
  "bondry-secrets",
@@ -127,7 +127,7 @@ dependencies = [
 
 [[package]]
 name = "bondry-egress-e2e"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "bondry-delivery-store",
  "bondry-egress",
@@ -142,7 +142,7 @@ dependencies = [
 
 [[package]]
 name = "bondry-egress-ffi"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "base64",
  "bondry-delivery-store",
@@ -164,7 +164,7 @@ dependencies = [
 
 [[package]]
 name = "bondry-egress-mcp"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "bondry-delivery-store",
  "bondry-egress",
@@ -181,7 +181,7 @@ dependencies = [
 
 [[package]]
 name = "bondry-egress-mcp-e2e"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "bondry-core",
  "bondry-delivery-store",
@@ -201,7 +201,7 @@ dependencies = [
 
 [[package]]
 name = "bondry-egress-runtime"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "bondry-delivery-store",
  "bondry-egress",
@@ -219,7 +219,7 @@ dependencies = [
 
 [[package]]
 name = "bondry-egress-webhook"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "bondry-delivery-store",
  "bondry-egress",
@@ -233,7 +233,7 @@ dependencies = [
 
 [[package]]
 name = "bondry-http-server"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "base64",
  "bondry-core",
@@ -256,7 +256,7 @@ dependencies = [
 
 [[package]]
 name = "bondry-local-server-ffi"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "base64",
  "bondry-core",
@@ -274,7 +274,7 @@ dependencies = [
 
 [[package]]
 name = "bondry-mcp-proto"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "base64",
  "bondry-core",
@@ -286,7 +286,7 @@ dependencies = [
 
 [[package]]
 name = "bondry-rest-proto"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "bondry-core",
  "bytes",
@@ -296,7 +296,7 @@ dependencies = [
 
 [[package]]
 name = "bondry-runtime-ffi"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "bondry-auth",
  "bondry-core",
@@ -309,7 +309,7 @@ dependencies = [
 
 [[package]]
 name = "bondry-secrets"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "base64",
  "hmac",
@@ -323,7 +323,7 @@ dependencies = [
 
 [[package]]
 name = "bondry-server-bench"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "bondry-core",
  "bondry-http-server",
@@ -336,7 +336,7 @@ dependencies = [
 
 [[package]]
 name = "bondry-server-e2e"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "bondry-core",
  "bondry-http-server",
@@ -349,7 +349,7 @@ dependencies = [
 
 [[package]]
 name = "bondry-store-sqlcipher"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "base64",
  "bondry-auth",
@@ -366,7 +366,7 @@ dependencies = [
 
 [[package]]
 name = "bondry-transport"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "bytes",
  "http",
@@ -377,7 +377,7 @@ dependencies = [
 
 [[package]]
 name = "bondry-transport-e2e"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "base64",
  "bondry-transport",
@@ -395,7 +395,7 @@ dependencies = [
 
 [[package]]
 name = "bondry-transport-net"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "bondry-transport",
  "bytes",
@@ -414,7 +414,7 @@ dependencies = [
 
 [[package]]
 name = "bondry-webhook-ingress"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "bondry-core",
  "bondry-delivery-store",
@@ -426,7 +426,7 @@ dependencies = [
 
 [[package]]
 name = "bondry-webhook-ingress-ffi"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "bondry-core",
  "bondry-delivery-store",
@@ -441,7 +441,7 @@ dependencies = [
 
 [[package]]
 name = "bondry-webhook-verify"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "base64",
  "bondry-delivery-store",
@@ -2242,7 +2242,7 @@ checksum = "1ffae5123b2d3fc086436f8834ae3ab053a283cfac8fe0a0b8eaae044768a4c4"
 
 [[package]]
 name = "xtask"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "serde",
  "serde_json",

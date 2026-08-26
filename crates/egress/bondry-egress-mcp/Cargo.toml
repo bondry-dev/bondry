@@ -8,11 +8,11 @@ repository.workspace = true
 license.workspace = true
 
 [dependencies]
-bondry-delivery-store = { version = "0.2.1", path = "../../contract/bondry-delivery-store" }
-bondry-egress = { version = "0.2.1", path = "../bondry-egress" }
-bondry-mcp-proto = { version = "0.2.1", path = "../../proto/bondry-mcp-proto" }
-bondry-secrets = { version = "0.2.1", path = "../../contract/bondry-secrets" }
-bondry-transport = { version = "0.2.1", path = "../../contract/bondry-transport" }
+bondry-delivery-store = { version = "0.2.2", path = "../../contract/bondry-delivery-store" }
+bondry-egress = { version = "0.2.2", path = "../bondry-egress" }
+bondry-mcp-proto = { version = "0.2.2", path = "../../proto/bondry-mcp-proto" }
+bondry-secrets = { version = "0.2.2", path = "../../contract/bondry-secrets" }
+bondry-transport = { version = "0.2.2", path = "../../contract/bondry-transport" }
 http.workspace = true
 jsonschema.workspace = true
 serde_json.workspace = true

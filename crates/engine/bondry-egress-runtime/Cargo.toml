@@ -12,10 +12,10 @@ default = []
 network-io = ["tokio/net"]
 
 [dependencies]
-bondry-delivery-store = { version = "0.2.1", path = "../../contract/bondry-delivery-store" }
-bondry-egress = { version = "0.2.1", path = "../../egress/bondry-egress" }
-bondry-secrets = { version = "0.2.1", path = "../../contract/bondry-secrets" }
-bondry-transport = { version = "0.2.1", path = "../../contract/bondry-transport" }
+bondry-delivery-store = { version = "0.2.2", path = "../../contract/bondry-delivery-store" }
+bondry-egress = { version = "0.2.2", path = "../../egress/bondry-egress" }
+bondry-secrets = { version = "0.2.2", path = "../../contract/bondry-secrets" }
+bondry-transport = { version = "0.2.2", path = "../../contract/bondry-transport" }
 bytes.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["macros", "rt", "sync", "time"] }

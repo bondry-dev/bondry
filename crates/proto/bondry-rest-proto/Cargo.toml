@@ -8,7 +8,7 @@ repository.workspace = true
 license.workspace = true
 
 [dependencies]
-bondry-core = { version = "0.2.1", path = "../../contract/bondry-core" }
+bondry-core = { version = "0.2.2", path = "../../contract/bondry-core" }
 bytes.workspace = true
 http.workspace = true
 serde_json.workspace = true
