@@ -16,6 +16,16 @@ let server = try runtime.startLocalServer(configuration: configuration)
 print(server.endpoint.address, server.endpoint.port)
 ```
 
+Applications that need only REST can depend on `BondryRESTServer`. Its configuration has no adapter selection or MCP metadata, and its native binary is built without the MCP feature:
+
+```swift
+let configuration = try BondryRESTServerConfiguration()
+let server = try runtime.startRESTServer(configuration: configuration)
+print(server.endpoint.address, server.endpoint.port)
+```
+
+The two server products share authentication, network policy, limits, timeouts, endpoint reporting, and lifecycle behavior. They are alternative dependency choices; an application does not need both for REST access.
+
 Bearer-token authentication is the default. Tokens created through `BondryRuntime` work immediately, and revocation or client disablement takes effect on the next request. REST and MCP use separate adapter identifiers, so each principal needs an explicit grant for each enabled protocol and capability.
 
 Applications that deliberately disable tokens must supply the principal used for authorization and audit attribution:
@@ -32,11 +42,11 @@ let configuration = try BondryLocalServerConfiguration(
 
 The safe defaults bind to `127.0.0.1`, choose a random free port, reject browser origins, require bearer authentication, allow 120 authenticated requests and 30 rejected authentication attempts per minute, limit bodies to 1 MiB, and use the shared bounded timeout and connection defaults.
 
-Custom numeric policy is grouped into validated `BondryLocalServerLimits` and `BondryLocalServerTimeouts` values. Timeouts use Swift `Duration` and must resolve to one millisecond through five minutes. Configuration values are immutable, and invalid metadata, IP addresses, origins, principals, limits, and timeouts fail before crossing the C ABI.
+Custom numeric policy is grouped into validated limits and timeouts values for each server product. Timeouts use Swift `Duration` and must resolve to one millisecond through five minutes. Configuration values are immutable, and invalid metadata, IP addresses, origins, principals, limits, and timeouts fail before crossing the C ABI.
 
 `allowedBrowserOrigins` contains exact serialized HTTP or HTTPS origins. Non-loopback cleartext listening requires `allowsCleartextNetworkAccess`; disabled authentication on a non-loopback address additionally requires `allowsUnauthenticatedNetworkAccess`. These flags acknowledge risk and do not provide TLS.
 
-`BondryLocalServer.stop()` is idempotent and thread-safe. It stops accepting requests and waits for bounded graceful shutdown. Deinitialization also stops a running server. The endpoint reports the actual address and port selected by the operating system. Startup and shutdown failures use `BondryLocalServerError`, not the runtime storage error domain.
+`BondryLocalServer.stop()` and `BondryRESTServer.stop()` are idempotent and thread-safe. They stop accepting requests and wait for bounded graceful shutdown. Deinitialization also stops a running server. The endpoint reports the actual address and port selected by the operating system. Startup and shutdown failures use their server product's error domain, not the runtime storage error domain.
 
 See [Webhook ingress](webhook-ingress.md) for verified route registration,
 draining, replay administration, and TLS-proxy requirements. The legacy

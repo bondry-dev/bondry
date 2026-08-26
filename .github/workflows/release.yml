@@ -144,6 +144,8 @@ jobs:
             target/apple/distribution/BondryRuntime.xcframework.zip.sha256
             target/apple/distribution/BondryLocalServer.xcframework.zip
             target/apple/distribution/BondryLocalServer.xcframework.zip.sha256
+            target/apple/distribution/BondryRESTServer.xcframework.zip
+            target/apple/distribution/BondryRESTServer.xcframework.zip.sha256
             target/apple/distribution/BondryEgress.xcframework.zip
             target/apple/distribution/BondryEgress.xcframework.zip.sha256
             target/apple/distribution/BondryWebhookIngress.xcframework.zip
@@ -184,24 +186,29 @@ jobs:
           set -eu
           runtime_archive="$RUNNER_TEMP/release/BondryRuntime.xcframework.zip"
           local_server_archive="$RUNNER_TEMP/release/BondryLocalServer.xcframework.zip"
+          rest_server_archive="$RUNNER_TEMP/release/BondryRESTServer.xcframework.zip"
           egress_archive="$RUNNER_TEMP/release/BondryEgress.xcframework.zip"
           webhook_ingress_archive="$RUNNER_TEMP/release/BondryWebhookIngress.xcframework.zip"
           runtime_checksum=$(sed -n '1p' "$runtime_archive.sha256")
           local_server_checksum=$(sed -n '1p' "$local_server_archive.sha256")
+          rest_server_checksum=$(sed -n '1p' "$rest_server_archive.sha256")
           egress_checksum=$(sed -n '1p' "$egress_archive.sha256")
           webhook_ingress_checksum=$(sed -n '1p' "$webhook_ingress_archive.sha256")
-          if ! printf '%s\n%s\n%s\n%s\n' \
-            "$runtime_checksum" "$local_server_checksum" "$egress_checksum" "$webhook_ingress_checksum" \
+          if ! printf '%s\n%s\n%s\n%s\n%s\n' \
+            "$runtime_checksum" "$local_server_checksum" "$rest_server_checksum" \
+            "$egress_checksum" "$webhook_ingress_checksum" \
             | awk 'length != 64 || !/^[0-9a-f]+$/ { invalid = 1 } END { exit invalid }'; then
             printf 'A prepared artifact checksum is invalid.\n' >&2
             exit 1
           fi
           actual_runtime_checksum=$(swift package compute-checksum "$runtime_archive")
           actual_local_server_checksum=$(swift package compute-checksum "$local_server_archive")
+          actual_rest_server_checksum=$(swift package compute-checksum "$rest_server_archive")
           actual_egress_checksum=$(swift package compute-checksum "$egress_archive")
           actual_webhook_ingress_checksum=$(swift package compute-checksum "$webhook_ingress_archive")
           if [ "$actual_runtime_checksum" != "$runtime_checksum" ] || \
              [ "$actual_local_server_checksum" != "$local_server_checksum" ] || \
+             [ "$actual_rest_server_checksum" != "$rest_server_checksum" ] || \
              [ "$actual_egress_checksum" != "$egress_checksum" ] || \
              [ "$actual_webhook_ingress_checksum" != "$webhook_ingress_checksum" ]; then
             printf 'A prepared artifact does not match its checksum file.\n' >&2
@@ -216,6 +223,7 @@ jobs:
             "$VERSION" \
             "$runtime_checksum" \
             "$local_server_checksum" \
+            "$rest_server_checksum" \
             "$egress_checksum" \
             "$webhook_ingress_checksum" \
             Package.swift
@@ -233,6 +241,7 @@ jobs:
             --arg version "$VERSION" \
             --arg runtime_checksum "$runtime_checksum" \
             --arg local_server_checksum "$local_server_checksum" \
+            --arg rest_server_checksum "$rest_server_checksum" \
             --arg egress_checksum "$egress_checksum" \
             --arg webhook_ingress_checksum "$webhook_ingress_checksum" \
             --arg source_commit "$GITHUB_SHA" \
@@ -242,6 +251,7 @@ jobs:
               version: $version,
               runtime_checksum: $runtime_checksum,
               local_server_checksum: $local_server_checksum,
+              rest_server_checksum: $rest_server_checksum,
               egress_checksum: $egress_checksum,
               webhook_ingress_checksum: $webhook_ingress_checksum,
               source_commit: $source_commit,
@@ -251,6 +261,7 @@ jobs:
           {
             printf 'runtime_checksum=%s\n' "$runtime_checksum"
             printf 'local_server_checksum=%s\n' "$local_server_checksum"
+            printf 'rest_server_checksum=%s\n' "$rest_server_checksum"
             printf 'egress_checksum=%s\n' "$egress_checksum"
             printf 'webhook_ingress_checksum=%s\n' "$webhook_ingress_checksum"
             printf 'release_commit=%s\n' "$release_commit"
@@ -264,6 +275,8 @@ jobs:
             ${{ runner.temp }}/release/BondryRuntime.xcframework.zip.sha256
             ${{ runner.temp }}/release/BondryLocalServer.xcframework.zip
             ${{ runner.temp }}/release/BondryLocalServer.xcframework.zip.sha256
+            ${{ runner.temp }}/release/BondryRESTServer.xcframework.zip
+            ${{ runner.temp }}/release/BondryRESTServer.xcframework.zip.sha256
             ${{ runner.temp }}/release/BondryEgress.xcframework.zip
             ${{ runner.temp }}/release/BondryEgress.xcframework.zip.sha256
             ${{ runner.temp }}/release/BondryWebhookIngress.xcframework.zip
@@ -280,6 +293,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           LOCAL_SERVER_CHECKSUM: ${{ steps.release.outputs.local_server_checksum }}
+          REST_SERVER_CHECKSUM: ${{ steps.release.outputs.rest_server_checksum }}
           EGRESS_CHECKSUM: ${{ steps.release.outputs.egress_checksum }}
           WEBHOOK_INGRESS_CHECKSUM: ${{ steps.release.outputs.webhook_ingress_checksum }}
           RELEASE_COMMIT: ${{ steps.release.outputs.release_commit }}
@@ -292,6 +306,7 @@ jobs:
             --raw-field preparation_run_id="$GITHUB_RUN_ID" \
             --raw-field runtime_checksum="$RUNTIME_CHECKSUM" \
             --raw-field local_server_checksum="$LOCAL_SERVER_CHECKSUM" \
+            --raw-field rest_server_checksum="$REST_SERVER_CHECKSUM" \
             --raw-field egress_checksum="$EGRESS_CHECKSUM" \
             --raw-field webhook_ingress_checksum="$WEBHOOK_INGRESS_CHECKSUM" \
             --raw-field release_commit="$RELEASE_COMMIT"

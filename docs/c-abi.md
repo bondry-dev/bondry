@@ -54,11 +54,13 @@ An `OK` return accepts the dispatch and guarantees exactly one result callback, 
 
 ## Local Server
 
-Local-server symbols are not present in `BondryRuntime`. A host links `BondryLocalServer` only when it needs HTTP, REST, MCP, or a registered raw-body add-on. Server startup retains its own runtime ownership unit, so the caller and server have independent lifetimes.
+Server symbols are not present in `BondryRuntime`. A host links `BondryLocalServer` when it needs the combined composition or a registered raw-body add-on, and links `BondryRESTServer` when it needs only REST. Server startup retains its own runtime ownership unit, so the caller and server have independent lifetimes.
 
 `bondry_server_start_v1` accepts a bounded, versioned JSON configuration and returns an opaque server handle plus the actual bound IP address and port. Port zero requests an operating-system-selected port. The configuration selects REST, MCP, both, or neither; an empty set supports separately registered raw-body routes. Bearer authentication remains the default at the Swift layer. Disabled authentication requires an explicit principal so grants and audit events remain attributable.
 
-The configuration includes the bind address, exact browser origins, rate limits, body and connection limits, timeouts, network-risk acknowledgements, and MCP implementation metadata. Unknown fields, duplicate adapters, inconsistent authentication fields, invalid limits, and MCP metadata without an enabled MCP adapter are rejected. Syntax errors return `BONDRY_STATUS_INVALID_JSON`; a syntactically valid but invalid configuration returns `BONDRY_STATUS_INVALID_ARGUMENT`.
+`bondry_rest_server_start_v1` provides a separate REST-only composition. Its strict configuration omits adapter selection, MCP metadata, and raw-body registration. A library built with only the `rest-server` feature does not contain the combined server entry point or MCP implementation.
+
+The combined configuration includes the bind address, exact browser origins, rate limits, body and connection limits, timeouts, network-risk acknowledgements, and MCP implementation metadata. Unknown fields, duplicate adapters, inconsistent authentication fields, invalid limits, and MCP metadata without an enabled MCP adapter are rejected. Syntax errors return `BONDRY_STATUS_INVALID_JSON`; a syntactically valid but invalid configuration returns `BONDRY_STATUS_INVALID_ARGUMENT`.
 
 Configuration version one has this complete shape:
 
@@ -140,7 +142,7 @@ Rust unwinding is caught at each fallible ABI entry point and maps to `BONDRY_ST
 
 `Bondry` is the native Swift runtime wrapper. It validates the linked ABI version, accepts only file URLs, maps every public runtime status, closes its handle during deinitialization, and never exposes the opaque pointer outside the package. It provides Swift models for clients, non-secret token metadata, principals, exact capability grants, audit events, complete capability descriptors, and dispatch while transparently retrying queries that grow between calls.
 
-`BondryLocalServer` owns server configuration, lifecycle, endpoints, and server-specific errors. It can access the runtime handle only through Swift package access and the public retained-handle ABI; server concepts are absent from the `Bondry` product. `BondryWebhookIngress` is a separate product that composes retained runtime services with a raw-body generation and exposes bounded asynchronous disable plus replay administration.
+`BondryLocalServer` owns combined server configuration, lifecycle, endpoints, and server-specific errors. `BondryRESTServer` provides the corresponding REST-only surface without adapter or MCP options. Both can access the runtime handle only through Swift package access and the public retained-handle ABI; server concepts are absent from the `Bondry` product. `BondryWebhookIngress` is a separate product that composes retained runtime services with a raw-body generation and exposes bounded asynchronous disable plus replay administration.
 
 Swift hosts register `@Sendable async throws` capability handlers and dispatch JSON as `Data`. The wrapper copies every borrowed C invocation before starting Swift concurrency work and retains each handler until the C release callback. Unknown Swift errors become the fixed `handler_failed` code; only an explicit `BondryCapabilityHandlerError` code crosses the trust boundary. Dispatch uses checked continuations and supports completion before the C entry point returns or later from another thread. A Swift task cancelled before dispatch does not start it. Once the C core accepts an invocation, it runs through handler completion and required auditing even if the waiting task is cancelled later.
 

@@ -15,6 +15,8 @@ runtime_checksum=$(sed -n '1p' \
     "$bondry_root/target/apple/distribution/BondryRuntime.xcframework.zip.sha256")
 local_server_checksum=$(sed -n '1p' \
     "$bondry_root/target/apple/distribution/BondryLocalServer.xcframework.zip.sha256")
+rest_server_checksum=$(sed -n '1p' \
+    "$bondry_root/target/apple/distribution/BondryRESTServer.xcframework.zip.sha256")
 egress_checksum=$(sed -n '1p' \
     "$bondry_root/target/apple/distribution/BondryEgress.xcframework.zip.sha256")
 webhook_ingress_checksum=$(sed -n '1p' \
@@ -23,14 +25,16 @@ webhook_ingress_checksum=$(sed -n '1p' \
     "$version" \
     "$runtime_checksum" \
     "$local_server_checksum" \
+    "$rest_server_checksum" \
     "$egress_checksum" \
     "$webhook_ingress_checksum" \
     "$bondry_root/Package.swift"
 swift package dump-package --package-path "$bondry_root" > /dev/null
 
-printf 'Prepared Package.swift for v%s with runtime checksum %s, local-server checksum %s, egress checksum %s, and webhook-ingress checksum %s\n' \
+printf 'Prepared Package.swift for v%s with runtime checksum %s, local-server checksum %s, REST-server checksum %s, egress checksum %s, and webhook-ingress checksum %s\n' \
     "$version" \
     "$runtime_checksum" \
     "$local_server_checksum" \
+    "$rest_server_checksum" \
     "$egress_checksum" \
     "$webhook_ingress_checksum"

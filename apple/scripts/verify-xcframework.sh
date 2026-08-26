@@ -1,8 +1,8 @@
 #!/bin/sh
 set -eu
 
-if [ "$#" -ne 4 ]; then
-    printf 'Usage: %s <BondryRuntime.xcframework> <BondryLocalServer.xcframework> <BondryEgress.xcframework> <BondryWebhookIngress.xcframework>\n' "$0" >&2
+if [ "$#" -ne 5 ]; then
+    printf 'Usage: %s <BondryRuntime.xcframework> <BondryLocalServer.xcframework> <BondryRESTServer.xcframework> <BondryEgress.xcframework> <BondryWebhookIngress.xcframework>\n' "$0" >&2
     exit 64
 fi
 
@@ -10,14 +10,18 @@ script_directory=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 bondry_root=$(CDPATH='' cd -- "$script_directory/../.." && pwd)
 runtime_framework=$1
 server_framework=$2
-egress_framework=$3
-ingress_framework=$4
+rest_server_framework=$3
+egress_framework=$4
+ingress_framework=$5
 runtime_macos_slice="$runtime_framework/macos-arm64_x86_64"
 runtime_ios_slice="$runtime_framework/ios-arm64"
 runtime_simulator_slice="$runtime_framework/ios-arm64_x86_64-simulator"
 server_macos_slice="$server_framework/macos-arm64_x86_64"
 server_ios_slice="$server_framework/ios-arm64"
 server_simulator_slice="$server_framework/ios-arm64_x86_64-simulator"
+rest_server_macos_slice="$rest_server_framework/macos-arm64_x86_64"
+rest_server_ios_slice="$rest_server_framework/ios-arm64"
+rest_server_simulator_slice="$rest_server_framework/ios-arm64_x86_64-simulator"
 egress_macos_slice="$egress_framework/macos-arm64_x86_64"
 egress_ios_slice="$egress_framework/ios-arm64"
 egress_simulator_slice="$egress_framework/ios-arm64_x86_64-simulator"
@@ -30,6 +34,9 @@ runtime_simulator_library="$runtime_simulator_slice/libbondry_runtime.a"
 server_macos_library="$server_macos_slice/libbondry_local_server.a"
 server_ios_library="$server_ios_slice/libbondry_local_server.a"
 server_simulator_library="$server_simulator_slice/libbondry_local_server.a"
+rest_server_macos_library="$rest_server_macos_slice/libbondry_rest_server.a"
+rest_server_ios_library="$rest_server_ios_slice/libbondry_rest_server.a"
+rest_server_simulator_library="$rest_server_simulator_slice/libbondry_rest_server.a"
 egress_macos_library="$egress_macos_slice/libbondry_egress.a"
 egress_ios_library="$egress_ios_slice/libbondry_egress.a"
 egress_simulator_library="$egress_simulator_slice/libbondry_egress.a"
@@ -49,6 +56,7 @@ ingress_simulator_headers="$ingress_simulator_slice/Headers/CBondryWebhookIngres
 for framework in \
     "$runtime_framework" \
     "$server_framework" \
+    "$rest_server_framework" \
     "$egress_framework" \
     "$ingress_framework"
 do
@@ -64,6 +72,9 @@ lipo "$runtime_simulator_library" -verify_arch arm64 x86_64
 lipo "$server_macos_library" -verify_arch arm64 x86_64
 lipo "$server_ios_library" -verify_arch arm64
 lipo "$server_simulator_library" -verify_arch arm64 x86_64
+lipo "$rest_server_macos_library" -verify_arch arm64 x86_64
+lipo "$rest_server_ios_library" -verify_arch arm64
+lipo "$rest_server_simulator_library" -verify_arch arm64 x86_64
 lipo "$egress_macos_library" -verify_arch arm64 x86_64
 lipo "$egress_ios_library" -verify_arch arm64
 lipo "$egress_simulator_library" -verify_arch arm64 x86_64
@@ -89,6 +100,12 @@ for slice in "$server_macos_slice" "$server_ios_slice" "$server_simulator_slice"
     cmp "$bondry_root/apple/Distribution/BondryLocalServer.modulemap" \
         "$slice/Headers/CBondryLocalServer/module.modulemap"
 done
+for slice in "$rest_server_macos_slice" "$rest_server_ios_slice" "$rest_server_simulator_slice"; do
+    cmp "$bondry_root/bindings/c/include/bondry_rest_server.h" \
+        "$slice/Headers/CBondryRESTServer/bondry_rest_server.h"
+    cmp "$bondry_root/apple/Distribution/BondryRESTServer.modulemap" \
+        "$slice/Headers/CBondryRESTServer/module.modulemap"
+done
 for slice in "$ingress_macos_slice" "$ingress_ios_slice" "$ingress_simulator_slice"; do
     cmp "$bondry_root/bindings/c/include/bondry_webhook_ingress.h" \
         "$slice/Headers/CBondryWebhookIngress/bondry_webhook_ingress.h"
@@ -103,6 +120,9 @@ for library in \
     "$server_macos_library" \
     "$server_ios_library" \
     "$server_simulator_library" \
+    "$rest_server_macos_library" \
+    "$rest_server_ios_library" \
+    "$rest_server_simulator_library" \
     "$egress_macos_library" \
     "$egress_ios_library" \
     "$egress_simulator_library" \
@@ -136,6 +156,20 @@ if nm -gU "$server_macos_library" 2>/dev/null \
     printf 'BondryLocalServer defines the runtime store implementation.\n' >&2
     exit 1
 fi
+if ! nm -gU "$rest_server_macos_library" 2>/dev/null \
+    | awk '$NF == "_bondry_rest_server_start_v1" { found = 1 } END { exit !found }'; then
+    printf 'BondryRESTServer does not export bondry_rest_server_start_v1.\n' >&2
+    exit 1
+fi
+if nm -gU "$rest_server_macos_library" 2>/dev/null \
+    | awk '$NF == "_bondry_server_start_v1" || $NF == "_bondry_store_open_v1" { found = 1 } END { exit !found }'; then
+    printf 'BondryRESTServer exports local-server or runtime implementation symbols.\n' >&2
+    exit 1
+fi
+if strings -a "$rest_server_macos_library" | grep -E -q '(^|[^[:alnum:]])/mcp([^[:alnum:]]|$)'; then
+    printf 'BondryRESTServer contains an MCP route.\n' >&2
+    exit 1
+fi
 if ! nm -gU "$egress_macos_library" 2>/dev/null \
     | awk '$NF == "_bondry_egress_start_v1" { found = 1 } END { exit !found }'; then
     printf 'BondryEgress does not export bondry_egress_start_v1.\n' >&2
@@ -166,6 +200,7 @@ apple_clang=$(xcrun --find clang)
 printf '%s\n' \
     '@import CBondryRuntime;' \
     '@import CBondryLocalServer;' \
+    '@import CBondryRESTServer;' \
     '@import CBondryEgress;' \
     '@import CBondryWebhookIngress;' \
     'uint32_t bondry_module_smoke(void) { return bondry_abi_version_v1(); }' \
@@ -176,6 +211,7 @@ cc \
     -fmodules-cache-path="$temporary_directory/modules" \
     -I "$runtime_macos_slice/Headers" \
     -I "$server_macos_slice/Headers" \
+    -I "$rest_server_macos_slice/Headers" \
     -I "$egress_macos_slice/Headers" \
     -I "$ingress_macos_slice/Headers" \
     -fsyntax-only \
@@ -325,21 +361,26 @@ mkdir -p \
     "$package_directory/Sources/BondryApple" \
     "$package_directory/Sources/BondryEgress" \
     "$package_directory/Sources/BondryLocalServer" \
+    "$package_directory/Sources/BondryRESTServer" \
     "$package_directory/Sources/BondryWebhookIngress" \
     "$package_directory/Sources/CombinedProbe" \
     "$package_directory/Sources/EgressProbe" \
     "$package_directory/Sources/IngressProbe" \
     "$package_directory/Sources/RuntimeProbe" \
+    "$package_directory/Sources/RESTServerProbe" \
     "$package_directory/Sources/ServerProbe"
 
 cp -R "$runtime_framework" "$package_directory/BondryRuntime.xcframework"
 cp -R "$server_framework" "$package_directory/BondryLocalServer.xcframework"
+cp -R "$rest_server_framework" "$package_directory/BondryRESTServer.xcframework"
 cp -R "$egress_framework" "$package_directory/BondryEgress.xcframework"
 cp -R "$ingress_framework" "$package_directory/BondryWebhookIngress.xcframework"
 cp "$bondry_root/apple/Sources/Bondry/"*.swift "$package_directory/Sources/Bondry/"
 cp "$bondry_root/apple/Sources/BondryApple/"*.swift "$package_directory/Sources/BondryApple/"
 cp "$bondry_root/apple/Sources/BondryLocalServer/"*.swift \
     "$package_directory/Sources/BondryLocalServer/"
+cp "$bondry_root/apple/Sources/BondryRESTServer/"*.swift \
+    "$package_directory/Sources/BondryRESTServer/"
 cp "$bondry_root/apple/Sources/BondryEgress/"*.swift \
     "$package_directory/Sources/BondryEgress/"
 cp "$bondry_root/apple/Sources/BondryWebhookIngress/"*.swift \
@@ -362,6 +403,7 @@ printf '%s\n' \
     '  targets: [' \
     '    .binaryTarget(name: "CBondryRuntime", path: "BondryRuntime.xcframework"),' \
     '    .binaryTarget(name: "CBondryLocalServer", path: "BondryLocalServer.xcframework"),' \
+    '    .binaryTarget(name: "CBondryRESTServer", path: "BondryRESTServer.xcframework"),' \
     '    .binaryTarget(name: "CBondryEgress", path: "BondryEgress.xcframework"),' \
     '    .binaryTarget(' \
     '      name: "CBondryWebhookIngress",' \
@@ -383,6 +425,10 @@ printf '%s\n' \
     '    .target(' \
     '      name: "BondryLocalServer",' \
     '      dependencies: ["Bondry", "CBondryLocalServer"]' \
+    '    ),' \
+    '    .target(' \
+    '      name: "BondryRESTServer",' \
+    '      dependencies: ["Bondry", "CBondryRESTServer"]' \
     '    ),' \
     '    .target(' \
     '      name: "BondryEgress",' \
@@ -412,6 +458,10 @@ printf '%s\n' \
     '        "BondryWebhookIngress", "CBondryEgress",' \
     '      ],' \
     '      swiftSettings: [.define("BONDRY_COMBINED_PROBE")]' \
+    '    ),' \
+    '    .executableTarget(' \
+    '      name: "RESTServerProbe",' \
+    '      dependencies: ["Bondry", "BondryApple", "BondryRESTServer"]' \
     '    ),' \
     '    .executableTarget(' \
     '      name: "ServerProbe",' \
@@ -449,6 +499,23 @@ printf '%s\n' \
     'try server.stop()' \
     > "$package_directory/Sources/ServerProbe/main.swift"
 
+printf '%s\n' \
+    'import Bondry' \
+    'import BondryApple' \
+    'import BondryRESTServer' \
+    'import Foundation' \
+    '' \
+    'let databaseURL = URL(fileURLWithPath: CommandLine.arguments[1])' \
+    'let key = try DatabaseKeyMaterial(rawRepresentation: Data(repeating: 0x44, count: 32))' \
+    'let runtime = try BondryRuntime.open(at: databaseURL, key: key)' \
+    'let server = try runtime.startRESTServer(' \
+    '  configuration: try BondryRESTServerConfiguration(' \
+    '    authentication: .disabled(principalID: "probe")' \
+    '  )' \
+    ')' \
+    'try server.stop()' \
+    > "$package_directory/Sources/RESTServerProbe/main.swift"
+
 swift build --package-path "$package_directory" --configuration release --product RuntimeProbe
 runtime_probe="$package_directory/.build/release/RuntimeProbe"
 "$runtime_probe" "$temporary_directory/swift-runtime.db"
@@ -465,6 +532,24 @@ runtime_probe_size=$(stat -f %z "$runtime_probe")
 if [ "$runtime_probe_size" -gt 8388608 ]; then
     printf 'The runtime-only Swift executable exceeds 8 MiB: %s bytes.\n' \
         "$runtime_probe_size" >&2
+    exit 1
+fi
+
+swift build --package-path "$package_directory" --configuration release --product RESTServerProbe
+rest_server_probe="$package_directory/.build/release/RESTServerProbe"
+"$rest_server_probe" "$temporary_directory/swift-rest-server.db"
+if ! nm -gU "$rest_server_probe" 2>/dev/null \
+    | awk '$NF == "_bondry_rest_server_start_v1" { found = 1 } END { exit !found }'; then
+    printf 'The REST-only Swift executable does not contain its server entry point.\n' >&2
+    exit 1
+fi
+if nm -gU "$rest_server_probe" 2>/dev/null \
+    | awk '$NF == "_bondry_server_start_v1" { found = 1 } END { exit !found }'; then
+    printf 'The REST-only Swift executable contains the combined local-server entry point.\n' >&2
+    exit 1
+fi
+if strings -a "$rest_server_probe" | grep -E -q '(^|[^[:alnum:]])/mcp([^[:alnum:]]|$)'; then
+    printf 'The REST-only Swift executable contains an MCP route.\n' >&2
     exit 1
 fi
 

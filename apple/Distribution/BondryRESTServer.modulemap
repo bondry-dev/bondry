@@ -1,4 +1,4 @@
 module CBondryRESTServer {
-    header "CBondryRESTServer/bondry_rest_server.h"
-    export *
+  header "bondry_rest_server.h"
+  export *
 }

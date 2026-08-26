@@ -20,6 +20,10 @@ on:
         description: SwiftPM checksum of BondryLocalServer
         required: true
         type: string
+      rest_server_checksum:
+        description: SwiftPM checksum of BondryRESTServer
+        required: true
+        type: string
       egress_checksum:
         description: SwiftPM checksum of BondryEgress
         required: true
@@ -75,6 +79,7 @@ jobs:
       - name: Validate publication request
         env:
           LOCAL_SERVER_CHECKSUM: ${{ inputs.local_server_checksum }}
+          REST_SERVER_CHECKSUM: ${{ inputs.rest_server_checksum }}
           EGRESS_CHECKSUM: ${{ inputs.egress_checksum }}
           WEBHOOK_INGRESS_CHECKSUM: ${{ inputs.webhook_ingress_checksum }}
           PREPARATION_RUN_ID: ${{ inputs.preparation_run_id }}
@@ -95,8 +100,9 @@ jobs:
             printf 'Preparation run ID must be a positive integer.\n' >&2
             exit 1
           fi
-          if ! printf '%s\n%s\n%s\n%s\n' \
-            "$RUNTIME_CHECKSUM" "$LOCAL_SERVER_CHECKSUM" "$EGRESS_CHECKSUM" "$WEBHOOK_INGRESS_CHECKSUM" \
+          if ! printf '%s\n%s\n%s\n%s\n%s\n' \
+            "$RUNTIME_CHECKSUM" "$LOCAL_SERVER_CHECKSUM" "$REST_SERVER_CHECKSUM" \
+            "$EGRESS_CHECKSUM" "$WEBHOOK_INGRESS_CHECKSUM" \
             | awk 'length != 64 || !/^[0-9a-f]+$/ { invalid = 1 } END { exit invalid }'; then
             printf 'Each checksum must contain 64 lowercase hexadecimal characters.\n' >&2
             exit 1
@@ -137,6 +143,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           LOCAL_SERVER_CHECKSUM: ${{ inputs.local_server_checksum }}
+          REST_SERVER_CHECKSUM: ${{ inputs.rest_server_checksum }}
           EGRESS_CHECKSUM: ${{ inputs.egress_checksum }}
           WEBHOOK_INGRESS_CHECKSUM: ${{ inputs.webhook_ingress_checksum }}
           PREPARATION_RUN_ID: ${{ inputs.preparation_run_id }}
@@ -147,6 +154,7 @@ jobs:
           set -eu
           runtime_archive="$RUNNER_TEMP/release/BondryRuntime.xcframework.zip"
           local_server_archive="$RUNNER_TEMP/release/BondryLocalServer.xcframework.zip"
+          rest_server_archive="$RUNNER_TEMP/release/BondryRESTServer.xcframework.zip"
           egress_archive="$RUNNER_TEMP/release/BondryEgress.xcframework.zip"
           webhook_ingress_archive="$RUNNER_TEMP/release/BondryWebhookIngress.xcframework.zip"
           metadata="$RUNNER_TEMP/release/release-metadata.json"
@@ -166,6 +174,7 @@ jobs:
             --arg version "$VERSION" \
             --arg runtime_checksum "$RUNTIME_CHECKSUM" \
             --arg local_server_checksum "$LOCAL_SERVER_CHECKSUM" \
+            --arg rest_server_checksum "$REST_SERVER_CHECKSUM" \
             --arg egress_checksum "$EGRESS_CHECKSUM" \
             --arg webhook_ingress_checksum "$WEBHOOK_INGRESS_CHECKSUM" \
             --arg source_commit "$source_commit" \
@@ -174,6 +183,7 @@ jobs:
             '.version == $version and
              .runtime_checksum == $runtime_checksum and
              .local_server_checksum == $local_server_checksum and
+             .rest_server_checksum == $rest_server_checksum and
              .egress_checksum == $egress_checksum and
              .webhook_ingress_checksum == $webhook_ingress_checksum and
              .source_commit == $source_commit and
@@ -185,14 +195,17 @@ jobs:
           fi
           recorded_runtime_checksum=$(sed -n '1p' "$runtime_archive.sha256")
           recorded_local_server_checksum=$(sed -n '1p' "$local_server_archive.sha256")
+          recorded_rest_server_checksum=$(sed -n '1p' "$rest_server_archive.sha256")
           recorded_egress_checksum=$(sed -n '1p' "$egress_archive.sha256")
           recorded_webhook_ingress_checksum=$(sed -n '1p' "$webhook_ingress_archive.sha256")
           actual_runtime_checksum=$(swift package compute-checksum "$runtime_archive")
           actual_local_server_checksum=$(swift package compute-checksum "$local_server_archive")
+          actual_rest_server_checksum=$(swift package compute-checksum "$rest_server_archive")
           actual_egress_checksum=$(swift package compute-checksum "$egress_archive")
           actual_webhook_ingress_checksum=$(swift package compute-checksum "$webhook_ingress_archive")
           sha256_runtime_checksum=$(shasum -a 256 "$runtime_archive" | awk '{ print $1 }')
           sha256_local_server_checksum=$(shasum -a 256 "$local_server_archive" | awk '{ print $1 }')
+          sha256_rest_server_checksum=$(shasum -a 256 "$rest_server_archive" | awk '{ print $1 }')
           sha256_egress_checksum=$(shasum -a 256 "$egress_archive" | awk '{ print $1 }')
           sha256_webhook_ingress_checksum=$(shasum -a 256 "$webhook_ingress_archive" | awk '{ print $1 }')
           if [ "$recorded_runtime_checksum" != "$RUNTIME_CHECKSUM" ] || \
@@ -201,6 +214,9 @@ jobs:
              [ "$recorded_local_server_checksum" != "$LOCAL_SERVER_CHECKSUM" ] || \
              [ "$actual_local_server_checksum" != "$LOCAL_SERVER_CHECKSUM" ] || \
              [ "$sha256_local_server_checksum" != "$LOCAL_SERVER_CHECKSUM" ] || \
+             [ "$recorded_rest_server_checksum" != "$REST_SERVER_CHECKSUM" ] || \
+             [ "$actual_rest_server_checksum" != "$REST_SERVER_CHECKSUM" ] || \
+             [ "$sha256_rest_server_checksum" != "$REST_SERVER_CHECKSUM" ] || \
              [ "$recorded_egress_checksum" != "$EGRESS_CHECKSUM" ] || \
              [ "$actual_egress_checksum" != "$EGRESS_CHECKSUM" ] || \
              [ "$sha256_egress_checksum" != "$EGRESS_CHECKSUM" ] || \
@@ -214,6 +230,7 @@ jobs:
             "$VERSION" \
             "$RUNTIME_CHECKSUM" \
             "$LOCAL_SERVER_CHECKSUM" \
+            "$REST_SERVER_CHECKSUM" \
             "$EGRESS_CHECKSUM" \
             "$WEBHOOK_INGRESS_CHECKSUM" \
             "$RUNNER_TEMP/Package.swift"
@@ -221,6 +238,7 @@ jobs:
           swift package dump-package > /dev/null
           unzip -tq "$runtime_archive"
           unzip -tq "$local_server_archive"
+          unzip -tq "$rest_server_archive"
           unzip -tq "$egress_archive"
           unzip -tq "$webhook_ingress_archive"
           release_state=$(gh release view "v$VERSION" --json isDraft --jq .isDraft 2>/dev/null || printf 'missing')
@@ -245,6 +263,7 @@ jobs:
           for archive in \
             "$RUNNER_TEMP/release/BondryRuntime.xcframework.zip" \
             "$RUNNER_TEMP/release/BondryLocalServer.xcframework.zip" \
+            "$RUNNER_TEMP/release/BondryRESTServer.xcframework.zip" \
             "$RUNNER_TEMP/release/BondryEgress.xcframework.zip" \
             "$RUNNER_TEMP/release/BondryWebhookIngress.xcframework.zip"
           do
@@ -266,6 +285,7 @@ jobs:
           subject-path: |
             ${{ runner.temp }}/release/BondryRuntime.xcframework.zip
             ${{ runner.temp }}/release/BondryLocalServer.xcframework.zip
+            ${{ runner.temp }}/release/BondryRESTServer.xcframework.zip
             ${{ runner.temp }}/release/BondryEgress.xcframework.zip
             ${{ runner.temp }}/release/BondryWebhookIngress.xcframework.zip
       - name: Upload draft release
@@ -282,6 +302,8 @@ jobs:
             ${{ runner.temp }}/release/BondryRuntime.xcframework.zip.sha256
             ${{ runner.temp }}/release/BondryLocalServer.xcframework.zip
             ${{ runner.temp }}/release/BondryLocalServer.xcframework.zip.sha256
+            ${{ runner.temp }}/release/BondryRESTServer.xcframework.zip
+            ${{ runner.temp }}/release/BondryRESTServer.xcframework.zip.sha256
             ${{ runner.temp }}/release/BondryEgress.xcframework.zip
             ${{ runner.temp }}/release/BondryEgress.xcframework.zip.sha256
             ${{ runner.temp }}/release/BondryWebhookIngress.xcframework.zip
@@ -314,6 +336,8 @@ jobs:
                 "BondryEgress.xcframework.zip.sha256",
                 "BondryLocalServer.xcframework.zip",
                 "BondryLocalServer.xcframework.zip.sha256",
+                "BondryRESTServer.xcframework.zip",
+                "BondryRESTServer.xcframework.zip.sha256",
                 "BondryRuntime.xcframework.zip",
                 "BondryRuntime.xcframework.zip.sha256",
                 "BondryWebhookIngress.xcframework.zip",
@@ -332,6 +356,8 @@ jobs:
             BondryRuntime.xcframework.zip.sha256 \
             BondryLocalServer.xcframework.zip \
             BondryLocalServer.xcframework.zip.sha256 \
+            BondryRESTServer.xcframework.zip \
+            BondryRESTServer.xcframework.zip.sha256 \
             BondryEgress.xcframework.zip \
             BondryEgress.xcframework.zip.sha256 \
             BondryWebhookIngress.xcframework.zip \

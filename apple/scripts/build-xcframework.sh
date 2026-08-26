@@ -46,6 +46,7 @@ packaged_library_directory="$artifact_directory/staging/libraries"
 rm -rf \
     "$artifact_directory/BondryRuntime.xcframework" \
     "$artifact_directory/BondryLocalServer.xcframework" \
+    "$artifact_directory/BondryRESTServer.xcframework" \
     "$artifact_directory/BondryEgress.xcframework" \
     "$artifact_directory/BondryWebhookIngress.xcframework" \
     "$artifact_directory/staging"
@@ -54,6 +55,8 @@ rm -f \
     "$artifact_directory/BondryRuntime.xcframework.zip.sha256" \
     "$artifact_directory/BondryLocalServer.xcframework.zip" \
     "$artifact_directory/BondryLocalServer.xcframework.zip.sha256" \
+    "$artifact_directory/BondryRESTServer.xcframework.zip" \
+    "$artifact_directory/BondryRESTServer.xcframework.zip.sha256" \
     "$artifact_directory/BondryEgress.xcframework.zip" \
     "$artifact_directory/BondryEgress.xcframework.zip.sha256" \
     "$artifact_directory/BondryWebhookIngress.xcframework.zip" \
@@ -180,6 +183,24 @@ for target in $required_targets; do
         "$cargo_target_directory/$target/release/libbondry_egress_ffi.a" \
         "$cargo_target_directory/$target/release/libbondry_webhook_ingress_ffi.a" \
         "$target_library_directory/"
+    env \
+        "$deployment_variable" \
+        CARGO_ENCODED_RUSTFLAGS="$encoded_rustflags" \
+        cargo build \
+            --locked \
+            --release \
+            --manifest-path "$bondry_root/Cargo.toml" \
+            --package bondry-local-server-ffi \
+            --no-default-features \
+            --features rest-server \
+            --target "$target"
+    "$apple_strip" -x \
+        "$cargo_target_directory/$target/release/libbondry_local_server_ffi.a"
+    "$apple_ranlib" -D \
+        "$cargo_target_directory/$target/release/libbondry_local_server_ffi.a"
+    cp \
+        "$cargo_target_directory/$target/release/libbondry_local_server_ffi.a" \
+        "$target_library_directory/libbondry_rest_server_ffi.a"
     deduplicate_static_addon \
         "$target_library_directory/libbondry_runtime_ffi.a" \
         "$target_library_directory/libbondry_egress_ffi.a" \
@@ -266,6 +287,7 @@ generate_licenses() {
 
 runtime_licenses="$artifact_directory/BondryRuntime-THIRD_PARTY_LICENSES.txt"
 local_server_licenses="$artifact_directory/BondryLocalServer-THIRD_PARTY_LICENSES.txt"
+rest_server_licenses="$artifact_directory/BondryRESTServer-THIRD_PARTY_LICENSES.txt"
 egress_licenses="$artifact_directory/BondryEgress-THIRD_PARTY_LICENSES.txt"
 ingress_licenses="$artifact_directory/BondryWebhookIngress-THIRD_PARTY_LICENSES.txt"
 generate_licenses \
@@ -274,6 +296,16 @@ generate_licenses \
 generate_licenses \
     "$bondry_root/crates/ffi/bondry-local-server-ffi/Cargo.toml" \
     "$local_server_licenses"
+cargo about generate \
+    --config "$bondry_root/apple/Distribution/about.toml" \
+    --fail \
+    --locked \
+    --manifest-path "$bondry_root/crates/ffi/bondry-local-server-ffi/Cargo.toml" \
+    --no-default-features \
+    --features rest-server \
+    --offline \
+    --output-file "$rest_server_licenses" \
+    "$bondry_root/apple/Distribution/ThirdPartyLicenses.hbs"
 generate_licenses \
     "$bondry_root/crates/ffi/bondry-egress-ffi/Cargo.toml" \
     "$egress_licenses"
@@ -298,6 +330,14 @@ create_xcframework \
     CBondryLocalServer \
     "$local_server_licenses"
 create_xcframework \
+    BondryRESTServer \
+    libbondry_rest_server_ffi.a \
+    libbondry_rest_server.a \
+    bondry_rest_server.h \
+    BondryRESTServer.modulemap \
+    CBondryRESTServer \
+    "$rest_server_licenses"
+create_xcframework \
     BondryEgress \
     libbondry_egress_ffi.a \
     libbondry_egress.a \
@@ -317,12 +357,13 @@ create_xcframework \
 "$script_directory/verify-xcframework.sh" \
     "$artifact_directory/BondryRuntime.xcframework" \
     "$artifact_directory/BondryLocalServer.xcframework" \
+    "$artifact_directory/BondryRESTServer.xcframework" \
     "$artifact_directory/BondryEgress.xcframework" \
     "$artifact_directory/BondryWebhookIngress.xcframework"
 
 archive_timestamp=$(date -u -r "$source_date_epoch" '+%Y%m%d%H%M.%S')
 aggregate_archive_size=0
-for framework_name in BondryRuntime BondryLocalServer BondryEgress BondryWebhookIngress; do
+for framework_name in BondryRuntime BondryLocalServer BondryRESTServer BondryEgress BondryWebhookIngress; do
     xcframework="$artifact_directory/$framework_name.xcframework"
     archive="$xcframework.zip"
     find "$xcframework" -exec touch -h -t "$archive_timestamp" {} +
