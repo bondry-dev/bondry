@@ -37,6 +37,16 @@ use std::os::unix::{fs::PermissionsExt as _, net::UnixStream};
 #[cfg(feature = "unix-socket")]
 use tempfile::tempdir;
 
+#[cfg(feature = "tls")]
+use base64::{Engine as _, engine::general_purpose::STANDARD};
+#[cfg(feature = "tls")]
+use bondry_http_server::TlsServerConfiguration;
+#[cfg(feature = "tls")]
+use rustls::{
+    ClientConfig, ClientConnection, RootCertStore, StreamOwned,
+    pki_types::{CertificateDer, ServerName},
+};
+
 struct TestVerifier;
 
 impl BearerTokenVerifier for TestVerifier {
@@ -192,6 +202,77 @@ fn request(address: SocketAddr, request: &str) -> std::io::Result<String> {
     Ok(response)
 }
 
+#[cfg(feature = "tls")]
+struct TestTlsIdentity {
+    root: Vec<u8>,
+    leaf: Vec<u8>,
+    key: Vec<u8>,
+}
+
+#[cfg(feature = "tls")]
+fn test_tls_identity() -> Result<TestTlsIdentity, Box<dyn std::error::Error>> {
+    let fixture: serde_json::Value = serde_json::from_str(include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../../fixtures/transport-v1/localhost-tls.json"
+    )))?;
+    let decode = |name: &str| -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+        let value = fixture
+            .get(name)
+            .and_then(serde_json::Value::as_str)
+            .ok_or("missing TLS fixture field")?;
+        Ok(STANDARD.decode(value)?)
+    };
+    Ok(TestTlsIdentity {
+        root: decode("trust_anchor_der_base64")?,
+        leaf: decode("server_certificate_der_base64")?,
+        key: decode("private_key_pkcs8_base64")?,
+    })
+}
+
+#[cfg(feature = "tls")]
+fn start_tls(
+    handshake_timeout: Duration,
+) -> Result<(LocalHttpServer, TestTlsIdentity), Box<dyn std::error::Error>> {
+    let identity = test_tls_identity()?;
+    let tls = TlsServerConfiguration::new(
+        vec![identity.leaf.clone()],
+        identity.key.clone(),
+        handshake_timeout,
+    )?;
+    let protocols: Vec<Arc<dyn HttpProtocol>> = vec![Arc::new(rest_protocol()?)];
+    let server =
+        LocalHttpServer::start_tls_with_protocols(authenticated_configuration(), tls, protocols)?;
+    Ok((server, identity))
+}
+
+#[cfg(feature = "tls")]
+fn tls_request(
+    address: SocketAddr,
+    trust_anchor: Vec<u8>,
+    server_name: &str,
+    versions: &[&'static rustls::SupportedProtocolVersion],
+) -> Result<String, Box<dyn std::error::Error>> {
+    let mut roots = RootCertStore::empty();
+    roots.add(CertificateDer::from(trust_anchor))?;
+    let provider = Arc::new(rustls::crypto::ring::default_provider());
+    let configuration = ClientConfig::builder_with_provider(provider)
+        .with_protocol_versions(versions)?
+        .with_root_certificates(roots)
+        .with_no_client_auth();
+    let server_name = ServerName::try_from(server_name.to_owned())?;
+    let connection = ClientConnection::new(Arc::new(configuration), server_name)?;
+    let stream = TcpStream::connect(address)?;
+    stream.set_read_timeout(Some(Duration::from_secs(2)))?;
+    stream.set_write_timeout(Some(Duration::from_secs(2)))?;
+    let mut stream = StreamOwned::new(connection, stream);
+    stream.write_all(
+        b"GET /api/v1/capabilities HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer alpha\r\nConnection: close\r\n\r\n",
+    )?;
+    let mut response = String::new();
+    stream.read_to_string(&mut response)?;
+    Ok(response)
+}
+
 #[cfg(feature = "unix-socket")]
 fn unix_request(path: &std::path::Path, request: &str) -> std::io::Result<String> {
     let mut stream = UnixStream::connect(path)?;
@@ -268,6 +349,76 @@ fn starts_on_an_automatic_port_and_releases_it() -> Result<(), Box<dyn std::erro
     server.stop()?;
     let replacement = std::net::TcpListener::bind(address)?;
     drop(replacement);
+    Ok(())
+}
+
+#[cfg(feature = "tls")]
+#[test]
+fn serves_authenticated_http_only_after_a_tls_13_handshake()
+-> Result<(), Box<dyn std::error::Error>> {
+    let (server, identity) = start_tls(Duration::from_secs(1))?;
+    let response = tls_request(
+        server.local_address(),
+        identity.root.clone(),
+        "localhost",
+        &[&rustls::version::TLS13],
+    )?;
+    assert_eq!(status(&response), Some(200));
+
+    assert!(
+        tls_request(
+            server.local_address(),
+            identity.root.clone(),
+            "example.test",
+            &[&rustls::version::TLS13],
+        )
+        .is_err()
+    );
+    assert!(
+        tls_request(
+            server.local_address(),
+            identity.leaf,
+            "localhost",
+            &[&rustls::version::TLS13],
+        )
+        .is_err()
+    );
+    Ok(())
+}
+
+#[cfg(feature = "tls")]
+#[test]
+fn rejects_tls_12_plaintext_and_interrupted_handshakes_without_stopping()
+-> Result<(), Box<dyn std::error::Error>> {
+    let (server, identity) = start_tls(Duration::from_millis(25))?;
+    assert!(
+        tls_request(
+            server.local_address(),
+            identity.root.clone(),
+            "localhost",
+            &[&rustls::version::TLS12],
+        )
+        .is_err()
+    );
+
+    let plaintext = request(
+        server.local_address(),
+        "GET /api/v1/capabilities HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
+    );
+    assert!(plaintext.is_err() || !plaintext?.starts_with("HTTP/1.1"));
+
+    drop(TcpStream::connect(server.local_address())?);
+    let stalled = TcpStream::connect(server.local_address())?;
+    thread::sleep(Duration::from_millis(50));
+    drop(stalled);
+
+    let response = tls_request(
+        server.local_address(),
+        identity.root,
+        "localhost",
+        &[&rustls::version::TLS13],
+    )?;
+    assert_eq!(status(&response), Some(200));
     Ok(())
 }
 

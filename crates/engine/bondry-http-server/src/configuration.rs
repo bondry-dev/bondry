@@ -279,6 +279,17 @@ impl ServerConfiguration {
         Ok(())
     }
 
+    #[cfg(feature = "tls")]
+    pub(crate) fn validate_tls(&self) -> Result<(), ServerConfigurationError> {
+        if !self.bind_address.is_loopback()
+            && self.authentication.is_disabled()
+            && !self.allow_unauthenticated_network
+        {
+            return Err(ServerConfigurationError::UnauthenticatedNetworkExposure);
+        }
+        Ok(())
+    }
+
     #[cfg(feature = "unix-socket")]
     pub(crate) fn validate_unix(&self) -> Result<(), UnixServerConfigurationError> {
         if !self.authentication.is_disabled() {

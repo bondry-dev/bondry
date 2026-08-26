@@ -6,6 +6,8 @@ mod protocol;
 mod rate_limit;
 mod raw_body;
 mod server;
+#[cfg(feature = "tls")]
+mod tls;
 #[cfg(feature = "unix-socket")]
 mod unix_socket;
 
@@ -29,6 +31,11 @@ pub use raw_body::{
 pub use server::{LocalHttpServer, ServerStartError, ServerStopError};
 #[cfg(feature = "unix-socket")]
 pub use server::{LocalUnixHttpServer, UnixServerStartError};
+#[cfg(feature = "tls")]
+pub use tls::{
+    MAX_TLS_CERTIFICATE_CHAIN_BYTES, MAX_TLS_PRIVATE_KEY_BYTES, TlsServerConfiguration,
+    TlsServerConfigurationError,
+};
 #[cfg(feature = "unix-socket")]
 pub use unix_socket::{
     MAX_UNIX_SOCKET_PATH_BYTES, UnixSocketConfiguration, UnixSocketConfigurationError,

@@ -12,6 +12,7 @@ default = ["mcp", "rest"]
 mcp = ["dep:bondry-mcp-proto"]
 rest = ["dep:bondry-rest-proto"]
 unix-socket = ["dep:nix"]
+tls = ["dep:rustls", "dep:tokio-rustls", "dep:zeroize"]
 
 [dependencies]
 base64.workspace = true
@@ -24,11 +25,15 @@ http-body-util.workspace = true
 hyper = { workspace = true, features = ["http1", "server"] }
 hyper-util.workspace = true
 nix = { workspace = true, optional = true }
+rustls = { workspace = true, optional = true }
 serde_json.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["macros", "net", "rt", "sync", "time"] }
+tokio-rustls = { workspace = true, optional = true }
+zeroize = { workspace = true, optional = true }
 
 [dev-dependencies]
+base64.workspace = true
 tempfile.workspace = true
 
 [lints]

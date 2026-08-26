@@ -245,10 +245,13 @@ dependencies = [
  "hyper",
  "hyper-util",
  "nix",
+ "rustls",
  "serde_json",
  "tempfile",
  "thiserror",
  "tokio",
+ "tokio-rustls",
+ "zeroize",
 ]
 
 [[package]]

@@ -30,6 +30,9 @@ use tokio::{
     task::JoinSet,
 };
 
+#[cfg(feature = "tls")]
+use crate::TlsServerConfiguration;
+
 #[cfg(any(feature = "mcp", feature = "rest"))]
 use crate::MountedProtocol;
 use crate::{
@@ -87,6 +90,25 @@ impl LocalHttpServer {
         protocols: Vec<Arc<dyn HttpProtocol>>,
     ) -> Result<Self, ServerStartError> {
         configuration.validate()?;
+        Self::start_network(configuration, protocols, NetworkTransport::Cleartext)
+    }
+
+    /// Starts a TLS 1.3 server with protocol-neutral HTTP handlers.
+    #[cfg(feature = "tls")]
+    pub fn start_tls_with_protocols(
+        configuration: ServerConfiguration,
+        tls: TlsServerConfiguration,
+        protocols: Vec<Arc<dyn HttpProtocol>>,
+    ) -> Result<Self, ServerStartError> {
+        configuration.validate_tls()?;
+        Self::start_network(configuration, protocols, NetworkTransport::Tls(tls))
+    }
+
+    fn start_network(
+        configuration: ServerConfiguration,
+        protocols: Vec<Arc<dyn HttpProtocol>>,
+        transport: NetworkTransport,
+    ) -> Result<Self, ServerStartError> {
         let protocols: Arc<[Arc<dyn HttpProtocol>]> = protocols.into();
         let raw_body_registry = Arc::new(RawBodyRegistry::new(configuration.raw_body_limits));
         let runtime = tokio::runtime::Builder::new_current_thread()
@@ -103,6 +125,7 @@ impl LocalHttpServer {
             .spawn(move || {
                 runtime.block_on(run_server(
                     configuration,
+                    transport,
                     server_protocols,
                     server_raw_body_registry,
                     shutdown_receiver,
@@ -246,6 +269,7 @@ impl Drop for LocalUnixHttpServer {
 
 async fn run_server(
     configuration: ServerConfiguration,
+    transport: NetworkTransport,
     protocols: Arc<[Arc<dyn HttpProtocol>]>,
     raw_body_registry: Arc<RawBodyRegistry>,
     mut shutdown: oneshot::Receiver<()>,
@@ -284,10 +308,11 @@ async fn run_server(
                     continue;
                 };
                 let state = Arc::clone(&state);
+                let transport = transport.clone();
                 connections.spawn(async move {
                     let _slot = slot;
                     let _ = stream.set_nodelay(true);
-                    serve_connection(stream, ConnectionPeer::Network(peer), state).await;
+                    serve_network_connection(stream, peer, state, transport).await;
                 });
             }
             Some(_) = connections.join_next(), if !connections.is_empty() => {}
@@ -296,6 +321,34 @@ async fn run_server(
 
     drain_connections(&configuration, &raw_body_registry, &mut connections).await?;
     runtime_result.map_err(ServerRuntimeError::Io)
+}
+
+#[derive(Clone)]
+enum NetworkTransport {
+    Cleartext,
+    #[cfg(feature = "tls")]
+    Tls(TlsServerConfiguration),
+}
+
+async fn serve_network_connection(
+    stream: tokio::net::TcpStream,
+    peer: SocketAddr,
+    state: Arc<ServerState>,
+    transport: NetworkTransport,
+) {
+    match transport {
+        NetworkTransport::Cleartext => {
+            serve_connection(stream, ConnectionPeer::Network(peer), state).await;
+        }
+        #[cfg(feature = "tls")]
+        NetworkTransport::Tls(tls) => {
+            let accepted =
+                tokio::time::timeout(tls.handshake_timeout, tls.acceptor.accept(stream)).await;
+            if let Ok(Ok(stream)) = accepted {
+                serve_connection(stream, ConnectionPeer::Network(peer), state).await;
+            }
+        }
+    }
 }
 
 #[cfg(feature = "unix-socket")]
