@@ -402,7 +402,6 @@ jobs:
       - name: Test Swift
         run: |
           swift package dump-package > /dev/null
-          swift build
           swift test --package-path apple
       - name: Build and verify XCFramework
         run: apple/scripts/build-xcframework.sh
