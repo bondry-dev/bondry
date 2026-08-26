@@ -377,6 +377,10 @@ for framework_name in BondryRuntime BondryLocalServer BondryRESTServer BondryEgr
     swift package compute-checksum "$archive" > "$archive.sha256"
     archive_size=$(stat -f %z "$archive")
     aggregate_archive_size=$((aggregate_archive_size + archive_size))
+    if [ "$framework_name" = BondryRESTServer ] && [ "$archive_size" -gt 115343360 ]; then
+        printf 'BondryRESTServer archive exceeds 110 MiB: %s bytes.\n' "$archive_size" >&2
+        exit 1
+    fi
     if [ "$framework_name" = BondryEgress ] && [ "$archive_size" -gt 41943040 ]; then
         printf 'BondryEgress archive exceeds 40 MiB: %s bytes.\n' "$archive_size" >&2
         exit 1
@@ -389,8 +393,8 @@ for framework_name in BondryRuntime BondryLocalServer BondryRESTServer BondryEgr
     printf '%s: %s\n' "$framework_name" "$archive"
     printf 'Checksum: %s\n' "$(sed -n '1p' "$archive.sha256")"
 done
-if [ "$aggregate_archive_size" -gt 262144000 ]; then
-    printf 'Aggregate Apple archives exceed 250 MiB: %s bytes.\n' \
+if [ "$aggregate_archive_size" -gt 314572800 ]; then
+    printf 'Aggregate Apple archives exceed 300 MiB: %s bytes.\n' \
         "$aggregate_archive_size" >&2
     exit 1
 fi

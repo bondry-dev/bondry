@@ -159,10 +159,11 @@ fi
 if ! nm -gU "$rest_server_macos_library" 2>/dev/null \
     | awk '
         $NF == "_bondry_rest_server_start_v1" { tcp = 1 }
+        $NF == "_bondry_rest_server_start_tls_v1" { tls = 1 }
         $NF == "_bondry_rest_server_start_unix_v1" { unix = 1 }
-        END { exit !(tcp && unix) }
+        END { exit !(tcp && tls && unix) }
     '; then
-    printf 'BondryRESTServer does not export both REST server entry points.\n' >&2
+    printf 'BondryRESTServer does not export all REST server entry points.\n' >&2
     exit 1
 fi
 if nm -gU "$rest_server_macos_library" 2>/dev/null \
@@ -519,6 +520,17 @@ printf '%s\n' \
     '  )' \
     ')' \
     'try server.stop()' \
+    'var privateKey = Data([0x30])' \
+    'do {' \
+    '  let tlsServer = try runtime.startRESTTLSServer(' \
+    '    configuration: try BondryRESTTLSServerConfiguration(' \
+    '      authentication: .disabled(principalID: "probe")' \
+    '    ),' \
+    '    certificateChainDER: [Data([0x30])],' \
+    '    privateKeyPKCS8DER: &privateKey' \
+    '  )' \
+    '  try tlsServer.stop()' \
+    '} catch {}' \
     'let socketURL = databaseURL.deletingLastPathComponent().appendingPathComponent("rest.sock")' \
     'let unixServer = try runtime.startRESTUnixServer(' \
     '  configuration: try BondryRESTUnixServerConfiguration(' \
@@ -556,10 +568,11 @@ rest_server_probe="$package_directory/.build/release/RESTServerProbe"
 if ! nm -gU "$rest_server_probe" 2>/dev/null \
     | awk '
         $NF == "_bondry_rest_server_start_v1" { tcp = 1 }
+        $NF == "_bondry_rest_server_start_tls_v1" { tls = 1 }
         $NF == "_bondry_rest_server_start_unix_v1" { unix = 1 }
-        END { exit !(tcp && unix) }
+        END { exit !(tcp && tls && unix) }
     '; then
-    printf 'The REST-only Swift executable does not contain both server entry points.\n' >&2
+    printf 'The REST-only Swift executable does not contain all server entry points.\n' >&2
     exit 1
 fi
 if nm -gU "$rest_server_probe" 2>/dev/null \

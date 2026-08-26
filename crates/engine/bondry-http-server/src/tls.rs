@@ -29,9 +29,10 @@ impl TlsServerConfiguration {
         private_key_pkcs8_der: Vec<u8>,
         handshake_timeout: Duration,
     ) -> Result<Self, TlsServerConfigurationError> {
+        let private_key_pkcs8_der = Zeroizing::new(private_key_pkcs8_der);
         validate_material(
             &certificate_chain_der,
-            &private_key_pkcs8_der,
+            private_key_pkcs8_der.as_slice(),
             handshake_timeout,
         )?;
 
@@ -39,8 +40,8 @@ impl TlsServerConfiguration {
             .into_iter()
             .map(CertificateDer::from)
             .collect();
-        let private_key = Zeroizing::new(private_key_pkcs8_der);
-        let private_key = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(private_key.as_slice()));
+        let private_key =
+            PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(private_key_pkcs8_der.as_slice()));
         let signing_key = rustls::crypto::ring::sign::any_supported_type(&private_key)
             .map_err(|_| TlsServerConfigurationError::InvalidIdentity)?;
         let certified_key = CertifiedKey::new(certificates, signing_key);

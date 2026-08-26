@@ -258,6 +258,7 @@ dependencies = [
 name = "bondry-local-server-ffi"
 version = "0.2.1"
 dependencies = [
+ "base64",
  "bondry-core",
  "bondry-http-server",
  "bondry-mcp-proto",
@@ -268,6 +269,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tokio",
+ "zeroize",
 ]
 
 [[package]]

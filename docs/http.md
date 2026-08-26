@@ -1,4 +1,4 @@
-# Local HTTP
+# HTTP Server
 
 `bondry-http-server` provides one reusable HTTP/1.1 runtime for local protocols. REST and MCP can be mounted independently while sharing transport authentication, origin validation, rate limiting, body bounds, timeouts, connection limits, and shutdown ownership. A server may also start with no REST or MCP adapter so an optional add-on can register a bounded raw-body route.
 
@@ -27,9 +27,11 @@ Authenticators receive the method, URI, headers, and connected peer address with
 
 ## Network Exposure
 
-This runtime does not terminate TLS. Any non-loopback bind requires `allowing_cleartext_network`, and disabled authentication on a non-loopback bind additionally requires `allowing_unauthenticated_network`. These acknowledgements make the risk visible in host code; they do not encrypt traffic or make an untrusted network safe.
+The ordinary `LocalHttpServer` is cleartext. Any non-loopback bind requires `allowing_cleartext_network`, and disabled authentication on a non-loopback bind additionally requires `allowing_unauthenticated_network`. These acknowledgements make the risk visible in host code; they do not encrypt traffic or make an untrusted network safe.
 
-Hosts should keep the default loopback bind. If network access is required, a host should place Bondry behind a trusted TLS terminator or provide a future secure transport implementation instead of transmitting bearer credentials over cleartext HTTP.
+With the optional `tls` feature, `TlsServerConfiguration` accepts a bounded leaf-first DER certificate chain, a bounded PKCS#8 private key, and a handshake timeout. `LocalHttpServer::start_tls_with_protocols` permits only TLS 1.3, rejects plaintext before HTTP parsing, counts handshakes against the connection limit, and drops stalled handshakes at the configured deadline. Temporary private-key input is cleared after construction. Application authentication remains independent and bearer credentials stay inside the encrypted channel.
+
+Certificate issuance, trust-anchor distribution, hostname selection, and persistent key storage belong to the host. A TLS listener using disabled application authentication still requires explicit acknowledgement on a non-loopback address.
 
 ## Unix Socket Exposure
 

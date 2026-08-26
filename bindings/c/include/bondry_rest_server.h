@@ -23,12 +23,31 @@ typedef int32_t BondryStatus;
 
 #define BONDRY_REST_SERVER_ADDRESS_CAPACITY_V1 ((size_t)46)
 #define BONDRY_REST_SERVER_CONFIGURATION_VERSION_V1 ((uint32_t)1)
+#define BONDRY_REST_TLS_SERVER_CONFIGURATION_VERSION_V1 ((uint32_t)1)
+#define BONDRY_REST_TLS_IDENTITY_ABI_VERSION_V1 ((uint32_t)1)
+#define BONDRY_REST_TLS_CERTIFICATE_COUNT_V1 ((size_t)16)
+#define BONDRY_REST_TLS_CERTIFICATE_CHAIN_BYTES_V1 ((size_t)262144)
+#define BONDRY_REST_TLS_PRIVATE_KEY_BYTES_V1 ((size_t)65536)
 #define BONDRY_REST_UNIX_SERVER_CONFIGURATION_VERSION_V1 ((uint32_t)1)
 #define BONDRY_REST_UNIX_SERVER_PATH_CAPACITY_V1 ((size_t)104)
 
 typedef struct BondryStoreHandle BondryStoreHandle;
 typedef struct BondryRestServerHandle BondryRestServerHandle;
 typedef struct BondryRestUnixServerHandle BondryRestUnixServerHandle;
+
+typedef struct BondryRestTLSByteSliceV1 {
+    const uint8_t *bytes;
+    size_t length;
+} BondryRestTLSByteSliceV1;
+
+typedef struct BondryRestTLSIdentityV1 {
+    uint32_t abi_version;
+    size_t struct_size;
+    const BondryRestTLSByteSliceV1 *certificate_chain;
+    size_t certificate_count;
+    const uint8_t *private_key_pkcs8;
+    size_t private_key_pkcs8_length;
+} BondryRestTLSIdentityV1;
 
 typedef struct BondryRestServerAddressV1 {
     uint8_t address[BONDRY_REST_SERVER_ADDRESS_CAPACITY_V1];
@@ -48,6 +67,17 @@ BondryStatus bondry_rest_server_start_v1(
 );
 
 BondryStatus bondry_rest_server_stop_v1(BondryRestServerHandle *server);
+
+/* Identity buffers are borrowed only for this call. The implementation copies
+ * and clears temporary private-key material after constructing the server. */
+BondryStatus bondry_rest_server_start_tls_v1(
+    const BondryStoreHandle *store,
+    const uint8_t *configuration_json,
+    size_t configuration_json_length,
+    const BondryRestTLSIdentityV1 *identity,
+    BondryRestServerHandle **out_server,
+    BondryRestServerAddressV1 *out_address
+);
 
 BondryStatus bondry_rest_server_start_unix_v1(
     const BondryStoreHandle *store,

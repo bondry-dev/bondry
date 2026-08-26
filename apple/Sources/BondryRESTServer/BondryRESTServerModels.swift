@@ -178,6 +178,8 @@ public enum BondryRESTServerConfigurationError: Error, Equatable, Sendable {
   case invalidBodyLimit
   case invalidConnectionLimit
   case invalidTimeout
+  case invalidTLSCertificateChain
+  case invalidTLSPrivateKey
   case cleartextNetworkExposureRequiresAcknowledgement
   case unauthenticatedNetworkExposureRequiresAcknowledgement
 }
@@ -277,7 +279,7 @@ extension BondryPrincipalKind {
   }
 }
 
-private func validatedMilliseconds(_ duration: Duration) throws -> UInt64 {
+func validatedMilliseconds(_ duration: Duration) throws -> UInt64 {
   let components = duration.components
   let attosecondsPerMillisecond: Int64 = 1_000_000_000_000_000
   guard components.seconds >= 0, components.attoseconds >= 0,
@@ -294,7 +296,7 @@ private func validatedMilliseconds(_ duration: Duration) throws -> UInt64 {
   return milliseconds
 }
 
-private func isValidIdentifier(_ value: String) -> Bool {
+func isValidIdentifier(_ value: String) -> Bool {
   !value.isEmpty && value.utf8.count <= 128
     && value.utf8.allSatisfy {
       (48...57).contains($0) || (65...90).contains($0) || (97...122).contains($0)
@@ -302,7 +304,7 @@ private func isValidIdentifier(_ value: String) -> Bool {
     }
 }
 
-private func isValidIPAddress(_ value: String) -> Bool {
+func isValidIPAddress(_ value: String) -> Bool {
   var ipv4 = in_addr()
   if value.withCString({ inet_pton(AF_INET, $0, &ipv4) }) == 1 {
     return true
@@ -311,7 +313,7 @@ private func isValidIPAddress(_ value: String) -> Bool {
   return value.withCString { inet_pton(AF_INET6, $0, &ipv6) } == 1
 }
 
-private func isLoopbackIPAddress(_ value: String) -> Bool {
+func isLoopbackIPAddress(_ value: String) -> Bool {
   var ipv4 = in_addr()
   if value.withCString({ inet_pton(AF_INET, $0, &ipv4) }) == 1 {
     return withUnsafeBytes(of: &ipv4) { $0.first == 127 }
@@ -325,7 +327,7 @@ private func isLoopbackIPAddress(_ value: String) -> Bool {
   }
 }
 
-private func isValidBrowserOrigin(_ value: String) -> Bool {
+func isValidBrowserOrigin(_ value: String) -> Bool {
   guard value.utf8.allSatisfy({ (0x21...0x7E).contains($0) }),
     !value.hasSuffix("/"),
     let components = URLComponents(string: value),

@@ -4,7 +4,7 @@ Bondry ships five static XCFrameworks so a consumer links only the native functi
 
 - `BondryRuntime.xcframework` contains encrypted storage, authentication, authorization, audit, capability registration, and dispatch.
 - `BondryLocalServer.xcframework` contains the optional local HTTP runtime plus REST and MCP adapters. It calls the runtime through the versioned C ABI and does not contain the SQLCipher store implementation.
-- `BondryRESTServer.xcframework` contains the optional local HTTP runtime and REST adapter without MCP. It exposes separate TCP and Unix socket entry points and strict configuration schemas so MCP cannot be enabled at runtime.
+- `BondryRESTServer.xcframework` contains the optional HTTP runtime, TLS 1.3 support, and REST adapter without MCP. It exposes separate cleartext TCP, TLS TCP, and Unix socket entry points with strict configuration schemas so MCP cannot be enabled at runtime.
 - `BondryEgress.xcframework` contains the sans-I/O egress runtime plus webhook and MCP route kinds. It uses host networking on Apple and contains no Rust network or TLS stack.
 - `BondryWebhookIngress.xcframework` contains webhook verification and fixed route adaptation. It composes runtime and local-server vtables and contains neither their implementations nor egress code.
 
@@ -52,13 +52,13 @@ The build fails unless:
 - No native library contains a private build-machine path.
 - `BondryRuntime` exports the runtime ABI and no `bondry_server_*` symbol.
 - `BondryLocalServer` exports the server ABI and does not define `bondry_store_open_v1`.
-- `BondryRESTServer` exports only its TCP and Unix REST server ABI, contains no MCP route, and does not define the combined server or runtime store entry points.
+- `BondryRESTServer` exports only its cleartext TCP, TLS 1.3 TCP, and Unix REST server ABI, contains no MCP route, and does not define the combined server or runtime store entry points.
 - `BondryEgress` exports the egress ABI and contains no runtime store, server, ingress, or Rust network implementation.
 - `BondryWebhookIngress` exports the ingress ABI and contains no runtime store, server, or egress implementation.
 - C consumers link at the macOS 13 and iOS 16 deployment targets.
 - A real runtime-only Swift executable contains neither local-server symbols nor REST or MCP routes and remains below the linked-size budget.
 - A real server-enabled Swift executable starts and stops a local server and remains below its linked-size budget.
-- A real REST-only Swift executable starts and stops both TCP and Unix socket servers without linking the combined server entry point or an MCP route, and remains below its linked-size budget.
+- A real REST-only Swift executable links cleartext TCP, TLS TCP, and Unix socket servers without linking the combined server entry point or an MCP route, and remains below its linked-size budget.
 - A real ingress-enabled Swift executable verifies and dispatches a loopback webhook, drains its route, and remains below the ingress and combined linked-size budgets.
 - Every archive is structurally valid, deterministic, and has an independently verified SwiftPM checksum.
 
@@ -75,6 +75,6 @@ apple/scripts/verify-xcframework.sh \
 
 ## Release Contract
 
-Each release contains ten immutable assets: five XCFramework archives and their checksum files. The tagged manifest records all five exact checksums. Preparation builds each archive once; protected publication verifies, attests, and uploads those same bytes without rebuilding them. The complete archive set must remain at or below 250 MiB; `BondryEgress` is capped at 40 MiB and `BondryWebhookIngress` at 30 MiB.
+Each release contains ten immutable assets: five XCFramework archives and their checksum files. The tagged manifest records all five exact checksums. Preparation builds each archive once; protected publication verifies, attests, and uploads those same bytes without rebuilding them. The complete archive set must remain at or below 300 MiB; `BondryRESTServer` is capped at 110 MiB, `BondryEgress` at 40 MiB, and `BondryWebhookIngress` at 30 MiB.
 
 Do not create release tags manually or reuse a tag for different bytes. A source change to either ABI, a transitive native dependency, or a canonical header requires a newly prepared version.

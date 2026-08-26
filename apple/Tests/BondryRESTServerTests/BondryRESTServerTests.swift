@@ -71,6 +71,74 @@ final class BondryRESTServerTests: XCTestCase {
     try server.stop()
   }
 
+  func testStartsTLS13ServerWithoutSerializingIdentitySecrets() throws {
+    let runtime = try makeRuntime()
+    let configuration = try BondryRESTTLSServerConfiguration(
+      listeningAddress: "192.0.2.10",
+      port: 18443,
+      allowedBrowserOrigins: ["https://example.com"],
+      handshakeTimeout: .seconds(3)
+    )
+    var privateKey = Data([0x30, 0x01, 0x02, 0x03])
+
+    let server = try runtime.startRESTTLSServer(
+      configuration: configuration,
+      certificateChainDER: [Data([0x30, 0x02])],
+      privateKeyPKCS8DER: &privateKey
+    )
+
+    XCTAssertTrue(server.isRunning)
+    XCTAssertTrue(privateKey.allSatisfy { $0 == 0 })
+    let json = try capturedConfiguration()
+    XCTAssertEqual(
+      json["version"] as? Int,
+      Int(BONDRY_REST_TLS_SERVER_CONFIGURATION_VERSION_V1)
+    )
+    XCTAssertEqual(json["bindAddress"] as? String, "192.0.2.10")
+    XCTAssertEqual(json["port"] as? Int, 18443)
+    XCTAssertEqual(json["tlsHandshakeTimeoutMilliseconds"] as? Int, 3_000)
+    XCTAssertEqual(json["allowUnauthenticatedNetwork"] as? Bool, false)
+    XCTAssertNil(json["allowCleartextNetwork"])
+    XCTAssertNil(json["certificateChainDER"])
+    XCTAssertNil(json["privateKeyPKCS8DER"])
+    try server.stop()
+  }
+
+  func testTLSConfigurationFailsClosedAndAlwaysClearsPrivateKeyInput() throws {
+    XCTAssertThrowsError(
+      try BondryRESTTLSServerConfiguration(
+        listeningAddress: "192.0.2.10",
+        authentication: .disabled(principalID: "remote")
+      )
+    ) { error in
+      XCTAssertEqual(
+        error as? BondryRESTServerConfigurationError,
+        .unauthenticatedNetworkExposureRequiresAcknowledgement
+      )
+    }
+    XCTAssertThrowsError(
+      try BondryRESTTLSServerConfiguration(handshakeTimeout: .seconds(61))
+    ) { error in
+      XCTAssertEqual(error as? BondryRESTServerConfigurationError, .invalidTimeout)
+    }
+
+    let runtime = try makeRuntime()
+    var privateKey = Data([0x30, 0x01])
+    XCTAssertThrowsError(
+      try runtime.startRESTTLSServer(
+        configuration: BondryRESTTLSServerConfiguration(),
+        certificateChainDER: [],
+        privateKeyPKCS8DER: &privateKey
+      )
+    ) { error in
+      XCTAssertEqual(
+        error as? BondryRESTServerConfigurationError,
+        .invalidTLSCertificateChain
+      )
+    }
+    XCTAssertTrue(privateKey.allSatisfy { $0 == 0 })
+  }
+
   func testMapsLifecycleFailures() throws {
     let runtime = try makeRuntime()
     let configuration = try BondryRESTServerConfiguration()

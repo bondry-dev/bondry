@@ -26,7 +26,8 @@ use bondry_http_server::{
 };
 #[cfg(feature = "rest-server")]
 use bondry_http_server::{
-    HttpProtocol, LocalUnixHttpServer, UnixServerStartError, UnixSocketConfiguration,
+    HttpProtocol, LocalUnixHttpServer, TlsServerConfiguration, UnixServerStartError,
+    UnixSocketConfiguration,
 };
 #[cfg(feature = "local-server")]
 use bondry_http_server::{MountedProtocol, RawBodyServerLimits};
@@ -37,6 +38,8 @@ use bondry_rest_proto::RestAdapter;
 use serde::Deserialize;
 use serde_json::Value;
 use tokio::sync::oneshot;
+#[cfg(feature = "rest-server")]
+use zeroize::Zeroizing;
 
 #[cfg(feature = "raw-body")]
 pub use raw_body::*;
@@ -45,12 +48,27 @@ pub use raw_body::*;
 pub const BONDRY_SERVER_CONFIGURATION_VERSION_V1: u32 = 1;
 /// The first fixed REST-server configuration contract version.
 pub const BONDRY_REST_SERVER_CONFIGURATION_VERSION_V1: u32 = 1;
+/// The first fixed REST TLS-server configuration contract version.
+pub const BONDRY_REST_TLS_SERVER_CONFIGURATION_VERSION_V1: u32 = 1;
+/// The first REST TLS identity ABI version.
+pub const BONDRY_REST_TLS_IDENTITY_ABI_VERSION_V1: u32 = 1;
 /// The first fixed REST Unix-server configuration contract version.
 pub const BONDRY_REST_UNIX_SERVER_CONFIGURATION_VERSION_V1: u32 = 1;
 /// Capacity of the terminated textual IP address in a server-address record.
 pub const BONDRY_SERVER_ADDRESS_CAPACITY_V1: usize = 46;
 /// Capacity of the terminated Unix socket path in an endpoint record.
 pub const BONDRY_REST_UNIX_SERVER_PATH_CAPACITY_V1: usize = 104;
+/// Maximum number of certificates accepted in one TLS identity chain.
+#[cfg(feature = "rest-server")]
+pub const BONDRY_REST_TLS_CERTIFICATE_COUNT_V1: usize = 16;
+/// Maximum aggregate DER bytes accepted in one TLS identity chain.
+#[cfg(feature = "rest-server")]
+pub const BONDRY_REST_TLS_CERTIFICATE_CHAIN_BYTES_V1: usize =
+    bondry_http_server::MAX_TLS_CERTIFICATE_CHAIN_BYTES;
+/// Maximum PKCS#8 DER bytes accepted in one TLS identity.
+#[cfg(feature = "rest-server")]
+pub const BONDRY_REST_TLS_PRIVATE_KEY_BYTES_V1: usize =
+    bondry_http_server::MAX_TLS_PRIVATE_KEY_BYTES;
 /// The requested local address or port could not be bound.
 pub const BONDRY_STATUS_SERVER_BIND: i32 = 29;
 /// The local server could not start.
@@ -380,6 +398,35 @@ pub struct BondryRestServerAddressV1 {
     pub port: u16,
 }
 
+/// One borrowed byte range in a REST TLS identity.
+#[cfg(feature = "rest-server")]
+#[derive(Clone, Copy)]
+#[repr(C)]
+pub struct BondryRestTlsByteSliceV1 {
+    /// Borrowed bytes.
+    pub bytes: *const u8,
+    /// Number of readable bytes.
+    pub length: usize,
+}
+
+/// Borrowed leaf-first certificate chain and PKCS#8 private key.
+#[cfg(feature = "rest-server")]
+#[repr(C)]
+pub struct BondryRestTlsIdentityV1 {
+    /// Must equal `BONDRY_REST_TLS_IDENTITY_ABI_VERSION_V1`.
+    pub abi_version: u32,
+    /// Must be at least `sizeof(BondryRestTLSIdentityV1)`.
+    pub struct_size: usize,
+    /// Borrowed array of certificate slices.
+    pub certificate_chain: *const BondryRestTlsByteSliceV1,
+    /// Number of certificate slices.
+    pub certificate_count: usize,
+    /// Borrowed PKCS#8 private-key bytes.
+    pub private_key_pkcs8: *const u8,
+    /// Number of private-key bytes.
+    pub private_key_pkcs8_length: usize,
+}
+
 /// The bound Unix socket endpoint returned after REST-server startup.
 #[cfg(feature = "rest-server")]
 #[derive(Clone, Copy)]
@@ -487,6 +534,26 @@ struct RestInputConfiguration {
     request_timeout_milliseconds: u64,
     shutdown_grace_period_milliseconds: u64,
     allow_cleartext_network: bool,
+    allow_unauthenticated_network: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+#[cfg(feature = "rest-server")]
+struct RestTlsInputConfiguration {
+    version: u32,
+    bind_address: String,
+    port: u16,
+    authentication: InputAuthentication,
+    allowed_origins: Vec<String>,
+    requests_per_minute: u32,
+    authentication_failures_per_minute: u32,
+    max_body_bytes: usize,
+    max_connections: usize,
+    header_read_timeout_milliseconds: u64,
+    request_timeout_milliseconds: u64,
+    shutdown_grace_period_milliseconds: u64,
+    tls_handshake_timeout_milliseconds: u64,
     allow_unauthenticated_network: bool,
 }
 
@@ -719,6 +786,80 @@ pub unsafe extern "C" fn bondry_rest_server_start_v1(
             Err(status) => return status,
         };
         let server = match start_rest_server(runtime, input) {
+            Ok(server) => server,
+            Err(status) => return status,
+        };
+        let address = BondryRestServerAddressV1::from_server(&server);
+        let handle = Box::new(ServerHandle { server });
+        // SAFETY: Outputs receive one server ownership unit and its bound address.
+        unsafe {
+            out_address.write(address);
+            out_server.write(Box::into_raw(handle).cast::<BondryRestServerHandle>());
+        }
+        BONDRY_STATUS_OK
+    })
+}
+
+/// Starts the fixed REST adapter over TLS 1.3 from borrowed identity material.
+///
+/// # Safety
+///
+/// `store` must be a live runtime handle. Configuration and identity buffers must remain readable
+/// for this call. Both output pointers must be writable. The returned handle must be stopped once.
+#[must_use]
+#[unsafe(no_mangle)]
+#[cfg(feature = "rest-server")]
+pub unsafe extern "C" fn bondry_rest_server_start_tls_v1(
+    store: *const BondryStoreHandle,
+    configuration_json: *const u8,
+    configuration_json_length: usize,
+    identity: *const BondryRestTlsIdentityV1,
+    out_server: *mut *mut BondryRestServerHandle,
+    out_address: *mut BondryRestServerAddressV1,
+) -> i32 {
+    if out_server.is_null() || out_address.is_null() {
+        return BONDRY_STATUS_NULL_POINTER;
+    }
+    // SAFETY: Both output pointers are non-null and writable by contract.
+    unsafe {
+        out_server.write(ptr::null_mut());
+        out_address.write(BondryRestServerAddressV1::zeroed());
+    }
+    catch_status(|| {
+        if store.is_null() || configuration_json.is_null() || identity.is_null() {
+            return BONDRY_STATUS_NULL_POINTER;
+        }
+        if configuration_json_length > isize::MAX as usize {
+            return BONDRY_STATUS_INVALID_LENGTH;
+        }
+        if configuration_json_length > MAX_CONFIGURATION_LENGTH {
+            return BONDRY_STATUS_PAYLOAD_TOO_LARGE;
+        }
+        // SAFETY: The bounded configuration buffer and identity are readable by contract.
+        let bytes = unsafe { slice::from_raw_parts(configuration_json, configuration_json_length) };
+        let value: Value = match serde_json::from_slice(bytes) {
+            Ok(value) => value,
+            Err(_) => return BONDRY_STATUS_INVALID_JSON,
+        };
+        let input: RestTlsInputConfiguration = match serde_json::from_value(value) {
+            Ok(input) => input,
+            Err(_) => return BONDRY_STATUS_INVALID_ARGUMENT,
+        };
+        // SAFETY: The caller keeps every identity buffer live for this synchronous copy.
+        let identity = match unsafe { copy_tls_identity(&*identity) } {
+            Ok(identity) => identity,
+            Err(status) => return status,
+        };
+        // SAFETY: The caller guarantees store remains live for this synchronous retain.
+        let runtime = match unsafe { RuntimeHandle::retain(store) } {
+            Ok(runtime) => runtime,
+            Err(status) => return status,
+        };
+        let CopiedTlsIdentity {
+            certificate_chain,
+            private_key,
+        } = identity;
+        let server = match start_rest_tls_server(runtime, input, certificate_chain, &private_key) {
             Ok(server) => server,
             Err(status) => return status,
         };
@@ -986,6 +1127,119 @@ fn start_rest_server(
 }
 
 #[cfg(feature = "rest-server")]
+fn start_rest_tls_server(
+    runtime: Arc<RuntimeHandle>,
+    input: RestTlsInputConfiguration,
+    certificate_chain: Vec<Vec<u8>>,
+    private_key: &[u8],
+) -> Result<LocalHttpServer, i32> {
+    if input.version != BONDRY_REST_TLS_SERVER_CONFIGURATION_VERSION_V1 {
+        return Err(BONDRY_STATUS_INVALID_ARGUMENT);
+    }
+    let bind_address = input
+        .bind_address
+        .parse::<IpAddr>()
+        .map_err(|_| BONDRY_STATUS_INVALID_ARGUMENT)?;
+    let authentication = authentication(runtime.clone(), &input.authentication)?;
+    let limits = RateLimits::new(
+        input.requests_per_minute,
+        input.authentication_failures_per_minute,
+    )
+    .map_err(|_| BONDRY_STATUS_INVALID_ARGUMENT)?;
+    let mut origins = OriginPolicy::deny_browser_origins();
+    for origin in &input.allowed_origins {
+        origins = origins
+            .allowing(origin)
+            .map_err(|_| BONDRY_STATUS_INVALID_ARGUMENT)?;
+    }
+    let mut configuration = ServerConfiguration::new(authentication)
+        .with_bind_address(bind_address)
+        .with_port(input.port)
+        .with_origin_policy(origins)
+        .with_rate_limits(limits)
+        .with_max_body_bytes(input.max_body_bytes)
+        .map_err(|_| BONDRY_STATUS_INVALID_ARGUMENT)?
+        .with_max_connections(input.max_connections)
+        .map_err(|_| BONDRY_STATUS_INVALID_ARGUMENT)?
+        .with_timeouts(
+            Duration::from_millis(input.header_read_timeout_milliseconds),
+            Duration::from_millis(input.request_timeout_milliseconds),
+            Duration::from_millis(input.shutdown_grace_period_milliseconds),
+        )
+        .map_err(|_| BONDRY_STATUS_INVALID_ARGUMENT)?;
+    if input.allow_unauthenticated_network {
+        configuration = configuration.allowing_unauthenticated_network();
+    }
+    let tls = TlsServerConfiguration::new(
+        certificate_chain,
+        private_key.to_vec(),
+        Duration::from_millis(input.tls_handshake_timeout_milliseconds),
+    )
+    .map_err(|_| BONDRY_STATUS_INVALID_ARGUMENT)?;
+
+    let service: Arc<dyn AutomationService> = Arc::new(RuntimeAutomationService { runtime });
+    let protocol: Arc<dyn HttpProtocol> =
+        Arc::new(RestAdapter::new(service).map_err(|_| BONDRY_STATUS_INTERNAL_FAILURE)?);
+    LocalHttpServer::start_tls_with_protocols(configuration, tls, vec![protocol])
+        .map_err(server_start_status)
+}
+
+#[cfg(feature = "rest-server")]
+unsafe fn copy_tls_identity(identity: &BondryRestTlsIdentityV1) -> Result<CopiedTlsIdentity, i32> {
+    if identity.abi_version != BONDRY_REST_TLS_IDENTITY_ABI_VERSION_V1
+        || identity.struct_size < std::mem::size_of::<BondryRestTlsIdentityV1>()
+        || identity.certificate_count == 0
+        || identity.certificate_count > BONDRY_REST_TLS_CERTIFICATE_COUNT_V1
+        || identity.certificate_chain.is_null()
+        || identity.private_key_pkcs8.is_null()
+        || identity.private_key_pkcs8_length == 0
+        || identity.private_key_pkcs8_length > BONDRY_REST_TLS_PRIVATE_KEY_BYTES_V1
+        || identity.private_key_pkcs8_length > isize::MAX as usize
+    {
+        return Err(BONDRY_STATUS_INVALID_ARGUMENT);
+    }
+    // SAFETY: The validated array is readable by the function contract.
+    let slices =
+        unsafe { slice::from_raw_parts(identity.certificate_chain, identity.certificate_count) };
+    let mut aggregate = 0_usize;
+    let mut certificate_chain = Vec::with_capacity(slices.len());
+    for certificate in slices {
+        if certificate.bytes.is_null()
+            || certificate.length == 0
+            || certificate.length > isize::MAX as usize
+        {
+            return Err(BONDRY_STATUS_INVALID_ARGUMENT);
+        }
+        aggregate = aggregate
+            .checked_add(certificate.length)
+            .ok_or(BONDRY_STATUS_INVALID_ARGUMENT)?;
+        if aggregate > BONDRY_REST_TLS_CERTIFICATE_CHAIN_BYTES_V1 {
+            return Err(BONDRY_STATUS_INVALID_ARGUMENT);
+        }
+        // SAFETY: Each validated certificate buffer is readable by the function contract.
+        certificate_chain
+            .push(unsafe { slice::from_raw_parts(certificate.bytes, certificate.length) }.to_vec());
+    }
+    // SAFETY: The validated private-key buffer is readable by the function contract.
+    let private_key = unsafe {
+        slice::from_raw_parts(
+            identity.private_key_pkcs8,
+            identity.private_key_pkcs8_length,
+        )
+    };
+    Ok(CopiedTlsIdentity {
+        certificate_chain,
+        private_key: Zeroizing::new(private_key.to_vec()),
+    })
+}
+
+#[cfg(feature = "rest-server")]
+struct CopiedTlsIdentity {
+    certificate_chain: Vec<Vec<u8>>,
+    private_key: Zeroizing<Vec<u8>>,
+}
+
+#[cfg(feature = "rest-server")]
 fn start_rest_unix_server(
     runtime: Arc<RuntimeHandle>,
     input: RestUnixInputConfiguration,
@@ -1228,6 +1482,7 @@ mod rest_server_tests {
         ptr,
     };
 
+    use base64::{Engine as _, engine::general_purpose::STANDARD};
     use bondry_runtime_ffi::{
         BONDRY_STATUS_OK as RUNTIME_STATUS_OK, BondryStoreHandle as RuntimeStoreHandle,
         bondry_store_close_v1, bondry_store_open_v1,
@@ -1235,11 +1490,14 @@ mod rest_server_tests {
     use serde_json::{Value, json};
 
     use super::{
-        BONDRY_REST_UNIX_SERVER_PATH_CAPACITY_V1, BONDRY_SERVER_ADDRESS_CAPACITY_V1,
+        BONDRY_REST_TLS_IDENTITY_ABI_VERSION_V1, BONDRY_REST_UNIX_SERVER_PATH_CAPACITY_V1,
+        BONDRY_SERVER_ADDRESS_CAPACITY_V1, BONDRY_STATUS_INVALID_ARGUMENT,
         BONDRY_STATUS_NULL_POINTER, BONDRY_STATUS_OK, BondryRestServerAddressV1,
-        BondryRestServerHandle, BondryRestUnixServerEndpointV1, BondryRestUnixServerHandle,
-        RestInputConfiguration, RestUnixInputConfiguration, bondry_rest_server_start_unix_v1,
-        bondry_rest_server_start_v1, bondry_rest_server_stop_unix_v1,
+        BondryRestServerHandle, BondryRestTlsByteSliceV1, BondryRestTlsIdentityV1,
+        BondryRestUnixServerEndpointV1, BondryRestUnixServerHandle, RestInputConfiguration,
+        RestTlsInputConfiguration, RestUnixInputConfiguration, bondry_rest_server_start_tls_v1,
+        bondry_rest_server_start_unix_v1, bondry_rest_server_start_v1,
+        bondry_rest_server_stop_unix_v1, bondry_rest_server_stop_v1,
     };
 
     fn configuration() -> Value {
@@ -1282,9 +1540,33 @@ mod rest_server_tests {
         })
     }
 
+    fn tls_configuration() -> Value {
+        json!({
+            "version": 1,
+            "bindAddress": "127.0.0.1",
+            "port": 0,
+            "authentication": {
+                "mode": "bearer",
+                "principalId": null,
+                "principalKind": null,
+            },
+            "allowedOrigins": [],
+            "requestsPerMinute": 120,
+            "authenticationFailuresPerMinute": 30,
+            "maxBodyBytes": 1_048_576,
+            "maxConnections": 64,
+            "headerReadTimeoutMilliseconds": 5_000,
+            "requestTimeoutMilliseconds": 30_000,
+            "shutdownGracePeriodMilliseconds": 2_000,
+            "tlsHandshakeTimeoutMilliseconds": 5_000,
+            "allowUnauthenticatedNetwork": false,
+        })
+    }
+
     #[test]
     fn accepts_fixed_rest_configuration() {
         assert!(serde_json::from_value::<RestInputConfiguration>(configuration()).is_ok());
+        assert!(serde_json::from_value::<RestTlsInputConfiguration>(tls_configuration()).is_ok());
     }
 
     #[test]
@@ -1427,6 +1709,99 @@ mod rest_server_tests {
             BONDRY_STATUS_OK
         );
         assert!(!socket_path.exists());
+        assert_eq!(unsafe { bondry_store_close_v1(runtime) }, RUNTIME_STATUS_OK);
+        Ok(())
+    }
+
+    #[test]
+    fn starts_tls_with_borrowed_bounded_identity_material() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let runtime_directory = tempfile::tempdir()?;
+        let database_path = runtime_directory.path().join("bondry.db");
+        let database_path = database_path.to_str().ok_or("database path is not UTF-8")?;
+        let key = [0x54; 32];
+        let mut runtime = ptr::null_mut::<RuntimeStoreHandle>();
+        assert_eq!(
+            unsafe {
+                bondry_store_open_v1(
+                    database_path.as_ptr(),
+                    database_path.len(),
+                    key.as_ptr(),
+                    key.len(),
+                    &mut runtime,
+                )
+            },
+            RUNTIME_STATUS_OK
+        );
+        if runtime.is_null() {
+            return Err("runtime returned a null store".into());
+        }
+
+        let fixture: Value = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../fixtures/transport-v1/localhost-tls.json"
+        )))?;
+        let decode = |field: &str| -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+            let value = fixture
+                .get(field)
+                .and_then(Value::as_str)
+                .ok_or("missing TLS fixture field")?;
+            Ok(STANDARD.decode(value)?)
+        };
+        let leaf = decode("server_certificate_der_base64")?;
+        let private_key = decode("private_key_pkcs8_base64")?;
+        let certificate_chain = [BondryRestTlsByteSliceV1 {
+            bytes: leaf.as_ptr(),
+            length: leaf.len(),
+        }];
+        let identity = BondryRestTlsIdentityV1 {
+            abi_version: BONDRY_REST_TLS_IDENTITY_ABI_VERSION_V1,
+            struct_size: std::mem::size_of::<BondryRestTlsIdentityV1>(),
+            certificate_chain: certificate_chain.as_ptr(),
+            certificate_count: certificate_chain.len(),
+            private_key_pkcs8: private_key.as_ptr(),
+            private_key_pkcs8_length: private_key.len(),
+        };
+        let input = serde_json::to_vec(&tls_configuration())?;
+        let mut server = ptr::null_mut();
+        let mut address = BondryRestServerAddressV1::zeroed();
+        let status = unsafe {
+            bondry_rest_server_start_tls_v1(
+                runtime.cast(),
+                input.as_ptr(),
+                input.len(),
+                &identity,
+                &mut server,
+                &mut address,
+            )
+        };
+
+        assert_eq!(status, BONDRY_STATUS_OK);
+        assert!(!server.is_null());
+        assert_ne!(address.port, 0);
+        assert_eq!(
+            unsafe { bondry_rest_server_stop_v1(server) },
+            BONDRY_STATUS_OK
+        );
+
+        let invalid_identity = BondryRestTlsIdentityV1 {
+            certificate_count: 0,
+            ..identity
+        };
+        assert_eq!(
+            unsafe {
+                bondry_rest_server_start_tls_v1(
+                    runtime.cast(),
+                    input.as_ptr(),
+                    input.len(),
+                    &invalid_identity,
+                    &mut server,
+                    &mut address,
+                )
+            },
+            BONDRY_STATUS_INVALID_ARGUMENT
+        );
+        assert!(server.is_null());
         assert_eq!(unsafe { bondry_store_close_v1(runtime) }, RUNTIME_STATUS_OK);
         Ok(())
     }

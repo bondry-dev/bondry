@@ -76,6 +76,93 @@ extension BondryRuntime {
       throw error
     }
   }
+
+  public func startRESTTLSServer(
+    configuration: BondryRESTTLSServerConfiguration,
+    certificateChainDER: [Data],
+    privateKeyPKCS8DER: inout Data
+  ) throws -> BondryRESTServer {
+    defer {
+      privateKeyPKCS8DER.resetBytes(
+        in: privateKeyPKCS8DER.startIndex..<privateKeyPKCS8DER.endIndex
+      )
+    }
+    guard (1...Int(BONDRY_REST_TLS_CERTIFICATE_COUNT_V1)).contains(certificateChainDER.count),
+      certificateChainDER.allSatisfy({ !$0.isEmpty })
+    else {
+      throw BondryRESTServerConfigurationError.invalidTLSCertificateChain
+    }
+    var certificateBytes = 0
+    for certificate in certificateChainDER {
+      let addition = certificateBytes.addingReportingOverflow(certificate.count)
+      guard !addition.overflow else {
+        throw BondryRESTServerConfigurationError.invalidTLSCertificateChain
+      }
+      certificateBytes = addition.partialValue
+    }
+    guard certificateBytes <= Int(BONDRY_REST_TLS_CERTIFICATE_CHAIN_BYTES_V1) else {
+      throw BondryRESTServerConfigurationError.invalidTLSCertificateChain
+    }
+    guard (1...Int(BONDRY_REST_TLS_PRIVATE_KEY_BYTES_V1)).contains(
+      privateKeyPKCS8DER.count
+    ) else {
+      throw BondryRESTServerConfigurationError.invalidTLSPrivateKey
+    }
+
+    let input = try JSONEncoder().encode(RESTTLSServerInput(configuration))
+    let certificates = certificateChainDER.map { $0 as NSData }
+    let slices = certificates.map {
+      BondryRestTLSByteSliceV1(
+        bytes: $0.bytes.assumingMemoryBound(to: UInt8.self),
+        length: $0.length
+      )
+    }
+    var serverHandle: OpaquePointer?
+    var address = BondryRestServerAddressV1()
+    let status = input.withUnsafeBytes { inputBuffer in
+      privateKeyPKCS8DER.withUnsafeMutableBytes { keyBuffer in
+        slices.withUnsafeBufferPointer { certificateBuffer in
+          var identity = BondryRestTLSIdentityV1(
+            abi_version: BONDRY_REST_TLS_IDENTITY_ABI_VERSION_V1,
+            struct_size: MemoryLayout<BondryRestTLSIdentityV1>.size,
+            certificate_chain: certificateBuffer.baseAddress,
+            certificate_count: certificateBuffer.count,
+            private_key_pkcs8: keyBuffer.bindMemory(to: UInt8.self).baseAddress,
+            private_key_pkcs8_length: keyBuffer.count
+          )
+          return bondry_rest_server_start_tls_v1(
+            handle,
+            inputBuffer.bindMemory(to: UInt8.self).baseAddress,
+            inputBuffer.count,
+            &identity,
+            &serverHandle,
+            &address
+          )
+        }
+      }
+    }
+    guard status == BONDRY_STATUS_OK else {
+      if let serverHandle {
+        _ = bondry_rest_server_stop_v1(serverHandle)
+      }
+      throw BondryRESTServerError(status: status)
+    }
+    guard let serverHandle else {
+      throw BondryRESTServerError.invalidHandle
+    }
+    do {
+      return BondryRESTServer(
+        handle: serverHandle,
+        endpoint: BondryRESTServerEndpoint(
+          address: try decodeRESTServerAddress(address.address),
+          port: address.port
+        )
+      )
+    } catch {
+      _ = bondry_rest_server_stop_v1(serverHandle)
+      throw error
+    }
+  }
 }
 
 private func decodeRESTServerAddress<Value>(_ value: Value) throws -> String {
