@@ -14,7 +14,9 @@ pub use authentication::{
 pub use configuration::{
     OriginPolicy, OriginPolicyError, RateLimits, ServerConfiguration, ServerConfigurationError,
 };
+#[cfg(any(feature = "mcp", feature = "rest"))]
 pub use protocol::MountedProtocol;
+pub use protocol::{HttpProtocol, HttpProtocolFuture};
 pub use raw_body::{
     RawBodyCompletion, RawBodyHandler, RawBodyHandlerLimits, RawBodyHeader, RawBodyLifecycle,
     RawBodyRegistration, RawBodyRegistrationError, RawBodyRequest, RawBodyResponse, RawBodyRoute,

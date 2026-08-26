@@ -17,8 +17,8 @@ use bondry_core::{
     CapabilityId, DispatchFuture, Invocation, Principal, PrincipalId, PrincipalKind,
 };
 use bondry_http_server::{
-    Authentication, AuthenticationError, BearerAuthenticator, BearerTokenVerifier, LocalHttpServer,
-    MountedProtocol, OriginPolicy, RateLimits, RawBodyCompletion, RawBodyHandler,
+    Authentication, AuthenticationError, BearerAuthenticator, BearerTokenVerifier, HttpProtocol,
+    LocalHttpServer, MountedProtocol, OriginPolicy, RateLimits, RawBodyCompletion, RawBodyHandler,
     RawBodyHandlerLimits, RawBodyLifecycle, RawBodyRegistrationError, RawBodyRequest,
     RawBodyResponse, RawBodyRoute, RawBodyServerLimits, ServerConfiguration,
     ServerConfigurationError, ServerStartError,
@@ -148,6 +148,10 @@ fn authenticated_configuration() -> ServerConfiguration {
 }
 
 fn protocols() -> Result<Vec<MountedProtocol>, Box<dyn std::error::Error>> {
+    Ok(vec![MountedProtocol::Rest(rest_protocol()?)])
+}
+
+fn rest_protocol() -> Result<RestAdapter, Box<dyn std::error::Error>> {
     let service: Arc<dyn AutomationService> = Arc::new(EchoService {
         capabilities: ["echo", "slow"]
             .into_iter()
@@ -160,7 +164,7 @@ fn protocols() -> Result<Vec<MountedProtocol>, Box<dyn std::error::Error>> {
             })
             .collect::<Result<_, Box<dyn std::error::Error>>>()?,
     });
-    Ok(vec![MountedProtocol::Rest(RestAdapter::new(service)?)])
+    Ok(RestAdapter::new(service)?)
 }
 
 fn start(
@@ -244,6 +248,22 @@ fn starts_on_an_automatic_port_and_releases_it() -> Result<(), Box<dyn std::erro
     server.stop()?;
     let replacement = std::net::TcpListener::bind(address)?;
     drop(replacement);
+    Ok(())
+}
+
+#[test]
+fn starts_with_protocol_trait_object() -> Result<(), Box<dyn std::error::Error>> {
+    let protocols: Vec<Arc<dyn HttpProtocol>> = vec![Arc::new(rest_protocol()?)];
+    let server = LocalHttpServer::start_with_protocols(authenticated_configuration(), protocols)?;
+
+    let response = post(
+        server.local_address(),
+        "/api/v1/capabilities/echo",
+        "Bearer alpha",
+        "{}",
+    )?;
+
+    assert_eq!(status(&response), Some(200));
     Ok(())
 }
 

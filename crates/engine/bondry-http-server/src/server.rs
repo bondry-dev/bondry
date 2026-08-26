@@ -26,10 +26,11 @@ use tokio::{
     task::JoinSet,
 };
 
+#[cfg(any(feature = "mcp", feature = "rest"))]
+use crate::MountedProtocol;
 use crate::{
-    AuthenticationError, AuthenticationRequest, MountedProtocol, RawBodyHandler,
-    RawBodyRegistration, RawBodyRegistrationError, RawBodyRoute, ServerConfiguration,
-    ServerConfigurationError,
+    AuthenticationError, AuthenticationRequest, HttpProtocol, RawBodyHandler, RawBodyRegistration,
+    RawBodyRegistrationError, RawBodyRoute, ServerConfiguration, ServerConfigurationError,
     rate_limit::{RateLimitDecision, SlidingWindow},
     raw_body::{
         AcceptedRawBodyRequest, MAX_SELECTED_HEADERS, RawBodyHeader, RawBodyMatch, RawBodyRegistry,
@@ -45,18 +46,31 @@ pub struct LocalHttpServer {
     local_address: SocketAddr,
     shutdown: Option<oneshot::Sender<()>>,
     thread: Option<ServerThread>,
-    protocols: Arc<[MountedProtocol]>,
+    protocols: Arc<[Arc<dyn HttpProtocol>]>,
     raw_body_registry: Arc<RawBodyRegistry>,
 }
 
 impl LocalHttpServer {
     /// Starts a server on its dedicated asynchronous runtime.
+    #[cfg(any(feature = "mcp", feature = "rest"))]
     pub fn start(
         configuration: ServerConfiguration,
         protocols: Vec<MountedProtocol>,
     ) -> Result<Self, ServerStartError> {
+        let protocols = protocols
+            .into_iter()
+            .map(|protocol| Arc::new(protocol) as Arc<dyn HttpProtocol>)
+            .collect();
+        Self::start_with_protocols(configuration, protocols)
+    }
+
+    /// Starts a server with protocol-neutral HTTP handlers.
+    pub fn start_with_protocols(
+        configuration: ServerConfiguration,
+        protocols: Vec<Arc<dyn HttpProtocol>>,
+    ) -> Result<Self, ServerStartError> {
         configuration.validate()?;
-        let protocols: Arc<[MountedProtocol]> = protocols.into();
+        let protocols: Arc<[Arc<dyn HttpProtocol>]> = protocols.into();
         let raw_body_registry = Arc::new(RawBodyRegistry::new(configuration.raw_body_limits));
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_io()
@@ -148,7 +162,7 @@ impl Drop for LocalHttpServer {
 
 async fn run_server(
     configuration: ServerConfiguration,
-    protocols: Arc<[MountedProtocol]>,
+    protocols: Arc<[Arc<dyn HttpProtocol>]>,
     raw_body_registry: Arc<RawBodyRegistry>,
     mut shutdown: oneshot::Receiver<()>,
     startup: mpsc::SyncSender<io::Result<SocketAddr>>,
@@ -247,7 +261,7 @@ async fn serve_connection(stream: TcpStream, peer: SocketAddr, state: Arc<Server
 
 struct ServerState {
     configuration: ServerConfiguration,
-    protocols: Arc<[MountedProtocol]>,
+    protocols: Arc<[Arc<dyn HttpProtocol>]>,
     raw_body_registry: Arc<RawBodyRegistry>,
     request_limits: SlidingWindow<PrincipalId>,
     authentication_failure_limits: SlidingWindow<IpAddr>,
