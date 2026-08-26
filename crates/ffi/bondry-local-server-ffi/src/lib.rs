@@ -1,5 +1,6 @@
 #![doc = "Versioned C ABI for Bondry local REST and MCP servers."]
 
+#[cfg(feature = "raw-body")]
 mod raw_body;
 
 use std::{
@@ -19,21 +20,29 @@ use bondry_core::{
     CapabilityEffect, CapabilityId, DenialReason, DispatchError, DispatchFuture, HandlerError,
     HandlerErrorCode, Invocation, Principal, PrincipalId, PrincipalKind,
 };
+#[cfg(feature = "rest-server")]
+use bondry_http_server::HttpProtocol;
 use bondry_http_server::{
     Authentication, AuthenticationError, BearerAuthenticator, BearerTokenVerifier, LocalHttpServer,
-    MountedProtocol, OriginPolicy, RateLimits, RawBodyServerLimits, ServerConfiguration,
-    ServerStartError,
+    OriginPolicy, RateLimits, ServerConfiguration, ServerStartError,
 };
+#[cfg(feature = "local-server")]
+use bondry_http_server::{MountedProtocol, RawBodyServerLimits};
+#[cfg(feature = "mcp")]
 use bondry_mcp_proto::{McpAdapter, McpServerInfo};
+#[cfg(feature = "rest")]
 use bondry_rest_proto::RestAdapter;
 use serde::Deserialize;
 use serde_json::Value;
 use tokio::sync::oneshot;
 
+#[cfg(feature = "raw-body")]
 pub use raw_body::*;
 
 /// The first JSON server-configuration contract version.
 pub const BONDRY_SERVER_CONFIGURATION_VERSION_V1: u32 = 1;
+/// The first fixed REST-server configuration contract version.
+pub const BONDRY_REST_SERVER_CONFIGURATION_VERSION_V1: u32 = 1;
 /// Capacity of the terminated textual IP address in a server-address record.
 pub const BONDRY_SERVER_ADDRESS_CAPACITY_V1: usize = 46;
 /// The requested local address or port could not be bound.
@@ -75,8 +84,16 @@ pub struct BondryStoreHandle {
 }
 
 /// An opaque running-server handle owned by the caller.
+#[cfg(feature = "local-server")]
 #[repr(C)]
 pub struct BondryServerHandle {
+    _private: [u8; 0],
+}
+
+/// An opaque running REST-server handle owned by the caller.
+#[cfg(feature = "rest-server")]
+#[repr(C)]
+pub struct BondryRestServerHandle {
     _private: [u8; 0],
 }
 
@@ -324,6 +341,7 @@ impl BearerTokenVerifier for RuntimeBearerVerifier {
 }
 
 /// The bound local address returned after server startup.
+#[cfg(feature = "local-server")]
 #[derive(Clone, Copy)]
 #[repr(C)]
 pub struct BondryServerAddressV1 {
@@ -333,6 +351,36 @@ pub struct BondryServerAddressV1 {
     pub port: u16,
 }
 
+/// The bound address returned after REST-server startup.
+#[cfg(feature = "rest-server")]
+#[derive(Clone, Copy)]
+#[repr(C)]
+pub struct BondryRestServerAddressV1 {
+    /// UTF-8 IP address, terminated with zero.
+    pub address: [u8; BONDRY_SERVER_ADDRESS_CAPACITY_V1],
+    /// Bound TCP port.
+    pub port: u16,
+}
+
+#[cfg(feature = "rest-server")]
+impl BondryRestServerAddressV1 {
+    fn from_server(server: &LocalHttpServer) -> Self {
+        let address = server.local_address();
+        Self {
+            address: terminated(&address.ip().to_string()),
+            port: address.port(),
+        }
+    }
+
+    const fn zeroed() -> Self {
+        Self {
+            address: [0; BONDRY_SERVER_ADDRESS_CAPACITY_V1],
+            port: 0,
+        }
+    }
+}
+
+#[cfg(feature = "local-server")]
 impl BondryServerAddressV1 {
     fn from_server(server: &LocalHttpServer) -> Self {
         let address = server.local_address();
@@ -352,6 +400,7 @@ impl BondryServerAddressV1 {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
+#[cfg(feature = "local-server")]
 struct InputConfiguration {
     version: u32,
     bind_address: String,
@@ -368,6 +417,26 @@ struct InputConfiguration {
     request_timeout_milliseconds: u64,
     shutdown_grace_period_milliseconds: u64,
     raw_body_limits: Option<InputRawBodyLimits>,
+    allow_cleartext_network: bool,
+    allow_unauthenticated_network: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+#[cfg(feature = "rest-server")]
+struct RestInputConfiguration {
+    version: u32,
+    bind_address: String,
+    port: u16,
+    authentication: InputAuthentication,
+    allowed_origins: Vec<String>,
+    requests_per_minute: u32,
+    authentication_failures_per_minute: u32,
+    max_body_bytes: usize,
+    max_connections: usize,
+    header_read_timeout_milliseconds: u64,
+    request_timeout_milliseconds: u64,
+    shutdown_grace_period_milliseconds: u64,
     allow_cleartext_network: bool,
     allow_unauthenticated_network: bool,
 }
@@ -397,6 +466,7 @@ enum InputPrincipalKind {
 
 #[derive(Clone, Copy, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "snake_case")]
+#[cfg(feature = "local-server")]
 enum InputAdapter {
     Rest,
     Mcp,
@@ -404,6 +474,7 @@ enum InputAdapter {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
+#[cfg(feature = "mcp")]
 struct InputMcpServer {
     name: String,
     title: Option<String>,
@@ -412,6 +483,7 @@ struct InputMcpServer {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
+#[cfg(feature = "local-server")]
 struct InputRawBodyLimits {
     aggregate_retained_bytes: usize,
     shutdown_drain_deadline_milliseconds: u64,
@@ -451,6 +523,7 @@ struct OwnedDispatchResult {
 /// length. Both output pointers must be writable. The returned server handle must be stopped once.
 #[must_use]
 #[unsafe(no_mangle)]
+#[cfg(feature = "local-server")]
 pub unsafe extern "C" fn bondry_server_start_v1(
     store: *const BondryStoreHandle,
     configuration_json: *const u8,
@@ -514,6 +587,7 @@ pub unsafe extern "C" fn bondry_server_start_v1(
 /// or stopped again after this function begins.
 #[must_use]
 #[unsafe(no_mangle)]
+#[cfg(feature = "local-server")]
 pub unsafe extern "C" fn bondry_server_stop_v1(server: *mut BondryServerHandle) -> i32 {
     if server.is_null() {
         return BONDRY_STATUS_OK;
@@ -528,6 +602,94 @@ pub unsafe extern "C" fn bondry_server_stop_v1(server: *mut BondryServerHandle) 
     })
 }
 
+/// Starts the fixed REST adapter from a validated JSON configuration.
+///
+/// # Safety
+///
+/// `store` must be a live runtime handle. The configuration must be readable for its declared
+/// length. Both output pointers must be writable. The returned server handle must be stopped once.
+#[must_use]
+#[unsafe(no_mangle)]
+#[cfg(feature = "rest-server")]
+pub unsafe extern "C" fn bondry_rest_server_start_v1(
+    store: *const BondryStoreHandle,
+    configuration_json: *const u8,
+    configuration_json_length: usize,
+    out_server: *mut *mut BondryRestServerHandle,
+    out_address: *mut BondryRestServerAddressV1,
+) -> i32 {
+    if out_server.is_null() || out_address.is_null() {
+        return BONDRY_STATUS_NULL_POINTER;
+    }
+    // SAFETY: Both output pointers are non-null and writable by contract.
+    unsafe {
+        out_server.write(ptr::null_mut());
+        out_address.write(BondryRestServerAddressV1::zeroed());
+    }
+    catch_status(|| {
+        if store.is_null() || configuration_json.is_null() {
+            return BONDRY_STATUS_NULL_POINTER;
+        }
+        if configuration_json_length > isize::MAX as usize {
+            return BONDRY_STATUS_INVALID_LENGTH;
+        }
+        if configuration_json_length > MAX_CONFIGURATION_LENGTH {
+            return BONDRY_STATUS_PAYLOAD_TOO_LARGE;
+        }
+        // SAFETY: The bounded configuration buffer is readable by contract.
+        let bytes = unsafe { slice::from_raw_parts(configuration_json, configuration_json_length) };
+        let value: Value = match serde_json::from_slice(bytes) {
+            Ok(value) => value,
+            Err(_) => return BONDRY_STATUS_INVALID_JSON,
+        };
+        let input: RestInputConfiguration = match serde_json::from_value(value) {
+            Ok(input) => input,
+            Err(_) => return BONDRY_STATUS_INVALID_ARGUMENT,
+        };
+        // SAFETY: The caller guarantees store remains live for this synchronous retain.
+        let runtime = match unsafe { RuntimeHandle::retain(store) } {
+            Ok(runtime) => runtime,
+            Err(status) => return status,
+        };
+        let server = match start_rest_server(runtime, input) {
+            Ok(server) => server,
+            Err(status) => return status,
+        };
+        let address = BondryRestServerAddressV1::from_server(&server);
+        let handle = Box::new(ServerHandle { server });
+        // SAFETY: Outputs receive one server ownership unit and its bound address.
+        unsafe {
+            out_address.write(address);
+            out_server.write(Box::into_raw(handle).cast::<BondryRestServerHandle>());
+        }
+        BONDRY_STATUS_OK
+    })
+}
+
+/// Stops a running REST server and consumes its handle. Passing null is a no-op.
+///
+/// # Safety
+///
+/// A non-null value must be a live handle returned by `bondry_rest_server_start_v1` and must not be
+/// used or stopped again after this function begins.
+#[must_use]
+#[unsafe(no_mangle)]
+#[cfg(feature = "rest-server")]
+pub unsafe extern "C" fn bondry_rest_server_stop_v1(server: *mut BondryRestServerHandle) -> i32 {
+    if server.is_null() {
+        return BONDRY_STATUS_OK;
+    }
+    catch_status(|| {
+        // SAFETY: The caller transfers exactly one live server ownership unit.
+        let mut handle = unsafe { Box::from_raw(server.cast::<ServerHandle>()) };
+        match handle.server.stop() {
+            Ok(()) => BONDRY_STATUS_OK,
+            Err(_) => BONDRY_STATUS_SERVER_STOP,
+        }
+    })
+}
+
+#[cfg(feature = "local-server")]
 fn start_server(
     runtime: Arc<RuntimeHandle>,
     input: InputConfiguration,
@@ -611,6 +773,59 @@ fn start_server(
     LocalHttpServer::start(configuration, adapters).map_err(server_start_status)
 }
 
+#[cfg(feature = "rest-server")]
+fn start_rest_server(
+    runtime: Arc<RuntimeHandle>,
+    input: RestInputConfiguration,
+) -> Result<LocalHttpServer, i32> {
+    if input.version != BONDRY_SERVER_CONFIGURATION_VERSION_V1 {
+        return Err(BONDRY_STATUS_INVALID_ARGUMENT);
+    }
+    let bind_address = input
+        .bind_address
+        .parse::<IpAddr>()
+        .map_err(|_| BONDRY_STATUS_INVALID_ARGUMENT)?;
+    let authentication = authentication(runtime.clone(), &input.authentication)?;
+    let limits = RateLimits::new(
+        input.requests_per_minute,
+        input.authentication_failures_per_minute,
+    )
+    .map_err(|_| BONDRY_STATUS_INVALID_ARGUMENT)?;
+    let mut origins = OriginPolicy::deny_browser_origins();
+    for origin in &input.allowed_origins {
+        origins = origins
+            .allowing(origin)
+            .map_err(|_| BONDRY_STATUS_INVALID_ARGUMENT)?;
+    }
+    let mut configuration = ServerConfiguration::new(authentication)
+        .with_bind_address(bind_address)
+        .with_port(input.port)
+        .with_origin_policy(origins)
+        .with_rate_limits(limits)
+        .with_max_body_bytes(input.max_body_bytes)
+        .map_err(|_| BONDRY_STATUS_INVALID_ARGUMENT)?
+        .with_max_connections(input.max_connections)
+        .map_err(|_| BONDRY_STATUS_INVALID_ARGUMENT)?
+        .with_timeouts(
+            Duration::from_millis(input.header_read_timeout_milliseconds),
+            Duration::from_millis(input.request_timeout_milliseconds),
+            Duration::from_millis(input.shutdown_grace_period_milliseconds),
+        )
+        .map_err(|_| BONDRY_STATUS_INVALID_ARGUMENT)?;
+    if input.allow_cleartext_network {
+        configuration = configuration.allowing_cleartext_network();
+    }
+    if input.allow_unauthenticated_network {
+        configuration = configuration.allowing_unauthenticated_network();
+    }
+
+    let service: Arc<dyn AutomationService> = Arc::new(RuntimeAutomationService { runtime });
+    let protocol: Arc<dyn HttpProtocol> =
+        Arc::new(RestAdapter::new(service).map_err(|_| BONDRY_STATUS_INTERNAL_FAILURE)?);
+    LocalHttpServer::start_with_protocols(configuration, vec![protocol])
+        .map_err(server_start_status)
+}
+
 fn authentication(
     runtime: Arc<RuntimeHandle>,
     input: &InputAuthentication,
@@ -645,6 +860,7 @@ fn authentication(
     }
 }
 
+#[cfg(feature = "mcp")]
 fn mcp_server_info(input: Option<&InputMcpServer>) -> Result<McpServerInfo, i32> {
     let input = input.ok_or(BONDRY_STATUS_INVALID_ARGUMENT)?;
     let mut info = McpServerInfo::new(&input.name, &input.version)
@@ -801,7 +1017,85 @@ fn catch_status(operation: impl FnOnce() -> i32) -> i32 {
     catch_unwind(AssertUnwindSafe(operation)).unwrap_or(BONDRY_STATUS_INTERNAL_FAILURE)
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "rest-server"))]
+mod rest_server_tests {
+    use std::ptr;
+
+    use bondry_runtime_ffi as _;
+    use serde_json::{Value, json};
+
+    use super::{
+        BONDRY_SERVER_ADDRESS_CAPACITY_V1, BONDRY_STATUS_NULL_POINTER, BondryRestServerAddressV1,
+        BondryRestServerHandle, RestInputConfiguration, bondry_rest_server_start_v1,
+    };
+
+    fn configuration() -> Value {
+        json!({
+            "version": 1,
+            "bindAddress": "127.0.0.1",
+            "port": 0,
+            "authentication": {
+                "mode": "bearer",
+                "principalId": null,
+                "principalKind": null,
+            },
+            "allowedOrigins": [],
+            "requestsPerMinute": 120,
+            "authenticationFailuresPerMinute": 30,
+            "maxBodyBytes": 1_048_576,
+            "maxConnections": 64,
+            "headerReadTimeoutMilliseconds": 5_000,
+            "requestTimeoutMilliseconds": 30_000,
+            "shutdownGracePeriodMilliseconds": 2_000,
+            "allowCleartextNetwork": false,
+            "allowUnauthenticatedNetwork": false,
+        })
+    }
+
+    #[test]
+    fn accepts_fixed_rest_configuration() {
+        assert!(serde_json::from_value::<RestInputConfiguration>(configuration()).is_ok());
+    }
+
+    #[test]
+    fn rejects_protocol_selection_and_mcp_metadata() {
+        let mut adapters = configuration();
+        adapters["adapters"] = json!(["rest"]);
+        assert!(serde_json::from_value::<RestInputConfiguration>(adapters).is_err());
+
+        let mut mcp = configuration();
+        mcp["mcpServer"] = json!({ "name": "server", "version": "1" });
+        assert!(serde_json::from_value::<RestInputConfiguration>(mcp).is_err());
+    }
+
+    #[test]
+    fn initializes_outputs_before_rejecting_a_null_runtime() {
+        let input = serde_json::to_vec(&configuration()).unwrap_or_default();
+        let mut server = ptr::dangling_mut::<BondryRestServerHandle>();
+        let mut address = BondryRestServerAddressV1 {
+            address: [1; BONDRY_SERVER_ADDRESS_CAPACITY_V1],
+            port: 1,
+        };
+
+        // SAFETY: The input and output buffers are valid, and null runtime rejection is immediate.
+        let status = unsafe {
+            bondry_rest_server_start_v1(
+                ptr::null(),
+                input.as_ptr(),
+                input.len(),
+                &mut server,
+                &mut address,
+            )
+        };
+
+        assert_eq!(status, BONDRY_STATUS_NULL_POINTER);
+        assert!(server.is_null());
+        assert_eq!(address.port, 0);
+        assert_eq!(address.address, [0; BONDRY_SERVER_ADDRESS_CAPACITY_V1]);
+    }
+}
+
+#[cfg(all(test, feature = "local-server", feature = "raw-body"))]
 mod tests {
     use std::{
         ffi::c_void,
