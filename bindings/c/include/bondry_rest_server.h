@@ -23,14 +23,21 @@ typedef int32_t BondryStatus;
 
 #define BONDRY_REST_SERVER_ADDRESS_CAPACITY_V1 ((size_t)46)
 #define BONDRY_REST_SERVER_CONFIGURATION_VERSION_V1 ((uint32_t)1)
+#define BONDRY_REST_UNIX_SERVER_CONFIGURATION_VERSION_V1 ((uint32_t)1)
+#define BONDRY_REST_UNIX_SERVER_PATH_CAPACITY_V1 ((size_t)104)
 
 typedef struct BondryStoreHandle BondryStoreHandle;
 typedef struct BondryRestServerHandle BondryRestServerHandle;
+typedef struct BondryRestUnixServerHandle BondryRestUnixServerHandle;
 
 typedef struct BondryRestServerAddressV1 {
     uint8_t address[BONDRY_REST_SERVER_ADDRESS_CAPACITY_V1];
     uint16_t port;
 } BondryRestServerAddressV1;
+
+typedef struct BondryRestUnixServerEndpointV1 {
+    uint8_t path[BONDRY_REST_UNIX_SERVER_PATH_CAPACITY_V1];
+} BondryRestUnixServerEndpointV1;
 
 BondryStatus bondry_rest_server_start_v1(
     const BondryStoreHandle *store,
@@ -41,6 +48,16 @@ BondryStatus bondry_rest_server_start_v1(
 );
 
 BondryStatus bondry_rest_server_stop_v1(BondryRestServerHandle *server);
+
+BondryStatus bondry_rest_server_start_unix_v1(
+    const BondryStoreHandle *store,
+    const uint8_t *configuration_json,
+    size_t configuration_json_length,
+    BondryRestUnixServerHandle **out_server,
+    BondryRestUnixServerEndpointV1 *out_endpoint
+);
+
+BondryStatus bondry_rest_server_stop_unix_v1(BondryRestUnixServerHandle *server);
 
 #ifdef __cplusplus
 }
