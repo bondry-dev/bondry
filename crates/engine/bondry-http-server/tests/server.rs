@@ -27,6 +27,16 @@ use bondry_rest_proto::RestAdapter;
 use http::{HeaderName, StatusCode};
 use serde_json::json;
 
+#[cfg(feature = "unix-socket")]
+use bondry_http_server::{
+    LocalUnixHttpServer, UnixServerConfigurationError, UnixServerStartError,
+    UnixSocketConfiguration,
+};
+#[cfg(feature = "unix-socket")]
+use std::os::unix::{fs::PermissionsExt as _, net::UnixStream};
+#[cfg(feature = "unix-socket")]
+use tempfile::tempdir;
+
 struct TestVerifier;
 
 impl BearerTokenVerifier for TestVerifier {
@@ -182,6 +192,16 @@ fn request(address: SocketAddr, request: &str) -> std::io::Result<String> {
     Ok(response)
 }
 
+#[cfg(feature = "unix-socket")]
+fn unix_request(path: &std::path::Path, request: &str) -> std::io::Result<String> {
+    let mut stream = UnixStream::connect(path)?;
+    stream.set_read_timeout(Some(Duration::from_secs(2)))?;
+    stream.write_all(request.as_bytes())?;
+    let mut response = String::new();
+    stream.read_to_string(&mut response)?;
+    Ok(response)
+}
+
 fn get(address: SocketAddr, path: &str, authorization: &str) -> std::io::Result<String> {
     request(
         address,
@@ -264,6 +284,194 @@ fn starts_with_protocol_trait_object() -> Result<(), Box<dyn std::error::Error>>
     )?;
 
     assert_eq!(status(&response), Some(200));
+    Ok(())
+}
+
+#[cfg(feature = "unix-socket")]
+#[test]
+fn serves_rest_over_a_private_same_user_unix_socket() -> Result<(), Box<dyn std::error::Error>> {
+    let directory = tempdir()?;
+    std::fs::set_permissions(directory.path(), std::fs::Permissions::from_mode(0o700))?;
+    let path = directory.path().join("server.sock");
+    let user_id = nix::unistd::geteuid().as_raw();
+    let principal = Principal::new(PrincipalId::new("unix_client")?, PrincipalKind::Application);
+    let configuration = ServerConfiguration::new(Authentication::disabled(principal));
+    let socket = UnixSocketConfiguration::new(&path, user_id, user_id)?;
+    let protocols: Vec<Arc<dyn HttpProtocol>> = vec![Arc::new(rest_protocol()?)];
+    let mut server = LocalUnixHttpServer::start_with_protocols(configuration, socket, protocols)?;
+
+    let metadata = std::fs::symlink_metadata(&path)?;
+    assert_eq!(metadata.permissions().mode() & 0o777, 0o600);
+    let response = unix_request(
+        &path,
+        "POST /api/v1/capabilities/echo HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}",
+    )?;
+    assert_eq!(status(&response), Some(200));
+    assert!(body(&response).contains("unix_client"));
+
+    server.stop()?;
+    server.stop()?;
+    assert!(!path.exists());
+    Ok(())
+}
+
+#[cfg(feature = "unix-socket")]
+#[test]
+fn rejects_a_unix_peer_outside_the_configured_user() -> Result<(), Box<dyn std::error::Error>> {
+    let directory = tempdir()?;
+    std::fs::set_permissions(directory.path(), std::fs::Permissions::from_mode(0o700))?;
+    let path = directory.path().join("server.sock");
+    let user_id = nix::unistd::geteuid().as_raw();
+    let principal = Principal::new(PrincipalId::new("unix_client")?, PrincipalKind::Application);
+    let configuration = ServerConfiguration::new(Authentication::disabled(principal));
+    let socket = UnixSocketConfiguration::new(&path, user_id, user_id.wrapping_add(1))?;
+    let protocols: Vec<Arc<dyn HttpProtocol>> = vec![Arc::new(rest_protocol()?)];
+    let _server = LocalUnixHttpServer::start_with_protocols(configuration, socket, protocols)?;
+
+    let response = unix_request(
+        &path,
+        "GET /api/v1/capabilities HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
+    );
+
+    assert!(response.is_err() || response.is_ok_and(|value| value.is_empty()));
+    Ok(())
+}
+
+#[cfg(feature = "unix-socket")]
+#[test]
+fn recovers_only_stale_owned_unix_sockets() -> Result<(), Box<dyn std::error::Error>> {
+    let directory = tempdir()?;
+    std::fs::set_permissions(directory.path(), std::fs::Permissions::from_mode(0o700))?;
+    let path = directory.path().join("server.sock");
+    let stale = std::os::unix::net::UnixListener::bind(&path)?;
+    drop(stale);
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
+    let user_id = nix::unistd::geteuid().as_raw();
+    let principal = Principal::new(PrincipalId::new("unix_client")?, PrincipalKind::Application);
+    let configuration = ServerConfiguration::new(Authentication::disabled(principal));
+    let socket = UnixSocketConfiguration::new(&path, user_id, user_id)?;
+    let protocols: Vec<Arc<dyn HttpProtocol>> = vec![Arc::new(rest_protocol()?)];
+
+    let mut server = LocalUnixHttpServer::start_with_protocols(configuration, socket, protocols)?;
+
+    server.stop()?;
+    assert!(!path.exists());
+    Ok(())
+}
+
+#[cfg(feature = "unix-socket")]
+#[test]
+fn rejects_live_or_non_socket_unix_paths() -> Result<(), Box<dyn std::error::Error>> {
+    let directory = tempdir()?;
+    std::fs::set_permissions(directory.path(), std::fs::Permissions::from_mode(0o700))?;
+    let user_id = nix::unistd::geteuid().as_raw();
+    let principal = Principal::new(PrincipalId::new("unix_client")?, PrincipalKind::Application);
+    let configuration = ServerConfiguration::new(Authentication::disabled(principal));
+    let live_path = directory.path().join("live.sock");
+    let _live = std::os::unix::net::UnixListener::bind(&live_path)?;
+    std::fs::set_permissions(&live_path, std::fs::Permissions::from_mode(0o600))?;
+    let live_socket = UnixSocketConfiguration::new(&live_path, user_id, user_id)?;
+    let live_result = LocalUnixHttpServer::start_with_protocols(
+        configuration.clone(),
+        live_socket,
+        vec![Arc::new(rest_protocol()?)],
+    );
+    assert!(matches!(
+        live_result,
+        Err(UnixServerStartError::Server(ServerStartError::Bind(_)))
+    ));
+
+    let file_path = directory.path().join("regular.sock");
+    let _file = std::fs::File::create(&file_path)?;
+    let file_socket = UnixSocketConfiguration::new(&file_path, user_id, user_id)?;
+    let file_result = LocalUnixHttpServer::start_with_protocols(
+        configuration,
+        file_socket,
+        vec![Arc::new(rest_protocol()?)],
+    );
+    assert!(matches!(
+        file_result,
+        Err(UnixServerStartError::Server(ServerStartError::Bind(_)))
+    ));
+
+    let symlink_path = directory.path().join("symlink.sock");
+    std::os::unix::fs::symlink(&file_path, &symlink_path)?;
+    let symlink_socket = UnixSocketConfiguration::new(&symlink_path, user_id, user_id)?;
+    let symlink_result = LocalUnixHttpServer::start_with_protocols(
+        ServerConfiguration::new(Authentication::disabled(Principal::new(
+            PrincipalId::new("unix_client")?,
+            PrincipalKind::Application,
+        ))),
+        symlink_socket,
+        vec![Arc::new(rest_protocol()?)],
+    );
+    assert!(matches!(
+        symlink_result,
+        Err(UnixServerStartError::Server(ServerStartError::Bind(_)))
+    ));
+    assert!(symlink_path.is_symlink());
+    Ok(())
+}
+
+#[cfg(feature = "unix-socket")]
+#[test]
+fn leaves_a_replacement_unix_socket_owned_by_another_listener()
+-> Result<(), Box<dyn std::error::Error>> {
+    let directory = tempdir()?;
+    std::fs::set_permissions(directory.path(), std::fs::Permissions::from_mode(0o700))?;
+    let path = directory.path().join("server.sock");
+    let moved_path = directory.path().join("moved.sock");
+    let user_id = nix::unistd::geteuid().as_raw();
+    let principal = Principal::new(PrincipalId::new("unix_client")?, PrincipalKind::Application);
+    let configuration = ServerConfiguration::new(Authentication::disabled(principal));
+    let socket = UnixSocketConfiguration::new(&path, user_id, user_id)?;
+    let protocols: Vec<Arc<dyn HttpProtocol>> = vec![Arc::new(rest_protocol()?)];
+    let mut server = LocalUnixHttpServer::start_with_protocols(configuration, socket, protocols)?;
+    std::fs::rename(&path, &moved_path)?;
+    let _replacement = std::os::unix::net::UnixListener::bind(&path)?;
+
+    assert!(server.stop().is_err());
+    assert!(path.exists());
+    Ok(())
+}
+
+#[cfg(feature = "unix-socket")]
+#[test]
+fn unix_listening_rejects_bearer_authentication_and_browser_origins()
+-> Result<(), Box<dyn std::error::Error>> {
+    let directory = tempdir()?;
+    std::fs::set_permissions(directory.path(), std::fs::Permissions::from_mode(0o700))?;
+    let user_id = nix::unistd::geteuid().as_raw();
+    let socket =
+        UnixSocketConfiguration::new(directory.path().join("server.sock"), user_id, user_id)?;
+    let protocols: Vec<Arc<dyn HttpProtocol>> = vec![Arc::new(rest_protocol()?)];
+    let bearer = LocalUnixHttpServer::start_with_protocols(
+        authenticated_configuration(),
+        socket.clone(),
+        protocols,
+    );
+    assert!(matches!(
+        bearer,
+        Err(UnixServerStartError::Configuration(
+            UnixServerConfigurationError::RequiresPeerAuthentication
+        ))
+    ));
+
+    let principal = Principal::new(PrincipalId::new("unix_client")?, PrincipalKind::Application);
+    let origins = OriginPolicy::default().allowing("http://example.test")?;
+    let configuration =
+        ServerConfiguration::new(Authentication::disabled(principal)).with_origin_policy(origins);
+    let with_origins = LocalUnixHttpServer::start_with_protocols(
+        configuration,
+        socket,
+        vec![Arc::new(rest_protocol()?)],
+    );
+    assert!(matches!(
+        with_origins,
+        Err(UnixServerStartError::Configuration(
+            UnixServerConfigurationError::BrowserOrigins
+        ))
+    ));
     Ok(())
 }
 

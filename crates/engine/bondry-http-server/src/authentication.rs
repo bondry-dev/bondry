@@ -153,6 +153,14 @@ impl Authentication {
         }
     }
 
+    #[cfg(feature = "unix-socket")]
+    pub(crate) fn local_principal(&self) -> Option<Principal> {
+        match self {
+            Self::Disabled(principal) => Some(principal.clone()),
+            Self::Required(_) => None,
+        }
+    }
+
     pub(crate) fn redact_credentials(&self, headers: &mut HeaderMap) {
         match self {
             Self::Required(authenticator) => authenticator.redact_credentials(headers),

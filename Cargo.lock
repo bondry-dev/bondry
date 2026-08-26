@@ -244,7 +244,9 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-util",
+ "nix",
  "serde_json",
+ "tempfile",
  "thiserror",
  "tokio",
 ]

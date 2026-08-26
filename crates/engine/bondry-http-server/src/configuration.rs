@@ -54,6 +54,11 @@ impl OriginPolicy {
         };
         origins.next().is_none() && self.allowed.contains(origin)
     }
+
+    #[cfg(feature = "unix-socket")]
+    pub(crate) fn is_empty(&self) -> bool {
+        self.allowed.is_empty()
+    }
 }
 
 /// An invalid browser origin policy value.
@@ -273,6 +278,17 @@ impl ServerConfiguration {
         }
         Ok(())
     }
+
+    #[cfg(feature = "unix-socket")]
+    pub(crate) fn validate_unix(&self) -> Result<(), UnixServerConfigurationError> {
+        if !self.authentication.is_disabled() {
+            return Err(UnixServerConfigurationError::RequiresPeerAuthentication);
+        }
+        if !self.origins.is_empty() {
+            return Err(UnixServerConfigurationError::BrowserOrigins);
+        }
+        Ok(())
+    }
 }
 
 fn valid_timeout(timeout: Duration) -> bool {
@@ -300,6 +316,18 @@ pub enum ServerConfigurationError {
     /// Cleartext HTTP on a network address requires explicit acknowledgement.
     #[error("cleartext non-loopback listening requires explicit acknowledgement")]
     CleartextNetworkExposure,
+}
+
+#[cfg(feature = "unix-socket")]
+/// An invalid Unix HTTP server policy combination.
+#[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
+pub enum UnixServerConfigurationError {
+    /// Unix listeners authenticate peers before HTTP and require an explicit principal.
+    #[error("Unix listening requires peer authentication with an explicit principal")]
+    RequiresPeerAuthentication,
+    /// Browser origins are not supported over Unix sockets.
+    #[error("browser origins are not supported over Unix sockets")]
+    BrowserOrigins,
 }
 
 #[cfg(test)]

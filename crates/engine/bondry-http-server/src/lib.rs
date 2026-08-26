@@ -6,11 +6,15 @@ mod protocol;
 mod rate_limit;
 mod raw_body;
 mod server;
+#[cfg(feature = "unix-socket")]
+mod unix_socket;
 
 pub use authentication::{
     Authentication, AuthenticationError, AuthenticationRequest, BearerAuthenticator,
     BearerTokenVerifier, HttpAuthenticator,
 };
+#[cfg(feature = "unix-socket")]
+pub use configuration::UnixServerConfigurationError;
 pub use configuration::{
     OriginPolicy, OriginPolicyError, RateLimits, ServerConfiguration, ServerConfigurationError,
 };
@@ -23,3 +27,9 @@ pub use raw_body::{
     RawBodyRouteError, RawBodyServerLimits,
 };
 pub use server::{LocalHttpServer, ServerStartError, ServerStopError};
+#[cfg(feature = "unix-socket")]
+pub use server::{LocalUnixHttpServer, UnixServerStartError};
+#[cfg(feature = "unix-socket")]
+pub use unix_socket::{
+    MAX_UNIX_SOCKET_PATH_BYTES, UnixSocketConfiguration, UnixSocketConfigurationError,
+};

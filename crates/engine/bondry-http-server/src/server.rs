@@ -8,6 +8,9 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[cfg(feature = "unix-socket")]
+use std::path::Path;
+
 use bondry_core::PrincipalId;
 use bytes::{Bytes, BytesMut};
 use http::{HeaderMap, Request, Response, StatusCode, header};
@@ -21,7 +24,8 @@ use hyper_util::rt::{TokioIo, TokioTimer};
 use serde_json::json;
 use thiserror::Error;
 use tokio::{
-    net::{TcpListener, TcpStream},
+    io::{AsyncRead, AsyncWrite},
+    net::TcpListener,
     sync::{OwnedSemaphorePermit, Semaphore, oneshot},
     task::JoinSet,
 };
@@ -37,6 +41,11 @@ use crate::{
         RawBodyRequest, RawBodyResponse,
     },
 };
+#[cfg(feature = "unix-socket")]
+use crate::{
+    UnixServerConfigurationError,
+    unix_socket::{BoundUnixListener, UnixSocketConfiguration},
+};
 
 type ServerThread = thread::JoinHandle<Result<(), ServerRuntimeError>>;
 const MAX_BODY_PREALLOCATION: usize = 64 * 1_024;
@@ -48,6 +57,14 @@ pub struct LocalHttpServer {
     thread: Option<ServerThread>,
     protocols: Arc<[Arc<dyn HttpProtocol>]>,
     raw_body_registry: Arc<RawBodyRegistry>,
+}
+
+/// A running HTTP/1.1 server bound to a verified Unix-domain socket.
+#[cfg(feature = "unix-socket")]
+pub struct LocalUnixHttpServer {
+    socket_path: Box<Path>,
+    shutdown: Option<oneshot::Sender<()>>,
+    thread: Option<ServerThread>,
 }
 
 impl LocalHttpServer {
@@ -143,18 +160,85 @@ impl LocalHttpServer {
         let Some(thread) = self.thread.take() else {
             return Ok(());
         };
-        match thread.join() {
-            Ok(Ok(())) => Ok(()),
-            Ok(Err(ServerRuntimeError::Io(error))) => Err(ServerStopError::Runtime(error)),
-            Ok(Err(ServerRuntimeError::HandlerDrainTimedOut)) => {
-                Err(ServerStopError::HandlerDrainTimedOut)
-            }
-            Err(_) => Err(ServerStopError::ThreadPanicked),
-        }
+        server_thread_result(thread)
     }
 }
 
 impl Drop for LocalHttpServer {
+    fn drop(&mut self) {
+        let _ = self.stop();
+    }
+}
+
+#[cfg(feature = "unix-socket")]
+impl LocalUnixHttpServer {
+    /// Starts a Unix-domain server with protocol-neutral HTTP handlers.
+    pub fn start_with_protocols(
+        configuration: ServerConfiguration,
+        socket: UnixSocketConfiguration,
+        protocols: Vec<Arc<dyn HttpProtocol>>,
+    ) -> Result<Self, UnixServerStartError> {
+        configuration.validate_unix()?;
+        let socket_path = socket.path().into();
+        let protocols: Arc<[Arc<dyn HttpProtocol>]> = protocols.into();
+        let raw_body_registry = Arc::new(RawBodyRegistry::new(configuration.raw_body_limits));
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_io()
+            .enable_time()
+            .build()
+            .map_err(ServerStartError::Runtime)?;
+        let (shutdown, shutdown_receiver) = oneshot::channel();
+        let (startup_sender, startup_receiver) = mpsc::sync_channel(1);
+        let thread = thread::Builder::new()
+            .name("bondry-unix-http".to_owned())
+            .spawn(move || {
+                runtime.block_on(run_unix_server(
+                    configuration,
+                    socket,
+                    protocols,
+                    raw_body_registry,
+                    shutdown_receiver,
+                    startup_sender,
+                ))
+            })
+            .map_err(ServerStartError::Thread)?;
+        match startup_receiver.recv() {
+            Ok(Ok(())) => Ok(Self {
+                socket_path,
+                shutdown: Some(shutdown),
+                thread: Some(thread),
+            }),
+            Ok(Err(error)) => {
+                let _ = thread.join();
+                Err(ServerStartError::Bind(error).into())
+            }
+            Err(_) => {
+                let _ = thread.join();
+                Err(ServerStartError::Startup.into())
+            }
+        }
+    }
+
+    /// Returns the bound socket path.
+    #[must_use]
+    pub fn socket_path(&self) -> &Path {
+        &self.socket_path
+    }
+
+    /// Stops accepting requests, drains connections, and removes the owned socket path.
+    pub fn stop(&mut self) -> Result<(), ServerStopError> {
+        if let Some(shutdown) = self.shutdown.take() {
+            let _ = shutdown.send(());
+        }
+        let Some(thread) = self.thread.take() else {
+            return Ok(());
+        };
+        server_thread_result(thread)
+    }
+}
+
+#[cfg(feature = "unix-socket")]
+impl Drop for LocalUnixHttpServer {
     fn drop(&mut self) {
         let _ = self.stop();
     }
@@ -202,16 +286,84 @@ async fn run_server(
                 let state = Arc::clone(&state);
                 connections.spawn(async move {
                     let _slot = slot;
-                    serve_connection(stream, peer, state).await;
+                    let _ = stream.set_nodelay(true);
+                    serve_connection(stream, ConnectionPeer::Network(peer), state).await;
                 });
             }
             Some(_) = connections.join_next(), if !connections.is_empty() => {}
         }
     };
 
+    drain_connections(&configuration, &raw_body_registry, &mut connections).await?;
+    runtime_result.map_err(ServerRuntimeError::Io)
+}
+
+#[cfg(feature = "unix-socket")]
+async fn run_unix_server(
+    configuration: ServerConfiguration,
+    socket: UnixSocketConfiguration,
+    protocols: Arc<[Arc<dyn HttpProtocol>]>,
+    raw_body_registry: Arc<RawBodyRegistry>,
+    mut shutdown: oneshot::Receiver<()>,
+    startup: mpsc::SyncSender<io::Result<()>>,
+) -> Result<(), ServerRuntimeError> {
+    let mut listener = match BoundUnixListener::bind(&socket).await {
+        Ok(listener) => listener,
+        Err(error) => {
+            let _ = startup.send(Err(clone_io_error(&error)));
+            return Err(ServerRuntimeError::Io(error));
+        }
+    };
+    if startup.send(Ok(())).is_err() {
+        return Ok(());
+    }
+
+    let state = Arc::new(ServerState {
+        configuration: configuration.clone(),
+        protocols,
+        raw_body_registry: Arc::clone(&raw_body_registry),
+        request_limits: SlidingWindow::new(),
+        authentication_failure_limits: SlidingWindow::new(),
+    });
+    let connection_slots = Arc::new(Semaphore::new(configuration.max_connections));
+    let mut connections = JoinSet::new();
+    let runtime_result = loop {
+        tokio::select! {
+            _ = &mut shutdown => break Ok(()),
+            accepted = listener.accept() => {
+                let stream = match accepted {
+                    Ok(Some(stream)) => stream,
+                    Ok(None) => continue,
+                    Err(error) => break Err(error),
+                };
+                let Ok(slot) = Arc::clone(&connection_slots).try_acquire_owned() else {
+                    continue;
+                };
+                let state = Arc::clone(&state);
+                connections.spawn(async move {
+                    let _slot = slot;
+                    serve_connection(stream, ConnectionPeer::Unix, state).await;
+                });
+            }
+            Some(_) = connections.join_next(), if !connections.is_empty() => {}
+        }
+    };
+
+    let drain_result =
+        drain_connections(&configuration, &raw_body_registry, &mut connections).await;
+    let cleanup_result = listener.cleanup().map_err(ServerRuntimeError::Io);
+    drain_result?;
+    cleanup_result?;
+    runtime_result.map_err(ServerRuntimeError::Io)
+}
+
+async fn drain_connections(
+    configuration: &ServerConfiguration,
+    raw_body_registry: &RawBodyRegistry,
+    connections: &mut JoinSet<()>,
+) -> Result<(), ServerRuntimeError> {
     raw_body_registry.begin_shutdown();
-    let grace_period = configuration.shutdown_grace_period;
-    if tokio::time::timeout(grace_period, async {
+    if tokio::time::timeout(configuration.shutdown_grace_period, async {
         while connections.join_next().await.is_some() {}
     })
     .await
@@ -223,11 +375,13 @@ async fn run_server(
     if !raw_body_registry.wait_for_shutdown().await {
         return Err(ServerRuntimeError::HandlerDrainTimedOut);
     }
-    runtime_result.map_err(ServerRuntimeError::Io)
+    Ok(())
 }
 
-async fn serve_connection(stream: TcpStream, peer: SocketAddr, state: Arc<ServerState>) {
-    let _ = stream.set_nodelay(true);
+async fn serve_connection<Stream>(stream: Stream, peer: ConnectionPeer, state: Arc<ServerState>)
+where
+    Stream: AsyncRead + AsyncWrite + Unpin,
+{
     let header_read_timeout = state.configuration.header_read_timeout;
     let request_timeout = state.configuration.request_timeout;
     let service = service_fn(move |request| {
@@ -267,23 +421,46 @@ struct ServerState {
     authentication_failure_limits: SlidingWindow<IpAddr>,
 }
 
+#[derive(Clone, Copy)]
+enum ConnectionPeer {
+    Network(SocketAddr),
+    #[cfg(feature = "unix-socket")]
+    Unix,
+}
+
+impl ConnectionPeer {
+    const fn network_address(self) -> Option<SocketAddr> {
+        match self {
+            Self::Network(address) => Some(address),
+            #[cfg(feature = "unix-socket")]
+            Self::Unix => None,
+        }
+    }
+}
+
 impl ServerState {
-    async fn handle(&self, mut request: Request<Incoming>, peer: SocketAddr) -> Response<Bytes> {
-        match self
-            .raw_body_registry
-            .match_request(request.method(), request.uri().path())
-        {
-            RawBodyMatch::Accepted(accepted) => {
-                return self.handle_raw_body(request, peer, accepted).await;
+    async fn handle(
+        &self,
+        mut request: Request<Incoming>,
+        peer: ConnectionPeer,
+    ) -> Response<Bytes> {
+        if let Some(address) = peer.network_address() {
+            match self
+                .raw_body_registry
+                .match_request(request.method(), request.uri().path())
+            {
+                RawBodyMatch::Accepted(accepted) => {
+                    return self.handle_raw_body(request, address, accepted).await;
+                }
+                RawBodyMatch::Closed => {
+                    return retryable_response(
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        "raw_body_handler_draining",
+                        1,
+                    );
+                }
+                RawBodyMatch::NotRegistered => {}
             }
-            RawBodyMatch::Closed => {
-                return retryable_response(
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    "raw_body_handler_draining",
-                    1,
-                );
-            }
-            RawBodyMatch::NotRegistered => {}
         }
         let Some(protocol) = self
             .protocols
@@ -297,36 +474,22 @@ impl ServerState {
         }
 
         let now = Instant::now();
-        let peer_ip = peer.ip();
-        let failure_limit = self
-            .configuration
-            .rate_limits
-            .authentication_failures_per_minute();
-        if let RateLimitDecision::Limited { retry_after } = self
-            .authentication_failure_limits
-            .check(&peer_ip, failure_limit, now)
-        {
-            return rate_limited_response(retry_after);
-        }
-        let authentication_request =
-            AuthenticationRequest::new(request.method(), request.uri(), request.headers(), peer);
-        let principal = match self
-            .configuration
-            .authentication
-            .authenticate(authentication_request)
-        {
-            Ok(principal) => principal,
-            Err(AuthenticationError::Rejected) => {
-                let _ = self
-                    .authentication_failure_limits
-                    .consume(peer_ip, failure_limit, now);
-                return unauthorized_response(self.configuration.authentication.challenge());
+        let principal = match peer {
+            ConnectionPeer::Network(address) => {
+                match self.authenticate_network(&request, address, now) {
+                    NetworkAuthentication::Authenticated(principal) => principal,
+                    NetworkAuthentication::Rejected(response) => return response,
+                }
             }
-            Err(AuthenticationError::Unavailable) => {
-                return error_response(
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    "authentication_unavailable",
-                );
+            #[cfg(feature = "unix-socket")]
+            ConnectionPeer::Unix => {
+                let Some(principal) = self.configuration.authentication.local_principal() else {
+                    return error_response(
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        "authentication_unavailable",
+                    );
+                };
+                principal
             }
         };
 
@@ -356,6 +519,48 @@ impl ServerState {
         };
         let request = Request::from_parts(parts, body);
         secure_response(protocol.handle(request, principal).await)
+    }
+
+    fn authenticate_network(
+        &self,
+        request: &Request<Incoming>,
+        peer: SocketAddr,
+        now: Instant,
+    ) -> NetworkAuthentication {
+        let peer_ip = peer.ip();
+        let failure_limit = self
+            .configuration
+            .rate_limits
+            .authentication_failures_per_minute();
+        if let RateLimitDecision::Limited { retry_after } = self
+            .authentication_failure_limits
+            .check(&peer_ip, failure_limit, now)
+        {
+            return NetworkAuthentication::Rejected(rate_limited_response(retry_after));
+        }
+        let authentication_request =
+            AuthenticationRequest::new(request.method(), request.uri(), request.headers(), peer);
+        match self
+            .configuration
+            .authentication
+            .authenticate(authentication_request)
+        {
+            Ok(principal) => NetworkAuthentication::Authenticated(principal),
+            Err(AuthenticationError::Rejected) => {
+                let _ = self
+                    .authentication_failure_limits
+                    .consume(peer_ip, failure_limit, now);
+                NetworkAuthentication::Rejected(unauthorized_response(
+                    self.configuration.authentication.challenge(),
+                ))
+            }
+            Err(AuthenticationError::Unavailable) => {
+                NetworkAuthentication::Rejected(error_response(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "authentication_unavailable",
+                ))
+            }
+        }
     }
 
     async fn handle_raw_body(
@@ -427,6 +632,11 @@ impl ServerState {
         };
         raw_body_response(response)
     }
+}
+
+enum NetworkAuthentication {
+    Authenticated(bondry_core::Principal),
+    Rejected(Response<Bytes>),
 }
 
 fn select_raw_body_headers<'a>(
@@ -632,6 +842,17 @@ fn clone_io_error(error: &io::Error) -> io::Error {
     io::Error::new(error.kind(), error.to_string())
 }
 
+fn server_thread_result(thread: ServerThread) -> Result<(), ServerStopError> {
+    match thread.join() {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(ServerRuntimeError::Io(error))) => Err(ServerStopError::Runtime(error)),
+        Ok(Err(ServerRuntimeError::HandlerDrainTimedOut)) => {
+            Err(ServerStopError::HandlerDrainTimedOut)
+        }
+        Err(_) => Err(ServerStopError::ThreadPanicked),
+    }
+}
+
 /// A local HTTP server startup failure.
 #[derive(Debug, Error)]
 pub enum ServerStartError {
@@ -653,6 +874,18 @@ pub enum ServerStartError {
     /// The server stopped before reporting its listening address.
     #[error("HTTP server stopped during startup")]
     Startup,
+}
+
+/// A Unix HTTP server startup failure.
+#[cfg(feature = "unix-socket")]
+#[derive(Debug, Error)]
+pub enum UnixServerStartError {
+    /// Unix-specific server policy was rejected.
+    #[error(transparent)]
+    Configuration(#[from] UnixServerConfigurationError),
+    /// Shared server startup failed.
+    #[error(transparent)]
+    Server(#[from] ServerStartError),
 }
 
 /// A local HTTP server shutdown failure.
