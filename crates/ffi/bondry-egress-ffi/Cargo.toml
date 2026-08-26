@@ -12,14 +12,14 @@ crate-type = ["rlib", "staticlib"]
 
 [dependencies]
 base64.workspace = true
-bondry-delivery-store = { version = "0.2.0", path = "../../contract/bondry-delivery-store" }
-bondry-egress = { version = "0.2.0", path = "../../egress/bondry-egress" }
-bondry-egress-mcp = { version = "0.2.0", path = "../../egress/bondry-egress-mcp" }
-bondry-egress-runtime = { version = "0.2.0", path = "../../engine/bondry-egress-runtime" }
-bondry-egress-webhook = { version = "0.2.0", path = "../../egress/bondry-egress-webhook" }
-bondry-mcp-proto = { version = "0.2.0", path = "../../proto/bondry-mcp-proto" }
-bondry-secrets = { version = "0.2.0", path = "../../contract/bondry-secrets" }
-bondry-transport = { version = "0.2.0", path = "../../contract/bondry-transport" }
+bondry-delivery-store = { version = "0.2.1", path = "../../contract/bondry-delivery-store" }
+bondry-egress = { version = "0.2.1", path = "../../egress/bondry-egress" }
+bondry-egress-mcp = { version = "0.2.1", path = "../../egress/bondry-egress-mcp" }
+bondry-egress-runtime = { version = "0.2.1", path = "../../engine/bondry-egress-runtime" }
+bondry-egress-webhook = { version = "0.2.1", path = "../../egress/bondry-egress-webhook" }
+bondry-mcp-proto = { version = "0.2.1", path = "../../proto/bondry-mcp-proto" }
+bondry-secrets = { version = "0.2.1", path = "../../contract/bondry-secrets" }
+bondry-transport = { version = "0.2.1", path = "../../contract/bondry-transport" }
 bytes.workspace = true
 http.workspace = true
 serde.workspace = true
@@ -27,7 +27,7 @@ serde_json.workspace = true
 tokio = { workspace = true, features = ["rt", "time"] }
 
 [dev-dependencies]
-bondry-runtime-ffi = { version = "0.2.0", path = "../bondry-runtime-ffi" }
+bondry-runtime-ffi = { version = "0.2.1", path = "../bondry-runtime-ffi" }
 tempfile.workspace = true
 
 [lints.rust]

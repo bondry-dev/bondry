@@ -11,11 +11,11 @@ license.workspace = true
 crate-type = ["rlib", "staticlib"]
 
 [dependencies]
-bondry-core = { version = "0.2.0", path = "../../contract/bondry-core" }
-bondry-delivery-store = { version = "0.2.0", path = "../../contract/bondry-delivery-store" }
-bondry-secrets = { version = "0.2.0", path = "../../contract/bondry-secrets" }
-bondry-webhook-ingress = { version = "0.2.0", path = "../../proto/bondry-webhook-ingress" }
-bondry-webhook-verify = { version = "0.2.0", path = "../../proto/bondry-webhook-verify" }
+bondry-core = { version = "0.2.1", path = "../../contract/bondry-core" }
+bondry-delivery-store = { version = "0.2.1", path = "../../contract/bondry-delivery-store" }
+bondry-secrets = { version = "0.2.1", path = "../../contract/bondry-secrets" }
+bondry-webhook-ingress = { version = "0.2.1", path = "../../proto/bondry-webhook-ingress" }
+bondry-webhook-verify = { version = "0.2.1", path = "../../proto/bondry-webhook-verify" }
 http.workspace = true
 serde.workspace = true
 serde_json.workspace = true
