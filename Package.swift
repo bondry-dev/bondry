@@ -2,7 +2,7 @@
 
 import PackageDescription
 
-let bondryVersion = "0.2.1"
+let bondryVersion = "0.2.2"
 let releaseBaseURL =
   "https://github.com/bondry-dev/bondry/releases/download/v\(bondryVersion)"
 
@@ -25,27 +25,27 @@ let package = Package(
     .binaryTarget(
       name: "CBondryRuntime",
       url: "\(releaseBaseURL)/BondryRuntime.xcframework.zip",
-      checksum: "273f8949283a7f1b4288b8b74280e873c5440fc17b09aa47995f47319f1e21ab"
+      checksum: "0972fe9a8cccf2920b51b922db96a83f85a870c442c047312b1acf1cb3b41a64"
     ),
     .binaryTarget(
       name: "CBondryLocalServer",
       url: "\(releaseBaseURL)/BondryLocalServer.xcframework.zip",
-      checksum: "a4e72ff50b095bd38716cb49abb6823d23cc418328f2c3ed82bb5becb62b4643"
+      checksum: "595294621a09849adc8317473ec997a7be4b0188adaf265f95615363ca9a7d1a"
     ),
     .binaryTarget(
       name: "CBondryRESTServer",
       url: "\(releaseBaseURL)/BondryRESTServer.xcframework.zip",
-      checksum: "b77cd6e3617644da88590a0723dd12c58bb8ebb0fe064df49a0a688158e90303"
+      checksum: "f10128a00101ce2bdbfd27a3fd5f7c20d7fcb8020ae3e2007265468a11eba2a8"
     ),
     .binaryTarget(
       name: "CBondryEgress",
       url: "\(releaseBaseURL)/BondryEgress.xcframework.zip",
-      checksum: "1ec1aff2b241671344619752a72430955c26bfba630ce8c44f97362a3149e69c"
+      checksum: "bed1af73a880fb015aeadef4b29539d1839c134fc85e80edef315175615141c9"
     ),
     .binaryTarget(
       name: "CBondryWebhookIngress",
       url: "\(releaseBaseURL)/BondryWebhookIngress.xcframework.zip",
-      checksum: "3b95e7193e7ca8d68386445b6602ffff9050050bf103bd33ead09c93875f2c73"
+      checksum: "51ac208a663cdb23fb15d34cfa8717af8363968ef3a5678f1e9a0dcc61a31235"
     ),
     .target(
       name: "BondryApple",
