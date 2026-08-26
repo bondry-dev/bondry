@@ -2,6 +2,7 @@
 #include "bondry.h"
 #include "bondry_egress.h"
 #include "bondry_local_server.h"
+#include "bondry_rest_server.h"
 #include "bondry_webhook_ingress.h"
 
 #include <stdlib.h>
@@ -12,6 +13,10 @@ struct BondryStoreHandle {
 };
 
 struct BondryServerHandle {
+    uint8_t marker;
+};
+
+struct BondryRestServerHandle {
     uint8_t marker;
 };
 
@@ -678,6 +683,60 @@ BondryStatus bondry_server_start_v1(
 }
 
 BondryStatus bondry_server_stop_v1(BondryServerHandle *server) {
+    if (server != NULL) {
+        server_stop_count += 1;
+        free(server);
+    }
+    return server_stop_status;
+}
+
+BondryStatus bondry_rest_server_start_v1(
+    const BondryStoreHandle *store,
+    const uint8_t *configuration_json,
+    size_t configuration_json_length,
+    BondryRestServerHandle **out_server,
+    BondryRestServerAddressV1 *out_address
+) {
+    server_start_count += 1;
+    capture_bytes(
+        captured_server_configuration,
+        sizeof(captured_server_configuration),
+        &captured_server_configuration_length,
+        configuration_json,
+        configuration_json_length
+    );
+    if (out_server != NULL) {
+        *out_server = NULL;
+    }
+    if (out_address != NULL) {
+        memset(out_address, 0, sizeof(*out_address));
+    }
+    if (server_start_status != BONDRY_STATUS_OK) {
+        return server_start_status;
+    }
+    if (store == NULL || configuration_json == NULL || out_server == NULL ||
+        out_address == NULL) {
+        return BONDRY_STATUS_NULL_POINTER;
+    }
+    if (return_null_server_handle) {
+        return BONDRY_STATUS_OK;
+    }
+    BondryRestServerHandle *server = malloc(sizeof(*server));
+    if (server == NULL) {
+        return BONDRY_STATUS_INTERNAL_FAILURE;
+    }
+    server->marker = 1;
+    *out_server = server;
+    if (return_invalid_server_address) {
+        out_address->address[0] = 0xFF;
+    } else {
+        write_string(out_address->address, sizeof(out_address->address), "127.0.0.1");
+    }
+    out_address->port = 54321;
+    return BONDRY_STATUS_OK;
+}
+
+BondryStatus bondry_rest_server_stop_v1(BondryRestServerHandle *server) {
     if (server != NULL) {
         server_stop_count += 1;
         free(server);
