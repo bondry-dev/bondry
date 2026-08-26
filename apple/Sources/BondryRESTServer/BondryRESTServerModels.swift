@@ -268,7 +268,7 @@ struct RESTAuthenticationInput: Encodable {
 }
 
 extension BondryPrincipalKind {
-  fileprivate var restServerValue: String {
+  var restServerValue: String {
     switch self {
     case .user: "user"
     case .application: "application"

@@ -24,6 +24,26 @@ let server = try runtime.startRESTServer(configuration: configuration)
 print(server.endpoint.address, server.endpoint.port)
 ```
 
+The same product can expose REST through a Unix domain socket without opening a network port. The caller chooses the socket path, its expected owner, the allowed peer user, and the principal used for authorization and audit attribution:
+
+```swift
+import Darwin
+
+let userID = getuid()
+let configuration = try BondryRESTUnixServerConfiguration(
+  socketURL: privateDirectory.appendingPathComponent("service.sock"),
+  ownerUserID: userID,
+  peerUserID: userID,
+  principalID: "local-client"
+)
+let server = try runtime.startRESTUnixServer(configuration: configuration)
+print(server.endpoint.socketURL.path)
+```
+
+The socket's immediate parent must already be a real directory owned by `ownerUserID`, with no group or other permissions, and the process user must match that owner. Bondry creates the socket with mode `0600` and accepts only peers whose operating-system credential matches `peerUserID`. Unix transport always uses the explicit host principal; bearer authentication and browser origins do not apply.
+
+Startup removes a stale socket only when its type, owner, permissions, and failed liveness probe all match the expected state. Shutdown removes only the same filesystem object created by that server instance. The caller remains responsible for choosing and managing the parent directory.
+
 The two server products share authentication, network policy, limits, timeouts, endpoint reporting, and lifecycle behavior. They are alternative dependency choices; an application does not need both for REST access.
 
 Bearer-token authentication is the default. Tokens created through `BondryRuntime` work immediately, and revocation or client disablement takes effect on the next request. REST and MCP use separate adapter identifiers, so each principal needs an explicit grant for each enabled protocol and capability.
@@ -46,7 +66,7 @@ Custom numeric policy is grouped into validated limits and timeouts values for e
 
 `allowedBrowserOrigins` contains exact serialized HTTP or HTTPS origins. Non-loopback cleartext listening requires `allowsCleartextNetworkAccess`; disabled authentication on a non-loopback address additionally requires `allowsUnauthenticatedNetworkAccess`. These flags acknowledge risk and do not provide TLS.
 
-`BondryLocalServer.stop()` and `BondryRESTServer.stop()` are idempotent and thread-safe. They stop accepting requests and wait for bounded graceful shutdown. Deinitialization also stops a running server. The endpoint reports the actual address and port selected by the operating system. Startup and shutdown failures use their server product's error domain, not the runtime storage error domain.
+`BondryLocalServer.stop()`, `BondryRESTServer.stop()`, and `BondryRESTUnixServer.stop()` are idempotent and thread-safe. They stop accepting requests and wait for bounded graceful shutdown. Deinitialization also stops a running server. The endpoint reports the address and port or socket path selected by the configuration. Startup and shutdown failures use their server product's error domain, not the runtime storage error domain.
 
 See [Webhook ingress](webhook-ingress.md) for verified route registration,
 draining, replay administration, and TLS-proxy requirements. The legacy

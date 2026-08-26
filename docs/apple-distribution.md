@@ -4,7 +4,7 @@ Bondry ships five static XCFrameworks so a consumer links only the native functi
 
 - `BondryRuntime.xcframework` contains encrypted storage, authentication, authorization, audit, capability registration, and dispatch.
 - `BondryLocalServer.xcframework` contains the optional local HTTP runtime plus REST and MCP adapters. It calls the runtime through the versioned C ABI and does not contain the SQLCipher store implementation.
-- `BondryRESTServer.xcframework` contains the optional local HTTP runtime and REST adapter without MCP. It uses a separate C ABI entry point and configuration schema so MCP cannot be enabled at runtime.
+- `BondryRESTServer.xcframework` contains the optional local HTTP runtime and REST adapter without MCP. It exposes separate TCP and Unix socket entry points and strict configuration schemas so MCP cannot be enabled at runtime.
 - `BondryEgress.xcframework` contains the sans-I/O egress runtime plus webhook and MCP route kinds. It uses host networking on Apple and contains no Rust network or TLS stack.
 - `BondryWebhookIngress.xcframework` contains webhook verification and fixed route adaptation. It composes runtime and local-server vtables and contains neither their implementations nor egress code.
 
@@ -52,13 +52,13 @@ The build fails unless:
 - No native library contains a private build-machine path.
 - `BondryRuntime` exports the runtime ABI and no `bondry_server_*` symbol.
 - `BondryLocalServer` exports the server ABI and does not define `bondry_store_open_v1`.
-- `BondryRESTServer` exports only its REST server ABI, contains no MCP route, and does not define the combined server or runtime store entry points.
+- `BondryRESTServer` exports only its TCP and Unix REST server ABI, contains no MCP route, and does not define the combined server or runtime store entry points.
 - `BondryEgress` exports the egress ABI and contains no runtime store, server, ingress, or Rust network implementation.
 - `BondryWebhookIngress` exports the ingress ABI and contains no runtime store, server, or egress implementation.
 - C consumers link at the macOS 13 and iOS 16 deployment targets.
 - A real runtime-only Swift executable contains neither local-server symbols nor REST or MCP routes and remains below the linked-size budget.
 - A real server-enabled Swift executable starts and stops a local server and remains below its linked-size budget.
-- A real REST-only Swift executable starts and stops its server without linking the combined server entry point or an MCP route.
+- A real REST-only Swift executable starts and stops both TCP and Unix socket servers without linking the combined server entry point or an MCP route, and remains below its linked-size budget.
 - A real ingress-enabled Swift executable verifies and dispatches a loopback webhook, drains its route, and remains below the ingress and combined linked-size budgets.
 - Every archive is structurally valid, deterministic, and has an independently verified SwiftPM checksum.
 

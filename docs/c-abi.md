@@ -60,6 +60,29 @@ Server symbols are not present in `BondryRuntime`. A host links `BondryLocalServ
 
 `bondry_rest_server_start_v1` provides a separate REST-only composition. Its strict configuration omits adapter selection, MCP metadata, and raw-body registration. A library built with only the `rest-server` feature does not contain the combined server entry point or MCP implementation.
 
+`bondry_rest_server_start_unix_v1` starts the same REST-only composition on a Unix domain socket. Its separate strict configuration contains a socket path, expected directory owner, allowed peer user, explicit host principal, REST limits, and timeouts. It does not reuse IP endpoint fields and cannot configure bearer authentication, browser origins, adapters, MCP, or raw-body routes. The returned `BondryRestUnixServerEndpointV1` contains the validated socket path.
+
+Unix configuration version one has this complete shape:
+
+```json
+{
+  "version": 1,
+  "socketPath": "/private/path/service.sock",
+  "ownerUserId": 501,
+  "peerUserId": 501,
+  "principalId": "local-client",
+  "principalKind": "application",
+  "requestsPerMinute": 120,
+  "maxBodyBytes": 1048576,
+  "maxConnections": 64,
+  "headerReadTimeoutMilliseconds": 5000,
+  "requestTimeoutMilliseconds": 30000,
+  "shutdownGracePeriodMilliseconds": 2000
+}
+```
+
+The socket's immediate parent must be a real private directory owned by `ownerUserId`, and the effective process user must match that owner. The listener socket is mode `0600`. Each accepted connection is admitted only when its operating-system peer user matches `peerUserId`. Stale-socket recovery and shutdown cleanup are bounded and identity-checked so Bondry does not unlink an unrelated or replaced filesystem object.
+
 The combined configuration includes the bind address, exact browser origins, rate limits, body and connection limits, timeouts, network-risk acknowledgements, and MCP implementation metadata. Unknown fields, duplicate adapters, inconsistent authentication fields, invalid limits, and MCP metadata without an enabled MCP adapter are rejected. Syntax errors return `BONDRY_STATUS_INVALID_JSON`; a syntactically valid but invalid configuration returns `BONDRY_STATUS_INVALID_ARGUMENT`.
 
 Configuration version one has this complete shape:
@@ -123,7 +146,7 @@ contract.
 
 The server retains the runtime handle before returning. The caller may therefore close its own handle after successful startup. Registration, unregistration, token revocation, client disablement, and grant changes take effect on subsequent requests without restarting the server.
 
-`bondry_server_stop_v1` consumes one server handle and waits for bounded graceful shutdown. Null is a no-op. Startup distinguishes invalid configuration, address binding failure, and other runtime startup failure without returning operating-system error text or paths.
+`bondry_server_stop_v1`, `bondry_rest_server_stop_v1`, and `bondry_rest_server_stop_unix_v1` each consume one matching server handle and wait for bounded graceful shutdown. Null is a no-op. Startup distinguishes invalid configuration, binding failure, and other runtime startup failure without returning operating-system error text or paths.
 
 ## Errors and Panics
 
@@ -142,7 +165,7 @@ Rust unwinding is caught at each fallible ABI entry point and maps to `BONDRY_ST
 
 `Bondry` is the native Swift runtime wrapper. It validates the linked ABI version, accepts only file URLs, maps every public runtime status, closes its handle during deinitialization, and never exposes the opaque pointer outside the package. It provides Swift models for clients, non-secret token metadata, principals, exact capability grants, audit events, complete capability descriptors, and dispatch while transparently retrying queries that grow between calls.
 
-`BondryLocalServer` owns combined server configuration, lifecycle, endpoints, and server-specific errors. `BondryRESTServer` provides the corresponding REST-only surface without adapter or MCP options. Both can access the runtime handle only through Swift package access and the public retained-handle ABI; server concepts are absent from the `Bondry` product. `BondryWebhookIngress` is a separate product that composes retained runtime services with a raw-body generation and exposes bounded asynchronous disable plus replay administration.
+`BondryLocalServer` owns combined server configuration, lifecycle, endpoints, and server-specific errors. `BondryRESTServer` provides REST-only TCP and Unix socket surfaces without adapter or MCP options. Both can access the runtime handle only through Swift package access and the public retained-handle ABI; server concepts are absent from the `Bondry` product. `BondryWebhookIngress` is a separate product that composes retained runtime services with a raw-body generation and exposes bounded asynchronous disable plus replay administration.
 
 Swift hosts register `@Sendable async throws` capability handlers and dispatch JSON as `Data`. The wrapper copies every borrowed C invocation before starting Swift concurrency work and retains each handler until the C release callback. Unknown Swift errors become the fixed `handler_failed` code; only an explicit `BondryCapabilityHandlerError` code crosses the trust boundary. Dispatch uses checked continuations and supports completion before the C entry point returns or later from another thread. A Swift task cancelled before dispatch does not start it. Once the C core accepts an invocation, it runs through handler completion and required auditing even if the waiting task is cancelled later.
 

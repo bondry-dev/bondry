@@ -157,8 +157,12 @@ if nm -gU "$server_macos_library" 2>/dev/null \
     exit 1
 fi
 if ! nm -gU "$rest_server_macos_library" 2>/dev/null \
-    | awk '$NF == "_bondry_rest_server_start_v1" { found = 1 } END { exit !found }'; then
-    printf 'BondryRESTServer does not export bondry_rest_server_start_v1.\n' >&2
+    | awk '
+        $NF == "_bondry_rest_server_start_v1" { tcp = 1 }
+        $NF == "_bondry_rest_server_start_unix_v1" { unix = 1 }
+        END { exit !(tcp && unix) }
+    '; then
+    printf 'BondryRESTServer does not export both REST server entry points.\n' >&2
     exit 1
 fi
 if nm -gU "$rest_server_macos_library" 2>/dev/null \
@@ -503,6 +507,7 @@ printf '%s\n' \
     'import Bondry' \
     'import BondryApple' \
     'import BondryRESTServer' \
+    'import Darwin' \
     'import Foundation' \
     '' \
     'let databaseURL = URL(fileURLWithPath: CommandLine.arguments[1])' \
@@ -514,6 +519,16 @@ printf '%s\n' \
     '  )' \
     ')' \
     'try server.stop()' \
+    'let socketURL = databaseURL.deletingLastPathComponent().appendingPathComponent("rest.sock")' \
+    'let unixServer = try runtime.startRESTUnixServer(' \
+    '  configuration: try BondryRESTUnixServerConfiguration(' \
+    '    socketURL: socketURL,' \
+    '    ownerUserID: getuid(),' \
+    '    peerUserID: getuid(),' \
+    '    principalID: "probe"' \
+    '  )' \
+    ')' \
+    'try unixServer.stop()' \
     > "$package_directory/Sources/RESTServerProbe/main.swift"
 
 swift build --package-path "$package_directory" --configuration release --product RuntimeProbe
@@ -539,8 +554,12 @@ swift build --package-path "$package_directory" --configuration release --produc
 rest_server_probe="$package_directory/.build/release/RESTServerProbe"
 "$rest_server_probe" "$temporary_directory/swift-rest-server.db"
 if ! nm -gU "$rest_server_probe" 2>/dev/null \
-    | awk '$NF == "_bondry_rest_server_start_v1" { found = 1 } END { exit !found }'; then
-    printf 'The REST-only Swift executable does not contain its server entry point.\n' >&2
+    | awk '
+        $NF == "_bondry_rest_server_start_v1" { tcp = 1 }
+        $NF == "_bondry_rest_server_start_unix_v1" { unix = 1 }
+        END { exit !(tcp && unix) }
+    '; then
+    printf 'The REST-only Swift executable does not contain both server entry points.\n' >&2
     exit 1
 fi
 if nm -gU "$rest_server_probe" 2>/dev/null \
@@ -550,6 +569,13 @@ if nm -gU "$rest_server_probe" 2>/dev/null \
 fi
 if strings -a "$rest_server_probe" | grep -E -q '(^|[^[:alnum:]])/mcp([^[:alnum:]]|$)'; then
     printf 'The REST-only Swift executable contains an MCP route.\n' >&2
+    exit 1
+fi
+rest_server_probe_size=$(stat -f %z "$rest_server_probe")
+rest_server_delta=$((rest_server_probe_size - runtime_probe_size))
+if [ "$rest_server_delta" -gt 6291456 ]; then
+    printf 'The REST-only server linked delta exceeds 6 MiB: %s bytes.\n' \
+        "$rest_server_delta" >&2
     exit 1
 fi
 
@@ -652,6 +678,7 @@ for scheme in IngressProbe CombinedProbe; do
 done
 
 printf 'Verified runtime-only executable: %s bytes\n' "$runtime_probe_size"
+printf 'Verified REST-only server linked delta: %s bytes\n' "$rest_server_delta"
 printf 'Verified egress linked delta: %s bytes\n' "$egress_delta"
 printf 'Verified server-enabled executable: %s bytes\n' "$server_probe_size"
 printf 'Verified ingress linked delta: %s bytes\n' "$ingress_delta"

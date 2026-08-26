@@ -31,6 +31,12 @@ This runtime does not terminate TLS. Any non-loopback bind requires `allowing_cl
 
 Hosts should keep the default loopback bind. If network access is required, a host should place Bondry behind a trusted TLS terminator or provide a future secure transport implementation instead of transmitting bearer credentials over cleartext HTTP.
 
+## Unix Socket Exposure
+
+With the optional `unix-socket` feature, `LocalUnixHttpServer` serves REST over a caller-selected Unix domain socket without exposing a network listener. The caller supplies the expected parent-directory owner, allowed peer user, and explicit principal. The immediate parent must already be private, the socket is created with mode `0600`, and each connection is checked against operating-system peer credentials before HTTP is served.
+
+The Unix surface deliberately excludes bearer authentication, browser origins, MCP, and raw-body routes. Stale-socket recovery verifies type, ownership, permissions, and liveness before unlinking. Shutdown unlinks only the filesystem object created by that server instance.
+
 Webhook signatures make byte preservation part of the proxy trust boundary.
 See [Webhook ingress](webhook-ingress.md) for the required TLS-termination and
 raw-body behavior.
