@@ -45,8 +45,8 @@ typedef struct BondryRestTLSIdentityV1 {
     size_t struct_size;
     const BondryRestTLSByteSliceV1 *certificate_chain;
     size_t certificate_count;
-    const uint8_t *private_key_pkcs8;
-    size_t private_key_pkcs8_length;
+    const uint8_t *private_key_der;
+    size_t private_key_der_length;
 } BondryRestTLSIdentityV1;
 
 typedef struct BondryRestServerAddressV1 {

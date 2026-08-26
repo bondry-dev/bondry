@@ -84,7 +84,7 @@ final class BondryRESTServerTests: XCTestCase {
     let server = try runtime.startRESTTLSServer(
       configuration: configuration,
       certificateChainDER: [Data([0x30, 0x02])],
-      privateKeyPKCS8DER: &privateKey
+      privateKeyDER: &privateKey
     )
 
     XCTAssertTrue(server.isRunning)
@@ -100,7 +100,7 @@ final class BondryRESTServerTests: XCTestCase {
     XCTAssertEqual(json["allowUnauthenticatedNetwork"] as? Bool, false)
     XCTAssertNil(json["allowCleartextNetwork"])
     XCTAssertNil(json["certificateChainDER"])
-    XCTAssertNil(json["privateKeyPKCS8DER"])
+    XCTAssertNil(json["privateKeyDER"])
     try server.stop()
   }
 
@@ -128,7 +128,7 @@ final class BondryRESTServerTests: XCTestCase {
       try runtime.startRESTTLSServer(
         configuration: BondryRESTTLSServerConfiguration(),
         certificateChainDER: [],
-        privateKeyPKCS8DER: &privateKey
+        privateKeyDER: &privateKey
       )
     ) { error in
       XCTAssertEqual(

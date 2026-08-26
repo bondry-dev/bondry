@@ -60,7 +60,7 @@ Server symbols are not present in `BondryRuntime`. A host links `BondryLocalServ
 
 `bondry_rest_server_start_v1` provides a separate REST-only composition. Its strict configuration omits adapter selection, MCP metadata, and raw-body registration. A library built with only the `rest-server` feature does not contain the combined server entry point or MCP implementation.
 
-`bondry_rest_server_start_tls_v1` starts that composition over TLS 1.3. Its versioned JSON contains only non-secret policy. A separate versioned `BondryRestTLSIdentityV1` borrows a bounded leaf-first DER chain and PKCS#8 private key for the synchronous startup call. The implementation clears its temporary private-key copies after constructing the server; callers remain responsible for clearing their borrowed input buffer.
+`bondry_rest_server_start_tls_v1` starts that composition over TLS 1.3. Its versioned JSON contains only non-secret policy. A separate versioned `BondryRestTLSIdentityV1` borrows a bounded leaf-first DER chain and a PKCS#1, PKCS#8, or SEC1 private key for the synchronous startup call. The implementation clears its temporary private-key copies after constructing the server; callers remain responsible for clearing their borrowed input buffer.
 
 `bondry_rest_server_start_unix_v1` starts the same REST-only composition on a Unix domain socket. Its separate strict configuration contains a socket path, expected directory owner, allowed peer user, explicit host principal, REST limits, and timeouts. It does not reuse IP endpoint fields and cannot configure bearer authentication, browser origins, adapters, MCP, or raw-body routes. The returned `BondryRestUnixServerEndpointV1` contains the validated socket path.
 

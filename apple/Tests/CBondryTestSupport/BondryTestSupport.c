@@ -772,7 +772,7 @@ BondryStatus bondry_rest_server_start_tls_v1(
     if (identity->abi_version != BONDRY_REST_TLS_IDENTITY_ABI_VERSION_V1 ||
         identity->struct_size < sizeof(*identity) ||
         identity->certificate_chain == NULL || identity->certificate_count == 0 ||
-        identity->private_key_pkcs8 == NULL || identity->private_key_pkcs8_length == 0) {
+        identity->private_key_der == NULL || identity->private_key_der_length == 0) {
         return BONDRY_STATUS_INVALID_ARGUMENT;
     }
     if (return_null_server_handle) {

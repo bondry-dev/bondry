@@ -65,7 +65,7 @@ pub const BONDRY_REST_TLS_CERTIFICATE_COUNT_V1: usize = 16;
 #[cfg(feature = "rest-server")]
 pub const BONDRY_REST_TLS_CERTIFICATE_CHAIN_BYTES_V1: usize =
     bondry_http_server::MAX_TLS_CERTIFICATE_CHAIN_BYTES;
-/// Maximum PKCS#8 DER bytes accepted in one TLS identity.
+/// Maximum DER bytes accepted in one TLS identity.
 #[cfg(feature = "rest-server")]
 pub const BONDRY_REST_TLS_PRIVATE_KEY_BYTES_V1: usize =
     bondry_http_server::MAX_TLS_PRIVATE_KEY_BYTES;
@@ -409,7 +409,7 @@ pub struct BondryRestTlsByteSliceV1 {
     pub length: usize,
 }
 
-/// Borrowed leaf-first certificate chain and PKCS#8 private key.
+/// Borrowed leaf-first certificate chain and DER private key.
 #[cfg(feature = "rest-server")]
 #[repr(C)]
 pub struct BondryRestTlsIdentityV1 {
@@ -421,10 +421,10 @@ pub struct BondryRestTlsIdentityV1 {
     pub certificate_chain: *const BondryRestTlsByteSliceV1,
     /// Number of certificate slices.
     pub certificate_count: usize,
-    /// Borrowed PKCS#8 private-key bytes.
-    pub private_key_pkcs8: *const u8,
+    /// Borrowed PKCS#1, PKCS#8, or SEC1 private-key bytes.
+    pub private_key_der: *const u8,
     /// Number of private-key bytes.
-    pub private_key_pkcs8_length: usize,
+    pub private_key_der_length: usize,
 }
 
 /// The bound Unix socket endpoint returned after REST-server startup.
@@ -1191,10 +1191,10 @@ unsafe fn copy_tls_identity(identity: &BondryRestTlsIdentityV1) -> Result<Copied
         || identity.certificate_count == 0
         || identity.certificate_count > BONDRY_REST_TLS_CERTIFICATE_COUNT_V1
         || identity.certificate_chain.is_null()
-        || identity.private_key_pkcs8.is_null()
-        || identity.private_key_pkcs8_length == 0
-        || identity.private_key_pkcs8_length > BONDRY_REST_TLS_PRIVATE_KEY_BYTES_V1
-        || identity.private_key_pkcs8_length > isize::MAX as usize
+        || identity.private_key_der.is_null()
+        || identity.private_key_der_length == 0
+        || identity.private_key_der_length > BONDRY_REST_TLS_PRIVATE_KEY_BYTES_V1
+        || identity.private_key_der_length > isize::MAX as usize
     {
         return Err(BONDRY_STATUS_INVALID_ARGUMENT);
     }
@@ -1221,12 +1221,8 @@ unsafe fn copy_tls_identity(identity: &BondryRestTlsIdentityV1) -> Result<Copied
             .push(unsafe { slice::from_raw_parts(certificate.bytes, certificate.length) }.to_vec());
     }
     // SAFETY: The validated private-key buffer is readable by the function contract.
-    let private_key = unsafe {
-        slice::from_raw_parts(
-            identity.private_key_pkcs8,
-            identity.private_key_pkcs8_length,
-        )
-    };
+    let private_key =
+        unsafe { slice::from_raw_parts(identity.private_key_der, identity.private_key_der_length) };
     Ok(CopiedTlsIdentity {
         certificate_chain,
         private_key: Zeroizing::new(private_key.to_vec()),
@@ -1759,8 +1755,8 @@ mod rest_server_tests {
             struct_size: std::mem::size_of::<BondryRestTlsIdentityV1>(),
             certificate_chain: certificate_chain.as_ptr(),
             certificate_count: certificate_chain.len(),
-            private_key_pkcs8: private_key.as_ptr(),
-            private_key_pkcs8_length: private_key.len(),
+            private_key_der: private_key.as_ptr(),
+            private_key_der_length: private_key.len(),
         };
         let input = serde_json::to_vec(&tls_configuration())?;
         let mut server = ptr::null_mut();

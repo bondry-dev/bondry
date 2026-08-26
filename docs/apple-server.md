@@ -35,7 +35,7 @@ var privateKey = loadPrivateKeyFromSecureStorage()
 let server = try runtime.startRESTTLSServer(
   configuration: configuration,
   certificateChainDER: certificateChain,
-  privateKeyPKCS8DER: &privateKey
+  privateKeyDER: &privateKey
 )
 ```
 

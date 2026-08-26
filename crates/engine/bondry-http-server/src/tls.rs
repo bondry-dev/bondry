@@ -2,7 +2,7 @@ use std::{sync::Arc, time::Duration};
 
 use rustls::{
     ServerConfig,
-    pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer},
+    pki_types::{CertificateDer, PrivateKeyDer},
     sign::{CertifiedKey, SingleCertAndKey},
 };
 use thiserror::Error;
@@ -11,7 +11,7 @@ use zeroize::Zeroizing;
 
 /// Maximum aggregate DER size accepted for one server certificate chain.
 pub const MAX_TLS_CERTIFICATE_CHAIN_BYTES: usize = 256 * 1_024;
-/// Maximum PKCS#8 DER size accepted for one server private key.
+/// Maximum DER size accepted for one server private key.
 pub const MAX_TLS_PRIVATE_KEY_BYTES: usize = 64 * 1_024;
 const MAX_TLS_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(60);
 
@@ -23,16 +23,16 @@ pub struct TlsServerConfiguration {
 }
 
 impl TlsServerConfiguration {
-    /// Builds a TLS 1.3 configuration from a leaf-first DER chain and PKCS#8 private key.
+    /// Builds a TLS 1.3 configuration from a leaf-first DER chain and DER private key.
     pub fn new(
         certificate_chain_der: Vec<Vec<u8>>,
-        private_key_pkcs8_der: Vec<u8>,
+        private_key_der: Vec<u8>,
         handshake_timeout: Duration,
     ) -> Result<Self, TlsServerConfigurationError> {
-        let private_key_pkcs8_der = Zeroizing::new(private_key_pkcs8_der);
+        let private_key_der = Zeroizing::new(private_key_der);
         validate_material(
             &certificate_chain_der,
-            private_key_pkcs8_der.as_slice(),
+            private_key_der.as_slice(),
             handshake_timeout,
         )?;
 
@@ -40,8 +40,8 @@ impl TlsServerConfiguration {
             .into_iter()
             .map(CertificateDer::from)
             .collect();
-        let private_key =
-            PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(private_key_pkcs8_der.as_slice()));
+        let private_key = PrivateKeyDer::try_from(private_key_der.as_slice())
+            .map_err(|_| TlsServerConfigurationError::InvalidPrivateKey)?;
         let signing_key = rustls::crypto::ring::sign::any_supported_type(&private_key)
             .map_err(|_| TlsServerConfigurationError::InvalidIdentity)?;
         let certified_key = CertifiedKey::new(certificates, signing_key);
@@ -71,7 +71,7 @@ impl TlsServerConfiguration {
 
 fn validate_material(
     certificate_chain_der: &[Vec<u8>],
-    private_key_pkcs8_der: &[u8],
+    private_key_der: &[u8],
     handshake_timeout: Duration,
 ) -> Result<(), TlsServerConfigurationError> {
     if certificate_chain_der.is_empty()
@@ -85,7 +85,7 @@ fn validate_material(
     {
         return Err(TlsServerConfigurationError::InvalidCertificateChain);
     }
-    if private_key_pkcs8_der.is_empty() || private_key_pkcs8_der.len() > MAX_TLS_PRIVATE_KEY_BYTES {
+    if private_key_der.is_empty() || private_key_der.len() > MAX_TLS_PRIVATE_KEY_BYTES {
         return Err(TlsServerConfigurationError::InvalidPrivateKey);
     }
     if handshake_timeout.is_zero() || handshake_timeout > MAX_TLS_HANDSHAKE_TIMEOUT {
@@ -100,7 +100,7 @@ pub enum TlsServerConfigurationError {
     /// The certificate chain is empty, contains an empty certificate, or exceeds 256 KiB.
     #[error("TLS certificate chain is invalid or too large")]
     InvalidCertificateChain,
-    /// The PKCS#8 private key is empty or exceeds 64 KiB.
+    /// The PKCS#1, PKCS#8, or SEC1 private key is invalid or exceeds 64 KiB.
     #[error("TLS private key is invalid or too large")]
     InvalidPrivateKey,
     /// The certificate and private key could not form a usable server identity.
