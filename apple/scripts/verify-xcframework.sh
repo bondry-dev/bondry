@@ -527,7 +527,7 @@ printf '%s\n' \
     '      authentication: .disabled(principalID: "probe")' \
     '    ),' \
     '    certificateChainDER: [Data([0x30])],' \
-    '    privateKeyPKCS8DER: &privateKey' \
+    '    privateKeyDER: &privateKey' \
     '  )' \
     '  try tlsServer.stop()' \
     '} catch {}' \
