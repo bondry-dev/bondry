@@ -233,6 +233,14 @@ fn test_tls_identity() -> Result<TestTlsIdentity, Box<dyn std::error::Error>> {
 fn start_tls(
     handshake_timeout: Duration,
 ) -> Result<(LocalHttpServer, TestTlsIdentity), Box<dyn std::error::Error>> {
+    start_tls_with_configuration(authenticated_configuration(), handshake_timeout)
+}
+
+#[cfg(feature = "tls")]
+fn start_tls_with_configuration(
+    configuration: ServerConfiguration,
+    handshake_timeout: Duration,
+) -> Result<(LocalHttpServer, TestTlsIdentity), Box<dyn std::error::Error>> {
     let identity = test_tls_identity()?;
     let tls = TlsServerConfiguration::new(
         vec![identity.leaf.clone()],
@@ -240,8 +248,7 @@ fn start_tls(
         handshake_timeout,
     )?;
     let protocols: Vec<Arc<dyn HttpProtocol>> = vec![Arc::new(rest_protocol()?)];
-    let server =
-        LocalHttpServer::start_tls_with_protocols(authenticated_configuration(), tls, protocols)?;
+    let server = LocalHttpServer::start_tls_with_protocols(configuration, tls, protocols)?;
     Ok((server, identity))
 }
 
@@ -419,6 +426,46 @@ fn rejects_tls_12_plaintext_and_interrupted_handshakes_without_stopping()
         &[&rustls::version::TLS13],
     )?;
     assert_eq!(status(&response), Some(200));
+    Ok(())
+}
+
+#[cfg(feature = "tls")]
+#[test]
+fn bounds_concurrent_tls_handshakes_without_stopping() -> Result<(), Box<dyn std::error::Error>> {
+    let configuration = authenticated_configuration().with_max_connections(1)?;
+    let (server, identity) = start_tls_with_configuration(configuration, Duration::from_secs(1))?;
+    let stalled = TcpStream::connect(server.local_address())?;
+    thread::sleep(Duration::from_millis(50));
+
+    assert!(
+        tls_request(
+            server.local_address(),
+            identity.root.clone(),
+            "localhost",
+            &[&rustls::version::TLS13],
+        )
+        .is_err()
+    );
+
+    drop(stalled);
+    let deadline = Instant::now() + Duration::from_secs(1);
+    loop {
+        match tls_request(
+            server.local_address(),
+            identity.root.clone(),
+            "localhost",
+            &[&rustls::version::TLS13],
+        ) {
+            Ok(response) => {
+                assert_eq!(status(&response), Some(200));
+                break;
+            }
+            Err(_) if Instant::now() < deadline => {
+                thread::sleep(Duration::from_millis(10));
+            }
+            Err(error) => return Err(error),
+        }
+    }
     Ok(())
 }
 
