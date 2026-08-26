@@ -103,9 +103,11 @@ extension BondryRuntime {
     guard certificateBytes <= Int(BONDRY_REST_TLS_CERTIFICATE_CHAIN_BYTES_V1) else {
       throw BondryRESTServerConfigurationError.invalidTLSCertificateChain
     }
-    guard (1...Int(BONDRY_REST_TLS_PRIVATE_KEY_BYTES_V1)).contains(
-      privateKeyDER.count
-    ) else {
+    guard
+      (1...Int(BONDRY_REST_TLS_PRIVATE_KEY_BYTES_V1)).contains(
+        privateKeyDER.count
+      )
+    else {
       throw BondryRESTServerConfigurationError.invalidTLSPrivateKey
     }
 
