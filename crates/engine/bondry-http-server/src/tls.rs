@@ -53,9 +53,10 @@ impl TlsServerConfiguration {
         let builder = ServerConfig::builder_with_provider(provider)
             .with_protocol_versions(&[&rustls::version::TLS13])
             .map_err(|_| TlsServerConfigurationError::TlsUnavailable)?;
-        let configuration = builder
+        let mut configuration = builder
             .with_no_client_auth()
             .with_cert_resolver(Arc::new(SingleCertAndKey::from(certified_key)));
+        configuration.alpn_protocols = vec![b"http/1.1".to_vec()];
         Ok(Self {
             acceptor: TlsAcceptor::from(Arc::new(configuration)),
             handshake_timeout,

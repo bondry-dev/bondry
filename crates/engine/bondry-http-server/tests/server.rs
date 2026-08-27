@@ -280,6 +280,30 @@ fn tls_request(
     Ok(response)
 }
 
+#[cfg(feature = "tls")]
+fn tls_negotiated_protocol(
+    address: SocketAddr,
+    trust_anchor: Vec<u8>,
+) -> Result<Option<Vec<u8>>, Box<dyn std::error::Error>> {
+    let mut roots = RootCertStore::empty();
+    roots.add(CertificateDer::from(trust_anchor))?;
+    let provider = Arc::new(rustls::crypto::ring::default_provider());
+    let mut configuration = ClientConfig::builder_with_provider(provider)
+        .with_protocol_versions(&[&rustls::version::TLS13])?
+        .with_root_certificates(roots)
+        .with_no_client_auth();
+    configuration.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
+    let server_name = ServerName::try_from("localhost".to_owned())?;
+    let mut connection = ClientConnection::new(Arc::new(configuration), server_name)?;
+    let mut stream = TcpStream::connect(address)?;
+    stream.set_read_timeout(Some(Duration::from_secs(2)))?;
+    stream.set_write_timeout(Some(Duration::from_secs(2)))?;
+    while connection.is_handshaking() {
+        connection.complete_io(&mut stream)?;
+    }
+    Ok(connection.alpn_protocol().map(<[u8]>::to_vec))
+}
+
 #[cfg(feature = "unix-socket")]
 fn unix_request(path: &std::path::Path, request: &str) -> std::io::Result<String> {
     let mut stream = UnixStream::connect(path)?;
@@ -389,6 +413,18 @@ fn serves_authenticated_http_only_after_a_tls_13_handshake()
             &[&rustls::version::TLS13],
         )
         .is_err()
+    );
+    Ok(())
+}
+
+#[cfg(feature = "tls")]
+#[test]
+fn negotiates_http_1_1_with_alpn() -> Result<(), Box<dyn std::error::Error>> {
+    let (server, identity) = start_tls(Duration::from_secs(1))?;
+
+    assert_eq!(
+        tls_negotiated_protocol(server.local_address(), identity.root)?,
+        Some(b"http/1.1".to_vec())
     );
     Ok(())
 }
