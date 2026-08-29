@@ -1,0 +1,20 @@
+[package]
+name = "bondry-credential-store-unix"
+description = "Secure Unix private-file credential storage for Bondry hosts"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+license.workspace = true
+
+[dependencies]
+bondry-secrets = { path = "../../contract/bondry-secrets" }
+getrandom.workspace = true
+nix = { workspace = true, features = ["fs"] }
+zeroize.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

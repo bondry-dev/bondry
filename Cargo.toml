@@ -19,6 +19,7 @@ members = [
     "crates/proto/bondry-rest-proto",
     "crates/proto/bondry-webhook-ingress",
     "crates/proto/bondry-webhook-verify",
+    "crates/store/bondry-credential-store-unix",
     "crates/store/bondry-store-sqlcipher",
     "itests/server-bench",
     "itests/server-e2e",

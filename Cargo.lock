@@ -106,6 +106,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "bondry-credential-store-unix"
+version = "0.2.2"
+dependencies = [
+ "bondry-secrets",
+ "getrandom 0.4.3",
+ "nix",
+ "tempfile",
+ "zeroize",
+]
+
+[[package]]
 name = "bondry-delivery-store"
 version = "0.2.2"
 dependencies = [
