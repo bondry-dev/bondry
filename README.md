@@ -36,7 +36,7 @@ cargo deny check
 scripts/measure-egress-size.sh
 swift format lint --recursive --strict Package.swift apple/Package.swift apple/Distribution/Package.release.swift apple/Sources apple/Tests apple/IntegrationTests
 swift test --package-path apple
-shellcheck apple/scripts/*.sh scripts/*.sh
+shellcheck apple/scripts/*.sh linux/scripts/*.sh scripts/*.sh
 ```
 
 Use `cargo xtask affected --base <revision>` to inspect the crate and Apple jobs required by a change.

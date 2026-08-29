@@ -27,7 +27,7 @@ The store has no plaintext open function. Opening it requires a 256-bit `Databas
 
 This provider reports access-controlled protection. It does not claim encryption, operating-system binding, or hardware binding. A host that requires stronger protection must select another provider explicitly and must define its own stable selection, migration, reset, and failure behavior. A temporarily unavailable stronger provider must not cause an implicit downgrade.
 
-Apple builds use SQLCipher's CommonCrypto provider and link the system Security and CoreFoundation frameworks. Other platforms use the vendored OpenSSL provider so the reference store does not depend on a system OpenSSL installation.
+Apple builds use SQLCipher's CommonCrypto provider and link the system Security and CoreFoundation frameworks. Other platforms enable the vendored OpenSSL provider so the reference store does not depend on a system OpenSSL installation by default. Linux distribution builds can run `linux/scripts/prepare-openssl.sh` and set `OPENSSL_DIR`, `OPENSSL_NO_VENDOR=1`, and `OPENSSL_STATIC=1` to reuse the pinned OpenSSL 3.6.3 static archives for GNU or musl targets. Omitting those variables preserves the source-build behavior, and GNU consumers can continue to select a compatible system OpenSSL installation.
 
 Foreign-language hosts open and administer the reference store through the opaque runtime handle in C ABI v1. Swift hosts use `BondryRuntime` with `DatabaseKeyMaterial` from `BondryApple` without persisting an intermediate key copy, then manage clients, tokens, authentication, capabilities, and audit queries through native Swift models.
 

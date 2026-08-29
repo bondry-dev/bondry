@@ -70,6 +70,18 @@ jobs:
       - name: Check formatting
         run: cargo +1.90.0 fmt --all --check
 
+  linux-tooling:
+    name: Linux tooling
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Check shell scripts
+        run: shellcheck linux/scripts/*.sh
+      - name: Test OpenSSL preparation
+        run: linux/scripts/test-prepare-openssl.sh
+
   affected-rust:
     name: Affected Rust
     if: github.event_name == 'pull_request' && needs.changes.outputs.has_packages == 'true'
@@ -412,6 +424,7 @@ jobs:
     needs:
       - changes
       - format
+      - linux-tooling
       - affected-rust
       - full-rust
       - transport-features
