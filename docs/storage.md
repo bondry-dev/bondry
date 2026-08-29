@@ -19,6 +19,14 @@ Bondry's core is storage-neutral. `AuthStore` defines transactional client and t
 
 The store has no plaintext open function. Opening it requires a 256-bit `DatabaseKey`. The key must be persisted separately in a platform-secure secret store. Apple hosts can use the `BondryApple` Keychain provider; other platforms should use their native credential facilities or a host-provided equivalent.
 
+## Credential Storage
+
+`bondry-secrets` defines bounded credential identifiers and values, stable backend capabilities, and a host-injected `CredentialStore` contract. It deliberately has no global default or automatic fallback policy.
+
+`bondry-credential-store-unix` is the portable Unix baseline. It stores one credential per file beneath an existing directory owned by the effective user with exact mode `0700`; credential files require exact mode `0600`, one link, and the same owner. Reads and writes use no-follow descriptors, validate metadata, cap material at 64 KiB, and reject empty values. Replacement uses a random private temporary file, synchronization, atomic rename, and directory synchronization.
+
+This provider reports access-controlled protection. It does not claim encryption, operating-system binding, or hardware binding. A host that requires stronger protection must select another provider explicitly and must define its own stable selection, migration, reset, and failure behavior. A temporarily unavailable stronger provider must not cause an implicit downgrade.
+
 Apple builds use SQLCipher's CommonCrypto provider and link the system Security and CoreFoundation frameworks. Other platforms use the vendored OpenSSL provider so the reference store does not depend on a system OpenSSL installation.
 
 Foreign-language hosts open and administer the reference store through the opaque runtime handle in C ABI v1. Swift hosts use `BondryRuntime` with `DatabaseKeyMaterial` from `BondryApple` without persisting an intermediate key copy, then manage clients, tokens, authentication, capabilities, and audit queries through native Swift models.

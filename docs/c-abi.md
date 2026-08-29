@@ -1,6 +1,6 @@
 # C ABI
 
-`bondry-runtime-ffi` is the language-neutral runtime boundary. Its canonical header is `bindings/c/include/bondry.h`. The optional `bondry-local-server-ffi` has its own `bindings/c/include/bondry_local_server.h` header and calls the runtime exclusively through the runtime ABI. Optional webhook composition is published separately in `bindings/c/include/bondry_webhook_ingress.h`.
+`bondry-runtime-ffi` is the language-neutral runtime boundary. Its canonical header is `bindings/c/include/bondry.h`. The optional `bondry-local-server-ffi` has its own `bindings/c/include/bondry_local_server.h` header and calls the runtime exclusively through the runtime ABI. Optional webhook composition is published separately in `bindings/c/include/bondry_webhook_ingress.h`. Generic credential storage is an independent ABI in `bindings/c/include/bondry_credentials.h` and does not link the runtime.
 
 ## Version One
 
@@ -149,6 +149,16 @@ contract.
 The server retains the runtime handle before returning. The caller may therefore close its own handle after successful startup. Registration, unregistration, token revocation, client disablement, and grant changes take effect on subsequent requests without restarting the server.
 
 `bondry_server_stop_v1`, `bondry_rest_server_stop_v1`, and `bondry_rest_server_stop_unix_v1` each consume one matching server handle and wait for bounded graceful shutdown. Null is a no-op. Startup distinguishes invalid configuration, binding failure, and other runtime startup failure without returning operating-system error text or paths.
+
+## Credential Storage
+
+`bondry-credential-store-ffi` has its own version query, status namespace, opaque handle, capability record, and lifecycle. It can be linked without the runtime, SQLCipher, HTTP, TLS, REST, or MCP components.
+
+`bondry_unix_file_credential_store_open_v1` opens an existing absolute directory owned by the effective user with exact mode `0700`. The provider never chooses or creates a host application's state directory. It rejects unsafe path components, links, unexpected ownership, permissive modes, non-regular credential files, multiple hard links, empty or oversized material, and metadata changes observed before an operation.
+
+Credential identifiers are bounded portable namespace values rather than paths. Values are non-empty byte buffers up to 64 KiB. Stores use mode `0600` temporary files, complete writes, file synchronization, atomic replacement, and directory synchronization. Rust-owned credential buffers are cleared when dropped.
+
+The load function follows the same caller-owned two-call buffer pattern as the runtime ABI and reports absence separately from an empty value. Capability metadata describes access-controlled, host-bound, hardware-bound, or external protection; read-only or read-write access; and unattended availability. These properties let a host select a backend, but Bondry does not select, persist, downgrade, migrate, reset, or purge a host's credential policy.
 
 ## Errors and Panics
 

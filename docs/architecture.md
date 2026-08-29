@@ -34,7 +34,11 @@ Bondry depends on storage contracts, not a particular database. Host application
 
 `BondryApple` is a separate Swift product that stores the SQLCipher database key in Apple Data Protection Keychain. The Rust core remains independent of Security.framework and Apple platform behavior.
 
+`bondry-secrets` defines platform-neutral credential identifiers, redacted values, backend capabilities, and load/store/delete behavior. `bondry-credential-store-unix` is an optional private-file provider that treats Unix ownership and permissions as its protection boundary. It does not choose credential names, storage locations, fallback behavior, migration, or reset policy for a host application.
+
 `bondry-runtime-ffi` exposes runtime ownership through a versioned C ABI. `Bondry` wraps that ABI for Swift without exposing Rust layouts or pointers to application code. `bondry-local-server-ffi` is a separate native boundary that depends on the runtime ABI rather than its Rust implementation. `bondry-webhook-ingress-ffi` composes retained runtime services with the server's versioned raw-body registration hook without a Rust dependency on either FFI implementation.
+
+`bondry-credential-store-ffi` independently exposes generic credential-store ownership and the Unix private-file provider. Its dependency gate prevents it from reaching the runtime, SQLCipher, transports, protocols, or application policy.
 
 ## Adapters
 
