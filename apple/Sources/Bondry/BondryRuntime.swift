@@ -1,6 +1,9 @@
-import BondryApple
 import CBondryRuntime
 import Foundation
+
+#if canImport(BondryApple)
+  import BondryApple
+#endif
 
 // Native operations are synchronized, and this instance owns one immutable handle.
 public final class BondryRuntime: @unchecked Sendable {

@@ -6,18 +6,34 @@ import PackageDescription
   let package = Package(
     name: "Bondry",
     products: [
-      .library(name: "BondryCredentials", targets: ["BondryCredentials"])
+      .library(name: "Bondry", targets: ["Bondry"]),
+      .library(name: "BondryCredentials", targets: ["BondryCredentials"]),
     ],
     targets: [
+      .systemLibrary(
+        name: "CBondryRuntime",
+        path: "linux/Sources/CBondryRuntime",
+        pkgConfig: "bondry-runtime"
+      ),
       .systemLibrary(
         name: "CBondryCredentials",
         path: "linux/Sources/CBondryCredentials",
         pkgConfig: "bondry-credentials"
       ),
       .target(
+        name: "Bondry",
+        dependencies: ["CBondryRuntime"],
+        path: "apple/Sources/Bondry"
+      ),
+      .target(
         name: "BondryCredentials",
         dependencies: ["CBondryCredentials"],
         path: "apple/Sources/BondryCredentials"
+      ),
+      .testTarget(
+        name: "BondryRuntimeLinuxTests",
+        dependencies: ["Bondry"],
+        path: "linux/Tests/BondryRuntimeLinuxTests"
       ),
       .testTarget(
         name: "BondryCredentialsLinuxTests",
