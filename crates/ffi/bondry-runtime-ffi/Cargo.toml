@@ -11,10 +11,10 @@ license.workspace = true
 crate-type = ["rlib", "staticlib"]
 
 [dependencies]
-bondry-auth = { version = "0.2.2", path = "../../contract/bondry-auth" }
-bondry-core = { version = "0.2.2", path = "../../contract/bondry-core" }
-bondry-delivery-store = { version = "0.2.2", path = "../../contract/bondry-delivery-store" }
-bondry-store-sqlcipher = { version = "0.2.2", path = "../../store/bondry-store-sqlcipher" }
+bondry-auth = { version = "0.3.0", path = "../../contract/bondry-auth" }
+bondry-core = { version = "0.3.0", path = "../../contract/bondry-core" }
+bondry-delivery-store = { version = "0.3.0", path = "../../contract/bondry-delivery-store" }
+bondry-store-sqlcipher = { version = "0.3.0", path = "../../store/bondry-store-sqlcipher" }
 serde.workspace = true
 serde_json.workspace = true
 

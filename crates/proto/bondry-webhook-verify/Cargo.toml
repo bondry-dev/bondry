@@ -8,8 +8,8 @@ repository.workspace = true
 license.workspace = true
 
 [dependencies]
-bondry-delivery-store = { version = "0.2.2", path = "../../contract/bondry-delivery-store" }
-bondry-secrets = { version = "0.2.2", path = "../../contract/bondry-secrets" }
+bondry-delivery-store = { version = "0.3.0", path = "../../contract/bondry-delivery-store" }
+bondry-secrets = { version = "0.3.0", path = "../../contract/bondry-secrets" }
 http.workspace = true
 sha2.workspace = true
 thiserror.workspace = true

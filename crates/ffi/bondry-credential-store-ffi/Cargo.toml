@@ -11,8 +11,8 @@ license.workspace = true
 crate-type = ["rlib", "staticlib"]
 
 [dependencies]
-bondry-credential-store-unix = { version = "0.2.2", path = "../../store/bondry-credential-store-unix" }
-bondry-secrets = { version = "0.2.2", path = "../../contract/bondry-secrets" }
+bondry-credential-store-unix = { version = "0.3.0", path = "../../store/bondry-credential-store-unix" }
+bondry-secrets = { version = "0.3.0", path = "../../contract/bondry-secrets" }
 
 [dev-dependencies]
 tempfile.workspace = true

@@ -27,7 +27,7 @@ tls = [
 unix-socket = ["dep:bytes", "dep:nix", "dep:tokio"]
 
 [dependencies]
-bondry-transport = { version = "0.2.2", path = "../../contract/bondry-transport" }
+bondry-transport = { version = "0.3.0", path = "../../contract/bondry-transport" }
 bytes = { workspace = true, optional = true }
 http = { workspace = true, optional = true }
 http-body-util = { workspace = true, optional = true }

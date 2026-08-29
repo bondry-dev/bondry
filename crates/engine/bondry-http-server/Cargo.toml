@@ -16,9 +16,9 @@ tls = ["dep:rustls", "dep:tokio-rustls", "dep:zeroize"]
 
 [dependencies]
 base64.workspace = true
-bondry-core = { version = "0.2.2", path = "../../contract/bondry-core" }
-bondry-mcp-proto = { version = "0.2.2", path = "../../proto/bondry-mcp-proto", optional = true }
-bondry-rest-proto = { version = "0.2.2", path = "../../proto/bondry-rest-proto", optional = true }
+bondry-core = { version = "0.3.0", path = "../../contract/bondry-core" }
+bondry-mcp-proto = { version = "0.3.0", path = "../../proto/bondry-mcp-proto", optional = true }
+bondry-rest-proto = { version = "0.3.0", path = "../../proto/bondry-rest-proto", optional = true }
 bytes.workspace = true
 http.workspace = true
 http-body-util.workspace = true

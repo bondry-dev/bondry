@@ -24,10 +24,10 @@ rest-server = [
 ]
 
 [dependencies]
-bondry-core = { version = "0.2.2", path = "../../contract/bondry-core" }
-bondry-http-server = { version = "0.2.2", path = "../../engine/bondry-http-server", default-features = false }
-bondry-mcp-proto = { version = "0.2.2", path = "../../proto/bondry-mcp-proto", optional = true }
-bondry-rest-proto = { version = "0.2.2", path = "../../proto/bondry-rest-proto", optional = true }
+bondry-core = { version = "0.3.0", path = "../../contract/bondry-core" }
+bondry-http-server = { version = "0.3.0", path = "../../engine/bondry-http-server", default-features = false }
+bondry-mcp-proto = { version = "0.3.0", path = "../../proto/bondry-mcp-proto", optional = true }
+bondry-rest-proto = { version = "0.3.0", path = "../../proto/bondry-rest-proto", optional = true }
 http.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -36,7 +36,7 @@ zeroize = { workspace = true, optional = true }
 
 [dev-dependencies]
 base64.workspace = true
-bondry-runtime-ffi = { version = "0.2.2", path = "../bondry-runtime-ffi" }
+bondry-runtime-ffi = { version = "0.3.0", path = "../bondry-runtime-ffi" }
 tempfile.workspace = true
 
 [lints.rust]

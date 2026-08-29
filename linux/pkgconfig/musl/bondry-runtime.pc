@@ -4,6 +4,6 @@ includedir=${prefix}/include
 
 Name: Bondry Runtime
 Description: Bondry runtime C ABI
-Version: 0.2.2
+Version: 0.3.0
 Libs: -L${libdir} -lbondry_runtime_ffi -lutil -lrt -lpthread -lm -ldl
 Cflags: -I${includedir}

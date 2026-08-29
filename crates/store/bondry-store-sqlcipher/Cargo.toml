@@ -9,9 +9,9 @@ license.workspace = true
 
 [dependencies]
 base64.workspace = true
-bondry-auth = { version = "0.2.2", path = "../../contract/bondry-auth" }
-bondry-core = { version = "0.2.2", path = "../../contract/bondry-core" }
-bondry-delivery-store = { version = "0.2.2", path = "../../contract/bondry-delivery-store" }
+bondry-auth = { version = "0.3.0", path = "../../contract/bondry-auth" }
+bondry-core = { version = "0.3.0", path = "../../contract/bondry-core" }
+bondry-delivery-store = { version = "0.3.0", path = "../../contract/bondry-delivery-store" }
 getrandom.workspace = true
 thiserror.workspace = true
 zeroize.workspace = true

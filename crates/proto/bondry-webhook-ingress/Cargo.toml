@@ -8,9 +8,9 @@ repository.workspace = true
 license.workspace = true
 
 [dependencies]
-bondry-core = { version = "0.2.2", path = "../../contract/bondry-core" }
-bondry-delivery-store = { version = "0.2.2", path = "../../contract/bondry-delivery-store" }
-bondry-webhook-verify = { version = "0.2.2", path = "../bondry-webhook-verify" }
+bondry-core = { version = "0.3.0", path = "../../contract/bondry-core" }
+bondry-delivery-store = { version = "0.3.0", path = "../../contract/bondry-delivery-store" }
+bondry-webhook-verify = { version = "0.3.0", path = "../bondry-webhook-verify" }
 http.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
