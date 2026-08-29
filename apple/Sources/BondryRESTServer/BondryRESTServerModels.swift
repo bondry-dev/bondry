@@ -1,7 +1,12 @@
 import Bondry
 import CBondryRESTServer
-import Darwin
 import Foundation
+
+#if canImport(Darwin)
+  import Darwin
+#elseif canImport(Glibc)
+  import Glibc
+#endif
 
 public enum BondryRESTServerAuthentication: Equatable, Sendable {
   case bearerToken

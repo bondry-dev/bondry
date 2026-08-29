@@ -8,6 +8,7 @@ import PackageDescription
     products: [
       .library(name: "Bondry", targets: ["Bondry"]),
       .library(name: "BondryCredentials", targets: ["BondryCredentials"]),
+      .library(name: "BondryRESTServer", targets: ["BondryRESTServer"]),
     ],
     targets: [
       .systemLibrary(
@@ -20,6 +21,11 @@ import PackageDescription
         path: "linux/Sources/CBondryCredentials",
         pkgConfig: "bondry-credentials"
       ),
+      .systemLibrary(
+        name: "CBondryRESTServer",
+        path: "linux/Sources/CBondryRESTServer",
+        pkgConfig: "bondry-rest-server"
+      ),
       .target(
         name: "Bondry",
         dependencies: ["CBondryRuntime"],
@@ -30,6 +36,11 @@ import PackageDescription
         dependencies: ["CBondryCredentials"],
         path: "apple/Sources/BondryCredentials"
       ),
+      .target(
+        name: "BondryRESTServer",
+        dependencies: ["Bondry", "CBondryRESTServer"],
+        path: "apple/Sources/BondryRESTServer"
+      ),
       .testTarget(
         name: "BondryRuntimeLinuxTests",
         dependencies: ["Bondry"],
@@ -39,6 +50,11 @@ import PackageDescription
         name: "BondryCredentialsLinuxTests",
         dependencies: ["BondryCredentials"],
         path: "linux/Tests/BondryCredentialsLinuxTests"
+      ),
+      .testTarget(
+        name: "BondryRESTServerLinuxTests",
+        dependencies: ["Bondry", "BondryRESTServer"],
+        path: "linux/Tests/BondryRESTServerLinuxTests"
       ),
     ]
   )

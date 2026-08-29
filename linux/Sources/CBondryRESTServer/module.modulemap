@@ -1,0 +1,5 @@
+module CBondryRESTServer [system] {
+  header "shim.h"
+  link "bondry_local_server_ffi"
+  export *
+}
