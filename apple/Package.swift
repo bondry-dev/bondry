@@ -12,6 +12,7 @@ let package = Package(
     .library(name: "Bondry", targets: ["Bondry"]),
     .library(name: "BondryApple", targets: ["BondryApple"]),
     .library(name: "BondryAppIntents", targets: ["BondryAppIntents"]),
+    .library(name: "BondryCredentials", targets: ["BondryCredentials"]),
     .library(name: "BondryLocalServer", targets: ["BondryLocalServer"]),
     .library(name: "BondryRESTServer", targets: ["BondryRESTServer"]),
     .library(name: "BondryEgress", targets: ["BondryEgress"]),
@@ -20,6 +21,10 @@ let package = Package(
   targets: [
     .target(
       name: "CBondryRuntime",
+      publicHeadersPath: "include"
+    ),
+    .target(
+      name: "CBondryCredentials",
       publicHeadersPath: "include"
     ),
     .target(
@@ -42,6 +47,10 @@ let package = Package(
     .target(
       name: "BondryApple",
       linkerSettings: [.linkedFramework("Security")]
+    ),
+    .target(
+      name: "BondryCredentials",
+      dependencies: ["CBondryCredentials"]
     ),
     .target(
       name: "Bondry",
@@ -84,6 +93,12 @@ let package = Package(
       path: "Tests/CBondryTestSupport",
       publicHeadersPath: "include"
     ),
+    .target(
+      name: "CBondryCredentialsTestSupport",
+      dependencies: ["CBondryCredentials"],
+      path: "Tests/CBondryCredentialsTestSupport",
+      publicHeadersPath: "include"
+    ),
     .testTarget(
       name: "BondryAppleTests",
       dependencies: ["BondryApple"]
@@ -91,6 +106,12 @@ let package = Package(
     .testTarget(
       name: "BondryTests",
       dependencies: ["Bondry", "CBondryTestSupport"]
+    ),
+    .testTarget(
+      name: "BondryCredentialsTests",
+      dependencies: [
+        "BondryCredentials", "CBondryCredentials", "CBondryCredentialsTestSupport",
+      ]
     ),
     .testTarget(
       name: "BondryLocalServerTests",
