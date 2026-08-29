@@ -1,10 +1,30 @@
 import Bondry
-import BondryRESTServer
 import Foundation
-import Glibc
 import XCTest
+@testable import BondryRESTServer
+
+#if canImport(Glibc)
+  import Glibc
+#elseif canImport(Musl)
+  import Musl
+#endif
 
 final class BondryRESTServerLinuxTests: XCTestCase {
+  func testPreservesTLSCertificateSlices() throws {
+    let certificates = [
+      Data([0x30, 0x03, 0x02, 0x01, 0x01]),
+      Data([0x30, 0x03, 0x02, 0x01, 0x02]),
+    ]
+    let copied = withRESTTLSCertificateSlices(
+      certificates,
+      capacity: certificates.reduce(into: 0) { $0 += $1.count }
+    ) { slices in
+      slices.map { Data(UnsafeBufferPointer(start: $0.bytes, count: $0.length)) }
+    }
+
+    XCTAssertEqual(try XCTUnwrap(copied), certificates)
+  }
+
   func testServesAuthenticatedPeerOverPrivateUnixSocket() throws {
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
       UUID().uuidString,

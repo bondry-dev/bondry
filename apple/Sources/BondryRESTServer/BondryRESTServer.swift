@@ -112,18 +112,14 @@ extension BondryRuntime {
     }
 
     let input = try JSONEncoder().encode(RESTTLSServerInput(configuration))
-    let certificates = certificateChainDER.map { $0 as NSData }
-    let slices = certificates.map {
-      BondryRestTLSByteSliceV1(
-        bytes: $0.bytes.assumingMemoryBound(to: UInt8.self),
-        length: $0.length
-      )
-    }
     var serverHandle: OpaquePointer?
     var address = BondryRestServerAddressV1()
-    let status = input.withUnsafeBytes { inputBuffer in
-      privateKeyDER.withUnsafeMutableBytes { keyBuffer in
-        slices.withUnsafeBufferPointer { certificateBuffer in
+    let startStatus = withRESTTLSCertificateSlices(
+      certificateChainDER,
+      capacity: certificateBytes
+    ) { certificateBuffer in
+      input.withUnsafeBytes { inputBuffer in
+        privateKeyDER.withUnsafeMutableBytes { keyBuffer in
           var identity = BondryRestTLSIdentityV1(
             abi_version: BONDRY_REST_TLS_IDENTITY_ABI_VERSION_V1,
             struct_size: MemoryLayout<BondryRestTLSIdentityV1>.size,
@@ -142,6 +138,9 @@ extension BondryRuntime {
           )
         }
       }
+    }
+    guard let status = startStatus else {
+      throw BondryRESTServerConfigurationError.invalidTLSCertificateChain
     }
     guard status == BONDRY_STATUS_OK else {
       if let serverHandle {
@@ -164,6 +163,30 @@ extension BondryRuntime {
       _ = bondry_rest_server_stop_v1(serverHandle)
       throw error
     }
+  }
+}
+
+func withRESTTLSCertificateSlices<Result>(
+  _ certificates: [Data],
+  capacity: Int,
+  _ body: (UnsafeBufferPointer<BondryRestTLSByteSliceV1>) -> Result
+) -> Result? {
+  var storage: [UInt8] = []
+  storage.reserveCapacity(capacity)
+  let ranges = certificates.map { certificate in
+    let start = storage.count
+    storage.append(contentsOf: certificate)
+    return start..<storage.count
+  }
+  return storage.withUnsafeBufferPointer { storageBuffer in
+    guard let baseAddress = storageBuffer.baseAddress else { return nil }
+    let slices = ranges.map { range in
+      BondryRestTLSByteSliceV1(
+        bytes: baseAddress.advanced(by: range.lowerBound),
+        length: range.count
+      )
+    }
+    return slices.withUnsafeBufferPointer(body)
   }
 }
 
