@@ -11,6 +11,7 @@ members = [
     "crates/engine/bondry-egress-runtime",
     "crates/engine/bondry-http-server",
     "crates/engine/bondry-transport-net",
+    "crates/ffi/bondry-credential-store-ffi",
     "crates/ffi/bondry-egress-ffi",
     "crates/ffi/bondry-local-server-ffi",
     "crates/ffi/bondry-runtime-ffi",

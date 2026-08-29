@@ -246,6 +246,25 @@ fn check_openssl_confinement(
 fn check_consumer_profiles(workspace: &Workspace, violations: &mut Vec<String>) {
     check_profile(
         workspace,
+        "credential store FFI",
+        &["bondry-credential-store-ffi"],
+        &[
+            "bondry-auth",
+            "bondry-core",
+            "bondry-delivery-store",
+            "bondry-runtime-ffi",
+            "bondry-store-sqlcipher",
+            "hyper",
+            "hyper-util",
+            "rustls",
+            "tokio",
+            "tokio-rustls",
+        ],
+        &["crates/egress", "crates/engine", "crates/proto"],
+        violations,
+    );
+    check_profile(
+        workspace,
         "capability dispatch",
         &["bondry-core", "bondry-auth"],
         FORBIDDEN_RUNTIME_PACKAGES,
