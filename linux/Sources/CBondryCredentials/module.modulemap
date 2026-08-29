@@ -1,0 +1,5 @@
+module CBondryCredentials [system] {
+  header "shim.h"
+  link "bondry_credential_store_ffi"
+  export *
+}
