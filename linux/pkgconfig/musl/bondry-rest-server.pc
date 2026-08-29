@@ -1,0 +1,9 @@
+prefix=${pcfiledir}/../..
+libdir=${prefix}/lib
+includedir=${prefix}/include
+
+Name: Bondry REST Server
+Description: Bondry REST server C ABI
+Version: 0.2.2
+Libs: -L${libdir} -lbondry_local_server_ffi -lutil -lrt -lpthread -lm -ldl
+Cflags: -I${includedir}

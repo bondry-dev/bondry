@@ -15,6 +15,11 @@ script_directory=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 bondry_root=$(CDPATH='' cd -- "$script_directory/../.." && pwd)
 stage_prefix=$1
 cargo_target_directory=${CARGO_TARGET_DIR:-$bondry_root/target}
+cargo_target_subdirectory=${CARGO_BUILD_TARGET:+/$CARGO_BUILD_TARGET}
+pkgconfig_directory=$bondry_root/linux/pkgconfig
+case ${CARGO_BUILD_TARGET:-} in
+    *-musl) pkgconfig_directory=$pkgconfig_directory/musl ;;
+esac
 
 cargo build \
     --locked \
@@ -27,8 +32,8 @@ install -m 0644 \
     "$bondry_root/bindings/c/include/bondry_credentials.h" \
     "$stage_prefix/include/bondry_credentials.h"
 install -m 0644 \
-    "$cargo_target_directory/release/libbondry_credential_store_ffi.a" \
+    "$cargo_target_directory$cargo_target_subdirectory/release/libbondry_credential_store_ffi.a" \
     "$stage_prefix/lib/libbondry_credential_store_ffi.a"
 install -m 0644 \
-    "$bondry_root/linux/pkgconfig/bondry-credentials.pc" \
+    "$pkgconfig_directory/bondry-credentials.pc" \
     "$stage_prefix/lib/pkgconfig/bondry-credentials.pc"
