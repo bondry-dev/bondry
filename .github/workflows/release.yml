@@ -132,7 +132,9 @@ jobs:
           scripts/measure-egress-size.sh
           swift format lint --recursive --strict Package.swift apple/Package.swift apple/Fuzz/Package.swift apple/Distribution/Package.release.swift apple/Fuzz/Sources apple/Sources apple/Tests apple/IntegrationTests
           swift test --package-path apple
-          shellcheck .github/scripts/*.sh apple/scripts/*.sh scripts/*.sh
+          shellcheck .github/scripts/*.sh apple/scripts/*.sh linux/scripts/*.sh scripts/*.sh
+          sh .github/scripts/test-install-homebrew-tools.sh
+          sh apple/scripts/test-render-release-package.sh
       - name: Build release artifact
         run: SOURCE_DATE_EPOCH=946684800 apple/scripts/build-xcframework.sh
       - name: Upload prepared binary
