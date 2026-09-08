@@ -219,7 +219,24 @@ fn failed_admission_rolls_back_cleanup_and_usage() -> TestResult {
 }
 
 #[test]
-fn rejection_preserves_each_stores_existing_cleanup_transaction_behavior() -> TestResult {
+fn ignored_admission_commits_completed_retention_cleanup() -> TestResult {
+    let store = store()?;
+    seed_history(&store, 1)?;
+    store.connection()?.execute_batch(
+        "CREATE TRIGGER ignore_admission BEFORE INSERT ON delivery_log BEGIN
+             SELECT RAISE(IGNORE); END;",
+    )?;
+    assert_eq!(
+        delivery(&store).insert_intent(intent(1, RETENTION_MS + 101)?),
+        Err(DeliveryLogError::Conflict)
+    );
+    assert_eq!(super::read(&*store.connection()?, "delivery_log")?, (0, 0));
+    assert_usage(&store)?;
+    Ok(())
+}
+
+#[test]
+fn duplicate_admissions_commit_completed_retention_cleanup() -> TestResult {
     let store = store()?;
     seed_history(&store, 2)?;
     store.connection()?.execute(
@@ -237,7 +254,7 @@ fn rejection_preserves_each_stores_existing_cleanup_transaction_behavior() -> Te
         delivery(&store).insert_intent(intent(1, RETENTION_MS + 101)?),
         Err(DeliveryLogError::Conflict)
     );
-    assert_eq!(super::read(&*store.connection()?, "delivery_log")?.0, 2);
+    assert_eq!(super::read(&*store.connection()?, "delivery_log")?.0, 1);
     assert_eq!(
         dedup(&store).claim(
             key(1)?,
@@ -252,7 +269,7 @@ fn rejection_preserves_each_stores_existing_cleanup_transaction_behavior() -> Te
 }
 
 #[test]
-fn capacity_rejection_preserves_cleanup_commit_and_rollback_behavior() -> TestResult {
+fn capacity_rejection_commits_completed_retention_cleanup() -> TestResult {
     let store = store()?;
     seed_history(&store, 1_001)?;
     store.connection()?.execute(
@@ -282,7 +299,7 @@ fn capacity_rejection_preserves_cleanup_commit_and_rollback_behavior() -> TestRe
         delivery.insert_intent(intent(2_000, RETENTION_MS + 101)?),
         Err(DeliveryLogError::CapacityExhausted)
     );
-    assert_eq!(super::read(&*store.connection()?, "delivery_log")?.0, 1_001);
+    assert_eq!(super::read(&*store.connection()?, "delivery_log")?.0, 1_000);
     assert_eq!(
         dedup.claim(
             key(2_000)?,
@@ -595,5 +612,62 @@ fn admission_work_stays_bounded_as_retained_history_grows() -> TestResult {
     }
     assert!(measured[1].0 <= measured[0].0 + 100);
     assert!(measured[1].1 <= measured[0].1 + 100);
+    Ok(())
+}
+
+#[test]
+fn repeated_delivery_rejections_do_not_repeat_expired_history_cleanup() -> TestResult {
+    for conflict in [false, true] {
+        for expired in [2_000_u32, 20_000] {
+            let store = store()?;
+            seed_history(&store, expired + 1_000)?;
+            store.connection()?.execute(
+                "UPDATE delivery_log SET state = 'pending' WHERE sequence > ?1",
+                [expired + 1],
+            )?;
+            store.connection()?.execute(
+                "UPDATE delivery_log SET updated_at_ms = 101 WHERE sequence = ?1",
+                [expired + 1],
+            )?;
+            let delivery = SqlCipherDeliveryLog::new(
+                store.clone(),
+                PersistentDeliveryLogLimits::new(
+                    1_000,
+                    64 * 1024 * 1024,
+                    Duration::from_millis(RETENTION_MS),
+                )?,
+            );
+            let (rejected_id, error) = if conflict {
+                (expired, DeliveryLogError::Conflict)
+            } else {
+                (expired + 1_000, DeliveryLogError::CapacityExhausted)
+            };
+            let mut measurements = Vec::new();
+            for _ in 0..2 {
+                measurements.push(measure_steps(&store, || {
+                    assert_eq!(
+                        delivery.insert_intent(intent(rejected_id, RETENTION_MS + 101)?),
+                        Err(error)
+                    );
+                    Ok(())
+                })?);
+                assert_eq!(
+                    super::read(&*store.connection()?, "delivery_log")?,
+                    (1_000, 1_000 * 512)
+                );
+                assert_usage(&store)?;
+            }
+            assert!(measurements[0] > u64::from(expired), "{measurements:?}");
+            assert!((1..1_000).contains(&measurements[1]), "{measurements:?}");
+            assert!(delivery.delivery(intent(expired, 0)?.delivery())?.is_some());
+            assert_eq!(
+                delivery
+                    .delivery(intent(expired + 999, 0)?.delivery())?
+                    .map(|record| record.state()),
+                Some(bondry_delivery_store::DeliveryState::Pending)
+            );
+            eprintln!("{expired} expired rows, {error:?}: {measurements:?} VM steps");
+        }
+    }
     Ok(())
 }

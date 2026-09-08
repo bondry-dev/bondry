@@ -11,6 +11,8 @@ The regression test traces every executed statement in an actual admission, incl
 
 The test bounds VM instructions, not elapsed time. It seeds both tables through their accounting triggers and verifies the counters against full aggregates after measurement. It catches either a quota aggregate or an expiration scan returning to the admission path.
 
+Expected delivery conflicts and capacity rejections commit successful retention cleanup. A regression repeats both failures with 2,000 and 20,000 expired records alongside 1,000 retained records. After the first cleanup, the second conflict takes 44 VM steps and the second capacity rejection takes 55 at either size. Pending records and terminal records exactly at the retention cutoff remain intact. The first cleanup still scales with eligible expired records; unexpected storage errors roll back the transaction.
+
 Before the change, isolated aggregate and no-op cleanup statements showed the following average times across ten warmed executions against an in-memory SQLCipher 4.14.0 database in a development build:
 
 | Retained records | Delivery aggregate | Delivery cleanup | Deduplication aggregate | Deduplication cleanup |
@@ -27,6 +29,7 @@ Reproduce the deterministic scaling checks and run the quota, lifecycle, migrati
 
 ```sh
 cargo test -p bondry-store-sqlcipher admission_work_stays_bounded_as_retained_history_grows -- --nocapture
+cargo test -p bondry-store-sqlcipher repeated_delivery_rejections_do_not_repeat_expired_history_cleanup -- --nocapture
 cargo test -p bondry-store-sqlcipher early_stop_cost_includes_constant_work_before_the_first_callback -- --nocapture
 cargo test -p bondry-store-sqlcipher
 ```

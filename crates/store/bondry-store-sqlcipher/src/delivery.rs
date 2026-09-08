@@ -67,6 +67,9 @@ impl DeliveryLog for SqlCipherDeliveryLog {
             )
             .map_err(|_| DeliveryLogError::Unavailable)?;
         if exists {
+            transaction
+                .commit()
+                .map_err(|_| DeliveryLogError::Unavailable)?;
             return Err(DeliveryLogError::Conflict);
         }
         let (records, bytes) = crate::usage::read(&transaction, "delivery_log")
@@ -77,6 +80,9 @@ impl DeliveryLog for SqlCipherDeliveryLog {
             || bytes.saturating_add(charged_bytes)
                 > i64::try_from(self.limits.bytes()).map_err(|_| DeliveryLogError::Unavailable)?
         {
+            transaction
+                .commit()
+                .map_err(|_| DeliveryLogError::Unavailable)?;
             return Err(DeliveryLogError::CapacityExhausted);
         }
         let changed = transaction
@@ -95,6 +101,9 @@ impl DeliveryLog for SqlCipherDeliveryLog {
             )
             .map_err(|_| DeliveryLogError::Unavailable)?;
         if changed != 1 {
+            transaction
+                .commit()
+                .map_err(|_| DeliveryLogError::Unavailable)?;
             return Err(DeliveryLogError::Conflict);
         }
         transaction
