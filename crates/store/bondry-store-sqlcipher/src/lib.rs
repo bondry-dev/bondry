@@ -7,6 +7,7 @@ mod dedup;
 mod delivery;
 mod grants;
 mod key;
+mod usage;
 
 pub use audit::{AuditQueryLimit, AuditQueryLimitError, StoredAuditEvent};
 pub use database::{SqlCipherStore, SqlCipherStoreError};

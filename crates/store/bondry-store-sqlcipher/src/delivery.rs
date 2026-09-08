@@ -69,12 +69,7 @@ impl DeliveryLog for SqlCipherDeliveryLog {
         if exists {
             return Err(DeliveryLogError::Conflict);
         }
-        let (records, bytes): (i64, i64) = transaction
-            .query_row(
-                "SELECT COUNT(*), COALESCE(SUM(charged_bytes), 0) FROM delivery_log",
-                [],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
+        let (records, bytes) = crate::usage::read(&transaction, "delivery_log")
             .map_err(|_| DeliveryLogError::Unavailable)?;
         let charged_bytes = i64::try_from(PERSISTENT_DELIVERY_RECORD_CHARGE_BYTES)
             .map_err(|_| DeliveryLogError::Unavailable)?;

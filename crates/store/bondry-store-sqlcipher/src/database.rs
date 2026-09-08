@@ -10,7 +10,7 @@ use thiserror::Error;
 
 use crate::DatabaseKey;
 
-const SCHEMA_VERSION: i64 = 6;
+const SCHEMA_VERSION: i64 = 7;
 
 /// SQLCipher-backed authentication and audit persistence.
 pub struct SqlCipherStore {
@@ -92,6 +92,7 @@ fn migrate(connection: &mut Connection) -> Result<(), SqlCipherStoreError> {
     let version: i64 = connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
     match version {
         SCHEMA_VERSION => Ok(()),
+        6 => migrate_from_version_six(connection),
         5 => migrate_from_version_five(connection),
         4 => migrate_from_version_four(connection),
         3 => migrate_from_version_three(connection),
@@ -160,9 +161,7 @@ fn migrate_from_empty(connection: &mut Connection) -> Result<(), SqlCipherStoreE
     )?;
     create_delivery_log_table(&transaction)?;
     create_webhook_dedup_table(&transaction)?;
-    transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
-    transaction.commit()?;
-    Ok(())
+    finish_migration(transaction)
 }
 
 fn migrate_from_version_one(connection: &mut Connection) -> Result<(), SqlCipherStoreError> {
@@ -178,9 +177,7 @@ fn migrate_from_version_one(connection: &mut Connection) -> Result<(), SqlCipher
     rebuild_audit_table(&transaction)?;
     create_delivery_log_table(&transaction)?;
     create_webhook_dedup_table(&transaction)?;
-    transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
-    transaction.commit()?;
-    Ok(())
+    finish_migration(transaction)
 }
 
 fn migrate_from_version_two(connection: &mut Connection) -> Result<(), SqlCipherStoreError> {
@@ -188,31 +185,43 @@ fn migrate_from_version_two(connection: &mut Connection) -> Result<(), SqlCipher
     rebuild_audit_table(&transaction)?;
     create_delivery_log_table(&transaction)?;
     create_webhook_dedup_table(&transaction)?;
-    transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
-    transaction.commit()?;
-    Ok(())
+    finish_migration(transaction)
 }
 
 fn migrate_from_version_three(connection: &mut Connection) -> Result<(), SqlCipherStoreError> {
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
     create_delivery_log_table(&transaction)?;
     create_webhook_dedup_table(&transaction)?;
-    transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
-    transaction.commit()?;
-    Ok(())
+    finish_migration(transaction)
 }
 
 fn migrate_from_version_four(connection: &mut Connection) -> Result<(), SqlCipherStoreError> {
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
     create_webhook_dedup_table(&transaction)?;
-    transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
-    transaction.commit()?;
-    Ok(())
+    finish_migration(transaction)
 }
 
 fn migrate_from_version_five(connection: &mut Connection) -> Result<(), SqlCipherStoreError> {
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
     create_webhook_dedup_key_index(&transaction)?;
+    finish_migration(transaction)
+}
+
+fn migrate_from_version_six(connection: &mut Connection) -> Result<(), SqlCipherStoreError> {
+    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    finish_migration(transaction)
+}
+
+fn finish_migration(transaction: rusqlite::Transaction<'_>) -> Result<(), SqlCipherStoreError> {
+    crate::usage::initialize(&transaction)?;
+    transaction.execute_batch(
+        "CREATE INDEX delivery_log_terminal_expiry
+             ON delivery_log(updated_at_ms) WHERE state != 'pending';
+         DROP INDEX webhook_dedup_by_expiry;
+         CREATE INDEX webhook_dedup_by_expiry
+             ON webhook_dedup(state, expires_at_ms)
+             WHERE state = 'completed' AND expires_at_ms IS NOT NULL;",
+    )?;
     transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     transaction.commit()?;
     Ok(())

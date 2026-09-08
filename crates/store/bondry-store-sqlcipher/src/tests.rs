@@ -402,6 +402,7 @@ fn migrates_version_one_without_losing_authentication_state()
     let manager = AuthManager::from_shared(store.clone());
     let client = manager.create_client(ClientName::new("Migrated Client")?)?;
     let issued = manager.issue_token(client.id(), None, None)?;
+    crate::usage::tests::remove_schema(&store)?;
     store.connection()?.execute_batch(
         "DROP TABLE grants;
          DROP TABLE delivery_log;
@@ -439,6 +440,7 @@ fn migrates_version_two_without_losing_audit_events() -> Result<(), Box<dyn std:
         AuditOutcome::Succeeded,
     ))?;
     store.connection()?.pragma_update(None, "user_version", 2)?;
+    crate::usage::tests::remove_schema(&store)?;
     store.connection()?.execute_batch(
         "DROP TABLE delivery_log;
          DROP TABLE webhook_dedup;",
@@ -473,6 +475,7 @@ fn migrates_version_three_and_adds_delivery_persistence() -> Result<(), Box<dyn 
     let path = database_path(&directory);
     let key = fixed_key(25);
     let store = SqlCipherStore::open(&path, &key)?;
+    crate::usage::tests::remove_schema(&store)?;
     store.connection()?.execute_batch(
         "DROP TABLE delivery_log;
          DROP TABLE webhook_dedup;
@@ -499,6 +502,7 @@ fn migrates_version_four_and_adds_webhook_replay_persistence()
     let path = database_path(&directory);
     let key = fixed_key(30);
     let store = SqlCipherStore::open(&path, &key)?;
+    crate::usage::tests::remove_schema(&store)?;
     store.connection()?.execute_batch(
         "DROP TABLE webhook_dedup;
          PRAGMA user_version = 4;",
@@ -527,6 +531,7 @@ fn migrates_version_five_without_losing_replay_protection() -> Result<(), Box<dy
     }
     dedup.mark_unknown(&dedup_key(1)?, 101)?;
     dedup.complete(&dedup_key(2)?, 102)?;
+    crate::usage::tests::remove_schema(&store)?;
     store.connection()?.execute_batch(
         "DROP INDEX webhook_dedup_by_state_key;
          PRAGMA user_version = 5;",

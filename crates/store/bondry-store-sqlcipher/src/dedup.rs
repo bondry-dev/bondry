@@ -161,12 +161,7 @@ impl DedupStore for SqlCipherDedupStore {
                 .map_err(|_| DedupStoreError::Unavailable)?;
             return Ok(DedupClaim::Duplicate(state));
         }
-        let (records, bytes): (i64, i64) = transaction
-            .query_row(
-                "SELECT COUNT(*), COALESCE(SUM(charged_bytes), 0) FROM webhook_dedup",
-                [],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
+        let (records, bytes) = crate::usage::read(&transaction, "webhook_dedup")
             .map_err(|_| DedupStoreError::Unavailable)?;
         let charged_bytes = encoded_charge(&key)?;
         if records >= i64::from(self.limits.records())
