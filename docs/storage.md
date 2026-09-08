@@ -21,6 +21,8 @@ The store has no plaintext open function. Opening it requires a 256-bit `Databas
 
 Opening an existing database automatically migrates it to schema version 6. This migration adds an index for ordered unknown-webhook traversal and preserves existing records. Older binaries reject the newer schema, so rolling back requires a compatible binary or a database backup from before migration.
 
+Unknown webhook records are streamed in key order without holding the database lock during visitor callbacks. Enumeration is limited to the initial unknown-record count; concurrent changes may require a subsequent pass.
+
 ## Credential Storage
 
 `bondry-secrets` defines bounded credential identifiers and values, stable backend capabilities, and a host-injected `CredentialStore` contract. It deliberately has no global default or automatic fallback policy.

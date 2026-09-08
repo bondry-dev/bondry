@@ -800,6 +800,38 @@ fn visits_unknown_keys_in_order_while_callbacks_resolve_and_insert_records()
 }
 
 #[test]
+fn unknown_traversal_terminates_when_callbacks_reuse_rowids()
+-> Result<(), Box<dyn std::error::Error>> {
+    let store = Arc::new(SqlCipherStore::open_in_memory(&fixed_key(39))?);
+    let dedup = SqlCipherDedupStore::new(store, DedupStoreLimits::default());
+    let keys = (0..=4).map(dedup_key).collect::<Result<Vec<_>, _>>()?;
+    dedup.claim(keys[0].clone(), DedupClaimPolicy::RetainCompleted, 100)?;
+    dedup.mark_unknown(&keys[0], 101)?;
+    let mut visited = 0;
+    let mut callback_result = Ok(());
+    dedup.visit_unknown(&mut |record| {
+        visited += 1;
+        callback_result = (|| {
+            dedup.resolve_unknown(record.key(), DedupResolution::RetryAllowed, 102)?;
+            dedup.claim(
+                keys[visited].clone(),
+                DedupClaimPolicy::RetainCompleted,
+                103,
+            )?;
+            dedup.mark_unknown(&keys[visited], 104)
+        })();
+        callback_result.is_ok() && visited < 4
+    })?;
+    callback_result?;
+    assert_eq!(visited, 1);
+    assert_eq!(
+        dedup.record(&keys[1])?.map(|record| record.state()),
+        Some(DedupState::Unknown)
+    );
+    Ok(())
+}
+
+#[test]
 fn expires_only_eligible_completed_tombstones_and_never_unknown_records()
 -> Result<(), Box<dyn std::error::Error>> {
     let limits = DedupStoreLimits::new(

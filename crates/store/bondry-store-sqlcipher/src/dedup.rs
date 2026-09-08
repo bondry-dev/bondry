@@ -74,13 +74,14 @@ impl SqlCipherDedupStore {
         }
     }
 
-    fn unknown_scan_ceiling(&self) -> Result<i64, DedupStoreError> {
+    fn unknown_scan_bounds(&self) -> Result<(i64, i64), DedupStoreError> {
         let connection = self.connection()?;
         connection
             .query_row(
-                "SELECT COALESCE(MAX(rowid), 0) FROM webhook_dedup",
+                "SELECT COALESCE(MAX(rowid), 0), COUNT(*) FROM webhook_dedup
+                 WHERE state = 'unknown'",
                 [],
-                |row| row.get(0),
+                |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .map_err(|_| DedupStoreError::Unavailable)
     }
@@ -327,9 +328,9 @@ impl DedupStore for SqlCipherDedupStore {
         &self,
         visitor: &mut dyn FnMut(&DedupRecord) -> bool,
     ) -> Result<(), DedupStoreError> {
-        let rowid_ceiling = self.unknown_scan_ceiling()?;
+        let (rowid_ceiling, record_count) = self.unknown_scan_bounds()?;
         let mut cursor = None;
-        loop {
+        for _ in 0..record_count {
             let Some(record) = self.next_unknown(cursor.as_ref(), rowid_ceiling)? else {
                 return Ok(());
             };
@@ -338,6 +339,7 @@ impl DedupStore for SqlCipherDedupStore {
                 return Ok(());
             }
         }
+        Ok(())
     }
 
     fn clear_completed_before(&self, updated_before_unix_ms: u64) -> Result<u64, DedupStoreError> {
