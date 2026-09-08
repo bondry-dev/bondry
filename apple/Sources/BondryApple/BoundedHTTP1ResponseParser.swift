@@ -124,19 +124,21 @@ struct BoundedHTTP1ResponseParser {
 
   private mutating func parseChunked(statusCode: Int) throws -> ParsedHTTPResponse? {
     let delimiter = Data("\r\n".utf8)
+    var offset = buffer.startIndex
+    defer { buffer.removeSubrange(..<offset) }
     while true {
-      guard let sizeRange = buffer.range(of: delimiter) else {
-        guard buffer.count <= 128 else {
+      guard let sizeRange = buffer.range(of: delimiter, in: offset..<buffer.endIndex) else {
+        guard buffer.endIndex - offset <= 128 else {
           throw BondryHTTPTransportError.invalidResponse
         }
         return nil
       }
-      guard sizeRange.lowerBound > buffer.startIndex,
-        sizeRange.lowerBound - buffer.startIndex <= 128
+      guard sizeRange.lowerBound > offset,
+        sizeRange.lowerBound - offset <= 128
       else {
         throw BondryHTTPTransportError.invalidResponse
       }
-      let sizeBytes = buffer[..<sizeRange.lowerBound]
+      let sizeBytes = buffer[offset..<sizeRange.lowerBound]
       guard sizeBytes.allSatisfy({ $0.isASCIIHexDigit }),
         let size = Int(String(decoding: sizeBytes, as: UTF8.self), radix: 16)
       else {
@@ -169,7 +171,7 @@ struct BoundedHTTP1ResponseParser {
         throw BondryHTTPTransportError.invalidResponse
       }
       decodedBody.append(buffer[contentStart..<contentEnd])
-      buffer.removeSubrange(..<(contentEnd + 2))
+      offset = contentEnd + 2
     }
   }
 
