@@ -28,9 +28,11 @@ struct URLSessionHTTPTransport: Sendable {
     let delegate = URLSessionPolicyDelegate(
       additionalTrustAnchors: request.policy.additionalTrustAnchors
     )
-    let session = sessions.session(for: request.policy.additionalTrustAnchors)
+    let pooledSession = sessions.session(for: request.policy.additionalTrustAnchors)
+    defer { withExtendedLifetime(pooledSession) {} }
     do {
-      let (bytes, response) = try await session.bytes(for: urlRequest, delegate: delegate)
+      let (bytes, response) = try await pooledSession.session.bytes(
+        for: urlRequest, delegate: delegate)
       guard let response = response as? HTTPURLResponse else {
         throw BondryHTTPTransportError.invalidResponse
       }
@@ -131,29 +133,53 @@ func withAbsoluteDeadline<Result: Sendable>(
 }
 
 final class URLSessionPool: @unchecked Sendable {
+  static let maximumSessions = 256
+
+  private struct Entry {
+    let session: PooledURLSession
+    var lastUsed: ContinuousClock.Instant
+  }
+
   private let configuration: URLSessionConfiguration
   private let lock = NSLock()
-  private var sessions: [[Data]: URLSession] = [:]
+  private var sessions: [[Data]: Entry] = [:]
 
   init(configuration: URLSessionConfiguration) {
-    self.configuration = configuration
+    guard let snapshot = configuration.copy() as? URLSessionConfiguration else {
+      preconditionFailure("URLSessionConfiguration.copy() must preserve its type")
+    }
+    self.configuration = snapshot
+  }
+
+  func session(for additionalTrustAnchors: [Data]) -> PooledURLSession {
+    lock.withLock {
+      let now = ContinuousClock.now
+      if var entry = sessions[additionalTrustAnchors] {
+        entry.lastUsed = now
+        sessions[additionalTrustAnchors] = entry
+        return entry.session
+      }
+      if sessions.count == Self.maximumSessions,
+        let oldest = sessions.min(by: { $0.value.lastUsed < $1.value.lastUsed })?.key
+      {
+        sessions.removeValue(forKey: oldest)
+      }
+      let session = PooledURLSession(configuration: configuration)
+      sessions[additionalTrustAnchors] = Entry(session: session, lastUsed: now)
+      return session
+    }
+  }
+}
+
+final class PooledURLSession: Sendable {
+  let session: URLSession
+
+  init(configuration: URLSessionConfiguration) {
+    session = URLSession(configuration: configuration)
   }
 
   deinit {
-    for session in sessions.values {
-      session.invalidateAndCancel()
-    }
-  }
-
-  func session(for additionalTrustAnchors: [Data]) -> URLSession {
-    lock.withLock {
-      if let session = sessions[additionalTrustAnchors] {
-        return session
-      }
-      let session = URLSession(configuration: configuration)
-      sessions[additionalTrustAnchors] = session
-      return session
-    }
+    session.finishTasksAndInvalidate()
   }
 }
 
