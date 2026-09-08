@@ -10,7 +10,7 @@ use thiserror::Error;
 
 use crate::DatabaseKey;
 
-const SCHEMA_VERSION: i64 = 5;
+const SCHEMA_VERSION: i64 = 6;
 
 /// SQLCipher-backed authentication and audit persistence.
 pub struct SqlCipherStore {
@@ -92,6 +92,7 @@ fn migrate(connection: &mut Connection) -> Result<(), SqlCipherStoreError> {
     let version: i64 = connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
     match version {
         SCHEMA_VERSION => Ok(()),
+        5 => migrate_from_version_five(connection),
         4 => migrate_from_version_four(connection),
         3 => migrate_from_version_three(connection),
         2 => migrate_from_version_two(connection),
@@ -209,6 +210,14 @@ fn migrate_from_version_four(connection: &mut Connection) -> Result<(), SqlCiphe
     Ok(())
 }
 
+fn migrate_from_version_five(connection: &mut Connection) -> Result<(), SqlCipherStoreError> {
+    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    create_webhook_dedup_key_index(&transaction)?;
+    transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+    transaction.commit()?;
+    Ok(())
+}
+
 fn create_delivery_log_table(transaction: &rusqlite::Transaction<'_>) -> rusqlite::Result<()> {
     transaction.execute_batch(
         "CREATE TABLE delivery_log (
@@ -269,6 +278,15 @@ fn create_webhook_dedup_table(transaction: &rusqlite::Transaction<'_>) -> rusqli
          CREATE INDEX webhook_dedup_by_expiry
              ON webhook_dedup(expires_at_ms)
              WHERE expires_at_ms IS NOT NULL;",
+    )?;
+    create_webhook_dedup_key_index(transaction)
+}
+
+fn create_webhook_dedup_key_index(transaction: &rusqlite::Transaction<'_>) -> rusqlite::Result<()> {
+    transaction.execute_batch(
+        "CREATE INDEX webhook_dedup_by_state_key
+             ON webhook_dedup(state, route_id, verifier_namespace, delivery_hash)
+             WHERE state = 'unknown';",
     )
 }
 

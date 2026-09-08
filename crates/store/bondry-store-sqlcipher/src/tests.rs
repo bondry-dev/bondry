@@ -515,6 +515,59 @@ fn migrates_version_four_and_adds_webhook_replay_persistence()
 }
 
 #[test]
+fn migrates_version_five_without_losing_replay_protection() -> Result<(), Box<dyn std::error::Error>>
+{
+    let directory = TempDir::new()?;
+    let path = database_path(&directory);
+    let key = fixed_key(36);
+    let store = Arc::new(SqlCipherStore::open(&path, &key)?);
+    let dedup = SqlCipherDedupStore::new(store.clone(), DedupStoreLimits::default());
+    for index in 1..=3 {
+        dedup.claim(dedup_key(index)?, DedupClaimPolicy::RetainCompleted, 100)?;
+    }
+    dedup.mark_unknown(&dedup_key(1)?, 101)?;
+    dedup.complete(&dedup_key(2)?, 102)?;
+    store.connection()?.execute_batch(
+        "DROP INDEX webhook_dedup_by_state_key;
+         PRAGMA user_version = 5;",
+    )?;
+    drop(dedup);
+    drop(store);
+
+    let store = Arc::new(SqlCipherStore::open(&path, &key)?);
+    let dedup = SqlCipherDedupStore::new(store.clone(), DedupStoreLimits::default());
+    for (index, state) in [
+        (1, DedupState::Unknown),
+        (2, DedupState::Completed),
+        (3, DedupState::InFlight),
+    ] {
+        assert_eq!(
+            dedup
+                .record(&dedup_key(index)?)?
+                .map(|record| record.state()),
+            Some(state)
+        );
+    }
+    let index_exists: bool = store.connection()?.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master
+         WHERE type = 'index' AND name = 'webhook_dedup_by_state_key')",
+        [],
+        |row| row.get(0),
+    )?;
+    assert!(index_exists);
+    let mut unknown = Vec::new();
+    dedup.visit_unknown(&mut |record| {
+        unknown.push(record.key().clone());
+        true
+    })?;
+    assert_eq!(unknown, vec![dedup_key(1)?]);
+    drop(dedup);
+    drop(store);
+    SqlCipherStore::open(&path, &key)?.check_health()?;
+    Ok(())
+}
+
+#[test]
 fn persists_delivery_transitions_without_sensitive_fields() -> Result<(), Box<dyn std::error::Error>>
 {
     let store = Arc::new(SqlCipherStore::open_in_memory(&fixed_key(26))?);
@@ -695,6 +748,54 @@ fn persists_deduplication_transitions_and_allows_reentrant_administration()
     );
     assert_eq!(dedup.clear_completed_before(106)?, 1);
     assert!(dedup.record(&key)?.is_none());
+    Ok(())
+}
+
+#[test]
+fn visits_unknown_keys_in_order_while_callbacks_resolve_and_insert_records()
+-> Result<(), Box<dyn std::error::Error>> {
+    let store = Arc::new(SqlCipherStore::open_in_memory(&fixed_key(37))?);
+    let dedup = SqlCipherDedupStore::new(store, DedupStoreLimits::default());
+    let keys = [
+        ("route.a", "namespace.a", 1),
+        ("route.a", "namespace.a", 2),
+        ("route.a", "namespace.b", 1),
+        ("route.b", "namespace.a", 1),
+    ]
+    .into_iter()
+    .map(|(route, namespace, hash)| {
+        Ok(DedupKey::new(
+            RouteId::new(route)?,
+            VerifierNamespace::new(namespace)?,
+            TrustedDeliveryIdHash::from_bytes([hash; 32]),
+        ))
+    })
+    .collect::<Result<Vec<_>, Box<dyn std::error::Error>>>()?;
+    for key in &keys {
+        dedup.claim(key.clone(), DedupClaimPolicy::RetainCompleted, 100)?;
+        dedup.mark_unknown(key, 101)?;
+    }
+    let inserted = dedup_key(1)?;
+    let mut visited = Vec::new();
+    let mut callback_result = Ok(());
+    dedup.visit_unknown(&mut |record| {
+        visited.push(record.key().clone());
+        callback_result = (|| {
+            dedup.resolve_unknown(record.key(), DedupResolution::RetryAllowed, 102)?;
+            if visited.len() == 1 {
+                dedup.claim(inserted.clone(), DedupClaimPolicy::RetainCompleted, 103)?;
+                dedup.mark_unknown(&inserted, 104)?;
+            }
+            Ok::<_, bondry_delivery_store::DedupStoreError>(())
+        })();
+        callback_result.is_ok()
+    })?;
+    callback_result?;
+    assert_eq!(visited, keys);
+    assert_eq!(
+        dedup.record(&inserted)?.map(|record| record.state()),
+        Some(DedupState::Unknown)
+    );
     Ok(())
 }
 

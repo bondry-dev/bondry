@@ -19,6 +19,8 @@ Bondry's core is storage-neutral. `AuthStore` defines transactional client and t
 
 The store has no plaintext open function. Opening it requires a 256-bit `DatabaseKey`. The key must be persisted separately in a platform-secure secret store. Apple hosts can use the `BondryApple` Keychain provider; other platforms should use their native credential facilities or a host-provided equivalent.
 
+Opening an existing database automatically migrates it to schema version 6. This migration adds an index for ordered unknown-webhook traversal and preserves existing records. Older binaries reject the newer schema, so rolling back requires a compatible binary or a database backup from before migration.
+
 ## Credential Storage
 
 `bondry-secrets` defines bounded credential identifiers and values, stable backend capabilities, and a host-injected `CredentialStore` contract. It deliberately has no global default or automatic fallback policy.

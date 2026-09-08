@@ -10,6 +10,19 @@ use rusqlite::{OptionalExtension, Row, Transaction, TransactionBehavior, params}
 use crate::SqlCipherStore;
 
 const DEDUP_RECORD_BASE_CHARGE_BYTES: u64 = 96;
+const SELECT_FIRST_UNKNOWN: &str =
+    "SELECT route_id, verifier_namespace, delivery_hash, state, updated_at_ms
+     FROM webhook_dedup
+     WHERE state = 'unknown' AND rowid <= ?1
+     ORDER BY route_id, verifier_namespace, delivery_hash
+     LIMIT 1";
+const SELECT_NEXT_UNKNOWN: &str =
+    "SELECT route_id, verifier_namespace, delivery_hash, state, updated_at_ms
+     FROM webhook_dedup
+     WHERE state = 'unknown' AND rowid <= ?4
+         AND (route_id, verifier_namespace, delivery_hash) > (?1, ?2, ?3)
+     ORDER BY route_id, verifier_namespace, delivery_hash
+     LIMIT 1";
 
 /// Bounded persistent webhook replay protection over an existing SQLCipher store.
 pub struct SqlCipherDedupStore {
@@ -80,16 +93,9 @@ impl SqlCipherDedupStore {
         let connection = self.connection()?;
         let record = match after {
             Some(after) => connection
+                .prepare_cached(SELECT_NEXT_UNKNOWN)
+                .map_err(|_| DedupStoreError::Unavailable)?
                 .query_row(
-                    "SELECT route_id, verifier_namespace, delivery_hash, state, updated_at_ms
-                     FROM webhook_dedup
-                     WHERE state = 'unknown' AND rowid <= ?4 AND (
-                         route_id > ?1
-                         OR (route_id = ?1 AND verifier_namespace > ?2)
-                         OR (route_id = ?1 AND verifier_namespace = ?2 AND delivery_hash > ?3)
-                     )
-                     ORDER BY route_id, verifier_namespace, delivery_hash
-                     LIMIT 1",
                     params![
                         after.route().as_str(),
                         after.namespace().as_str(),
@@ -100,15 +106,9 @@ impl SqlCipherDedupStore {
                 )
                 .optional(),
             None => connection
-                .query_row(
-                    "SELECT route_id, verifier_namespace, delivery_hash, state, updated_at_ms
-                     FROM webhook_dedup
-                     WHERE state = 'unknown' AND rowid <= ?1
-                     ORDER BY route_id, verifier_namespace, delivery_hash
-                     LIMIT 1",
-                    [rowid_ceiling],
-                    RawDedupRecord::read,
-                )
+                .prepare_cached(SELECT_FIRST_UNKNOWN)
+                .map_err(|_| DedupStoreError::Unavailable)?
+                .query_row([rowid_ceiling], RawDedupRecord::read)
                 .optional(),
         }
         .map_err(|_| DedupStoreError::Unavailable)?;
@@ -436,5 +436,58 @@ impl RawDedupRecord {
             decode_state(&self.state)?,
             updated_at_ms,
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use rusqlite::StatementStatus;
+
+    use super::{SELECT_FIRST_UNKNOWN, SELECT_NEXT_UNKNOWN, SqlCipherDedupStore};
+    use crate::{DatabaseKey, SqlCipherStore};
+    use bondry_delivery_store::{DedupStore, DedupStoreLimits};
+    use std::sync::Arc;
+
+    #[test]
+    fn unknown_traversal_uses_bounded_index_seeks() -> Result<(), Box<dyn std::error::Error>> {
+        const RECORDS: u32 = 2_000;
+        let store = Arc::new(SqlCipherStore::open_in_memory(&DatabaseKey::from_bytes(
+            [38; 32],
+        ))?);
+        {
+            let mut connection = store.connection()?;
+            let transaction = connection.transaction()?;
+            for index in 0..RECORDS {
+                let mut hash = [0_u8; 32];
+                hash[..4].copy_from_slice(&index.to_be_bytes());
+                transaction.execute(
+                    "INSERT INTO webhook_dedup (
+                         route_id, verifier_namespace, delivery_hash, state,
+                         automatic_expiry, updated_at_ms, charged_bytes
+                     ) VALUES ('route', 'namespace', ?1, 'unknown', 0, 0, 128)",
+                    [hash.as_slice()],
+                )?;
+            }
+            transaction.commit()?;
+        }
+        let dedup = SqlCipherDedupStore::new(store.clone(), DedupStoreLimits::default());
+        let mut visited = 0;
+        dedup.visit_unknown(&mut |_| {
+            visited += 1;
+            true
+        })?;
+        assert_eq!(visited, RECORDS);
+
+        let connection = store.connection()?;
+        for query in [SELECT_FIRST_UNKNOWN, SELECT_NEXT_UNKNOWN] {
+            let statement = connection.prepare_cached(query)?;
+            assert_eq!(statement.get_status(StatementStatus::Sort), 0);
+            let steps = statement.get_status(StatementStatus::VmStep);
+            assert!(
+                steps > 0 && steps < (RECORDS * 100) as i32,
+                "{steps} VM steps"
+            );
+        }
+        Ok(())
     }
 }
