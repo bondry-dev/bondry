@@ -290,8 +290,7 @@ impl PolicyConnector {
         self,
         stream: TcpStream,
     ) -> Result<TokioIo<PolicyConnection>, TransportError> {
-        let server_name = rustls::pki_types::ServerName::try_from(self.endpoint.host().to_owned())
-            .map_err(|_| TransportError::TlsFailed)?;
+        let server_name = tls_server_name(&self.endpoint)?;
         let config = self.tls_config.ok_or(TransportError::TlsFailed)?;
         let stream = TlsConnector::from(config)
             .connect(server_name, stream)
@@ -314,6 +313,18 @@ impl PolicyConnector {
     ) -> Result<TokioIo<PolicyConnection>, TransportError> {
         Err(TransportError::TlsFailed)
     }
+}
+
+#[cfg(feature = "tls")]
+fn tls_server_name(
+    endpoint: &NetworkEndpoint,
+) -> Result<rustls::pki_types::ServerName<'static>, TransportError> {
+    let host = endpoint.host();
+    let host = host
+        .strip_prefix('[')
+        .and_then(|host| host.strip_suffix(']'))
+        .unwrap_or(host);
+    rustls::pki_types::ServerName::try_from(host.to_owned()).map_err(|_| TransportError::TlsFailed)
 }
 
 impl Service<Uri> for PolicyConnector {
@@ -517,6 +528,30 @@ async fn read_body(
 mod tests {
     use super::{MAX_HTTP_POOL_PARTITIONS, NetHttpTransport, PoolKey};
     use bondry_transport::{EndpointPolicy, NetworkEndpoint};
+
+    #[cfg(feature = "tls")]
+    #[test]
+    fn tls_identity_accepts_ipv6_literals_without_uri_brackets()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use rustls::pki_types::ServerName;
+
+        for host in ["::1", "2001:db8::1234", "::ffff:127.0.0.1"] {
+            let endpoint = NetworkEndpoint::new(format!("https://[{host}]:8443/").parse()?)?;
+            assert_eq!(
+                super::tls_server_name(&endpoint)?,
+                ServerName::IpAddress(host.parse::<std::net::IpAddr>()?.into())
+            );
+            assert!(endpoint.uri().to_string().contains(&format!("[{host}]")));
+        }
+        for host in ["localhost", "example.com", "127.0.0.1"] {
+            let endpoint = NetworkEndpoint::new(format!("https://{host}/").parse()?)?;
+            assert_eq!(
+                super::tls_server_name(&endpoint)?,
+                ServerName::try_from(host)?
+            );
+        }
+        Ok(())
+    }
 
     #[tokio::test(flavor = "current_thread")]
     async fn pool_partition_cache_evicts_least_recently_used_origin() {
