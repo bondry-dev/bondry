@@ -1,4 +1,6 @@
 use std::{
+    io::ErrorKind,
+    os::fd::AsRawFd,
     os::unix::fs::{FileTypeExt as _, MetadataExt as _},
     path::Path,
     sync::Arc,
@@ -9,8 +11,11 @@ use bondry_transport::{
     LocalEndpointPolicy, LocalPeerEvidence, LocalTransportError, TransportFuture,
 };
 use bytes::Bytes;
+use nix::{
+    errno::Errno,
+    sys::socket::{Shutdown, shutdown},
+};
 use tokio::{
-    io::{AsyncReadExt as _, AsyncWriteExt as _},
     net::UnixStream,
     sync::Mutex,
     time::{Instant, timeout_at},
@@ -43,7 +48,19 @@ impl LocalByteStreamTransport for UnixSocketTransport {
 }
 
 struct TokioUnixStream {
-    stream: Mutex<UnixStream>,
+    stream: UnixStream,
+    reader: Mutex<()>,
+    writer: Mutex<()>,
+}
+
+impl TokioUnixStream {
+    fn new(stream: UnixStream) -> Self {
+        Self {
+            stream,
+            reader: Mutex::new(()),
+            writer: Mutex::new(()),
+        }
+    }
 }
 
 impl LocalByteStream for TokioUnixStream {
@@ -58,12 +75,18 @@ impl LocalByteStream for TokioUnixStream {
             }
             let mut buffer = vec![0_u8; max_bytes.min(READ_BUFFER_BYTES)];
             let read = timeout_at(Instant::from_std(deadline.instant()), async {
-                self.stream
-                    .lock()
-                    .await
-                    .read(&mut buffer)
-                    .await
-                    .map_err(|_| LocalTransportError::Unavailable)
+                let _reader = self.reader.lock().await;
+                loop {
+                    self.stream
+                        .readable()
+                        .await
+                        .map_err(|_| LocalTransportError::Unavailable)?;
+                    match self.stream.try_read(&mut buffer) {
+                        Ok(read) => return Ok(read),
+                        Err(error) if error.kind() == ErrorKind::WouldBlock => {}
+                        Err(_) => return Err(LocalTransportError::Unavailable),
+                    }
+                }
             })
             .await
             .map_err(|_| LocalTransportError::DeadlineExceeded)??;
@@ -79,12 +102,21 @@ impl LocalByteStream for TokioUnixStream {
     ) -> TransportFuture<'_, Result<(), LocalTransportError>> {
         Box::pin(async move {
             timeout_at(Instant::from_std(deadline.instant()), async {
-                self.stream
-                    .lock()
-                    .await
-                    .write_all(&bytes)
-                    .await
-                    .map_err(|_| LocalTransportError::Unavailable)
+                let _writer = self.writer.lock().await;
+                let mut remaining = bytes.as_ref();
+                while !remaining.is_empty() {
+                    self.stream
+                        .writable()
+                        .await
+                        .map_err(|_| LocalTransportError::Unavailable)?;
+                    match self.stream.try_write(remaining) {
+                        Ok(0) => return Err(LocalTransportError::Unavailable),
+                        Ok(written) => remaining = &remaining[written..],
+                        Err(error) if error.kind() == ErrorKind::WouldBlock => {}
+                        Err(_) => return Err(LocalTransportError::Unavailable),
+                    }
+                }
+                Ok(())
             })
             .await
             .map_err(|_| LocalTransportError::DeadlineExceeded)?
@@ -93,12 +125,10 @@ impl LocalByteStream for TokioUnixStream {
 
     fn close(&self) -> TransportFuture<'_, Result<(), LocalTransportError>> {
         Box::pin(async move {
-            self.stream
-                .lock()
-                .await
-                .shutdown()
-                .await
-                .map_err(|_| LocalTransportError::Unavailable)
+            match shutdown(self.stream.as_raw_fd(), Shutdown::Both) {
+                Ok(()) | Err(Errno::ENOTCONN) => Ok(()),
+                Err(_) => Err(LocalTransportError::Unavailable),
+            }
         })
     }
 }
@@ -125,9 +155,7 @@ async fn connect_unix(
     };
     let verified = policy.verify(evidence)?;
     Ok(LocalConnection {
-        stream: Arc::new(TokioUnixStream {
-            stream: Mutex::new(stream),
-        }),
+        stream: Arc::new(TokioUnixStream::new(stream)),
         verified,
     })
 }
@@ -181,12 +209,20 @@ fn peer_credentials(_stream: &UnixStream) -> Result<(u32, u32), LocalTransportEr
 
 #[cfg(test)]
 mod tests {
-    use std::time::{Duration, Instant as StdInstant};
+    use std::{
+        future::poll_fn,
+        task::Poll,
+        time::{Duration, Instant as StdInstant},
+    };
 
     use bondry_transport::{Deadline, LocalByteStream as _};
-    use tokio::io::AsyncWriteExt as _;
+    use bytes::Bytes;
+    use tokio::{
+        io::{AsyncReadExt as _, AsyncWriteExt as _},
+        time::timeout,
+    };
 
-    use super::{Mutex, TokioUnixStream, UnixStream};
+    use super::{TokioUnixStream, UnixStream};
 
     #[tokio::test]
     async fn caller_read_bound_cannot_force_an_unbounded_allocation() {
@@ -195,9 +231,7 @@ mod tests {
         peer.write_all(b"bounded")
             .await
             .unwrap_or_else(|error| unreachable!("write fixture bytes: {error}"));
-        let stream = TokioUnixStream {
-            stream: Mutex::new(stream),
-        };
+        let stream = TokioUnixStream::new(stream);
 
         let bytes = stream
             .read(
@@ -208,5 +242,97 @@ mod tests {
             .unwrap_or_else(|error| unreachable!("read fixture bytes: {error}"));
 
         assert_eq!(bytes, b"bounded".as_slice());
+    }
+
+    #[tokio::test]
+    async fn pending_read_allows_concurrent_write() -> Result<(), Box<dyn std::error::Error>> {
+        let (stream, mut peer) = UnixStream::pair()?;
+        let stream = TokioUnixStream::new(stream);
+        let deadline = Deadline::at(StdInstant::now() + Duration::from_secs(1));
+        let mut read = stream.read(4, deadline);
+        assert!(
+            poll_fn(|context| Poll::Ready(read.as_mut().poll(context)))
+                .await
+                .is_pending()
+        );
+
+        stream.write(Bytes::from_static(b"ping"), deadline).await?;
+        let mut request = [0; 4];
+        timeout(Duration::from_secs(1), peer.read_exact(&mut request)).await??;
+        assert_eq!(&request, b"ping");
+        peer.write_all(b"pong").await?;
+        assert_eq!(read.await?, b"pong".as_slice());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn close_interrupts_pending_read() -> Result<(), Box<dyn std::error::Error>> {
+        let (stream, mut peer) = UnixStream::pair()?;
+        let stream = TokioUnixStream::new(stream);
+        let deadline = Deadline::at(StdInstant::now() + Duration::from_secs(1));
+        let mut read = stream.read(1, deadline);
+        assert!(
+            poll_fn(|context| Poll::Ready(read.as_mut().poll(context)))
+                .await
+                .is_pending()
+        );
+
+        timeout(Duration::from_secs(1), stream.close()).await??;
+        assert!(read.await?.is_empty());
+        let mut buffer = [0];
+        assert_eq!(
+            timeout(Duration::from_secs(1), peer.read(&mut buffer)).await??,
+            0
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn close_interrupts_backpressured_write() -> Result<(), Box<dyn std::error::Error>> {
+        let (stream, _peer) = UnixStream::pair()?;
+        let buffer = [0; 64 * 1024];
+        loop {
+            match stream.try_write(&buffer) {
+                Ok(_) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => break,
+                Err(error) => return Err(error.into()),
+            }
+        }
+        let stream = TokioUnixStream::new(stream);
+        let deadline = Deadline::at(StdInstant::now() + Duration::from_secs(1));
+        let mut write = stream.write(Bytes::from_static(b"blocked"), deadline);
+        assert!(
+            poll_fn(|context| Poll::Ready(write.as_mut().poll(context)))
+                .await
+                .is_pending()
+        );
+
+        timeout(Duration::from_secs(1), stream.close()).await??;
+        assert_eq!(
+            write.await,
+            Err(bondry_transport::LocalTransportError::Unavailable)
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn close_is_repeatable_and_prevents_later_io() -> Result<(), Box<dyn std::error::Error>> {
+        use bondry_transport::LocalTransportError;
+
+        let (stream, _peer) = UnixStream::pair()?;
+        let stream = TokioUnixStream::new(stream);
+        stream.close().await?;
+        stream.close().await?;
+        let deadline = Deadline::at(StdInstant::now() + Duration::from_secs(1));
+        assert!(stream.read(1, deadline).await?.is_empty());
+        assert_eq!(
+            stream.write(Bytes::from_static(b"closed"), deadline).await,
+            Err(LocalTransportError::Unavailable)
+        );
+        assert_eq!(
+            stream.read(0, deadline).await,
+            Err(LocalTransportError::InvalidReadBound)
+        );
+        Ok(())
     }
 }
