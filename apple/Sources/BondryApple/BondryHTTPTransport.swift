@@ -241,6 +241,29 @@ public struct BondryHTTPRequest: Sendable, CustomDebugStringConvertible {
     policy: BondryEndpointPolicy = BondryEndpointPolicy(),
     maximumResponseBodyBytes: Int = 64 * 1_024
   ) throws {
+    guard timeout >= .seconds(1) else {
+      throw BondryHTTPTransportError.invalidLimits
+    }
+    try self.init(
+      method: method,
+      url: url,
+      headers: headers,
+      body: body,
+      remainingTimeout: timeout,
+      policy: policy,
+      maximumResponseBodyBytes: maximumResponseBodyBytes
+    )
+  }
+
+  package init(
+    method: String,
+    url: URL,
+    headers: [(String, String)],
+    body: Data,
+    remainingTimeout: Duration,
+    policy: BondryEndpointPolicy,
+    maximumResponseBodyBytes: Int
+  ) throws {
     guard ["DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"].contains(method),
       let scheme = url.scheme?.lowercased(),
       scheme == "http" || scheme == "https",
@@ -261,7 +284,7 @@ public struct BondryHTTPRequest: Sendable, CustomDebugStringConvertible {
     else {
       throw BondryHTTPTransportError.requestTooLarge
     }
-    guard timeout >= .seconds(1), timeout <= .seconds(120),
+    guard remainingTimeout > .zero, remainingTimeout <= .seconds(120),
       maximumResponseBodyBytes >= Self.minimumResponseBodyBytes,
       maximumResponseBodyBytes <= Self.maximumResponseBodyBytes,
       headers.allSatisfy({ Self.validHeader(name: $0.0, value: $0.1) })
@@ -272,7 +295,7 @@ public struct BondryHTTPRequest: Sendable, CustomDebugStringConvertible {
     self.url = url
     self.headers = headers
     self.body = body
-    self.timeout = timeout
+    timeout = remainingTimeout
     self.policy = policy
     self.maximumResponseBodyBytes = maximumResponseBodyBytes
   }

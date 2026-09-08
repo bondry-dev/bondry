@@ -6,7 +6,7 @@ use std::{
     slice,
     sync::{Arc, Mutex},
     task::{Context, Poll, Waker},
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 use bondry_transport::{
@@ -295,9 +295,7 @@ impl HttpTransport for ForeignHttpTransport {
             })
             .collect::<Vec<_>>();
         let method = parts.method.as_str();
-        let timeout_milliseconds = u64::try_from(remaining.as_millis())
-            .unwrap_or(u64::MAX)
-            .max(1);
+        let timeout_milliseconds = remaining_timeout_milliseconds(remaining);
         let ffi_request = BondryHTTPRequestV1 {
             method: method.as_ptr(),
             method_length: method.len(),
@@ -344,6 +342,10 @@ impl HttpTransport for ForeignHttpTransport {
             limits: parts.limits,
         })
     }
+}
+
+fn remaining_timeout_milliseconds(remaining: Duration) -> u64 {
+    u64::try_from(remaining.as_nanos().div_ceil(1_000_000)).unwrap_or(u64::MAX)
 }
 
 struct CompletionState {
@@ -621,7 +623,7 @@ fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 
 #[cfg(test)]
 mod tests {
-    use std::ptr;
+    use std::{ptr, time::Duration};
 
     use bondry_transport::{EndpointPolicy, PolicyError, TransportError};
 
@@ -629,7 +631,22 @@ mod tests {
         BONDRY_CONNECTION_EVIDENCE_TLS_V1, BONDRY_HTTP_RESULT_ERROR_V1,
         BONDRY_HTTP_RESULT_RESPONSE_V1, BONDRY_TRANSPORT_ERROR_DEADLINE_EXCEEDED_V1,
         BondryConnectionEvidenceV1, BondryHTTPResultV1, parse_result,
+        remaining_timeout_milliseconds,
     };
+
+    #[test]
+    fn rounds_remaining_deadlines_up_without_overflow() {
+        for (remaining, milliseconds) in [
+            (Duration::ZERO, 0),
+            (Duration::from_nanos(1), 1),
+            (Duration::from_millis(999), 999),
+            (Duration::from_micros(999_001), 1_000),
+            (Duration::from_secs(120), 120_000),
+            (Duration::MAX, u64::MAX),
+        ] {
+            assert_eq!(remaining_timeout_milliseconds(remaining), milliseconds);
+        }
+    }
 
     fn tls_result(server_name: &[u8]) -> BondryHTTPResultV1 {
         BondryHTTPResultV1 {

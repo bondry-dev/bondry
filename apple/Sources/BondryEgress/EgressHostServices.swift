@@ -224,7 +224,7 @@ private struct EncodedHeaders {
   }
 }
 
-private func decodeHTTPRequest(_ request: BondryHTTPRequestV1) throws -> BondryHTTPRequest {
+func decodeHTTPRequest(_ request: BondryHTTPRequestV1) throws -> BondryHTTPRequest {
   let method = try copyUTF8(request.method, count: request.method_length, allowEmpty: false)
   let rawURL = try copyUTF8(request.url, count: request.url_length, allowEmpty: false)
   guard let url = URL(string: rawURL), url.absoluteString == rawURL else {
@@ -252,7 +252,7 @@ private func decodeHTTPRequest(_ request: BondryHTTPRequestV1) throws -> BondryH
     url: url,
     headers: headers,
     body: body,
-    timeout: .milliseconds(Int64(request.timeout_milliseconds)),
+    remainingTimeout: .milliseconds(Int64(request.timeout_milliseconds)),
     policy: policy,
     maximumResponseBodyBytes: request.max_response_body_bytes
   )
