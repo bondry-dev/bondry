@@ -117,13 +117,8 @@ private final class NetworkHTTPExchange: @unchecked Sendable {
     else {
       throw BondryHTTPTransportError.unsupportedEndpoint
     }
-    var pathComponents = components
-    pathComponents.scheme = nil
-    pathComponents.host = nil
-    pathComponents.port = nil
-    pathComponents.user = nil
-    pathComponents.password = nil
-    let pathAndQuery = pathComponents.string.flatMap { $0.isEmpty ? nil : $0 } ?? "/"
+    let path = components.percentEncodedPath.isEmpty ? "/" : components.percentEncodedPath
+    let pathAndQuery = components.percentEncodedQuery.map { "\(path)?\($0)" } ?? path
     let defaultPort = request.url.port == nil || request.url.port == 80
     let authority = defaultPort ? host : "\(host):\(request.url.port ?? 80)"
     var head = "\(request.method) \(pathAndQuery) HTTP/1.1\r\n"
