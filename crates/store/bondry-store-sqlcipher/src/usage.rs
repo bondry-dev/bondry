@@ -32,15 +32,30 @@ pub(crate) fn initialize(transaction: &Transaction<'_>) -> rusqlite::Result<()> 
              CHECK (table_name != 'delivery_log' OR charged_bytes = records * 512)
          );",
     )?;
+    refresh(transaction)?;
     for table in ["delivery_log", "webhook_dedup"] {
+        create_triggers(transaction, table)?;
+    }
+    Ok(())
+}
+
+pub(crate) fn refresh(transaction: &Transaction<'_>) -> rusqlite::Result<()> {
+    transaction.execute("DELETE FROM storage_usage", [])?;
+    for (table, valid_charge) in [
+        ("delivery_log", "charged_bytes = 512"),
+        ("webhook_dedup", "charged_bytes >= 96"),
+    ] {
         transaction.execute(
             &format!(
                 "INSERT INTO storage_usage (table_name, records, charged_bytes)
-                 SELECT ?1, COUNT(*), COALESCE(SUM(charged_bytes), 0) FROM {table}"
+                 SELECT ?1, COUNT(*),
+                     CASE WHEN COUNT(*) = COUNT(CASE
+                         WHEN typeof(charged_bytes) = 'integer' AND {valid_charge} THEN 1 END)
+                     THEN COALESCE(SUM(charged_bytes), 0) END
+                 FROM {table}"
             ),
             [table],
         )?;
-        create_triggers(transaction, table)?;
     }
     Ok(())
 }

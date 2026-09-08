@@ -211,6 +211,7 @@ fn migrate_legacy_dedup(transaction: &rusqlite::Transaction<'_>) -> rusqlite::Re
 
 fn migrate_from_version_seven(transaction: &rusqlite::Transaction<'_>) -> rusqlite::Result<()> {
     rebuild_webhook_dedup_table(transaction)?;
+    crate::usage::refresh(transaction)?;
     crate::usage::create_triggers(transaction, "webhook_dedup")?;
     Ok(())
 }

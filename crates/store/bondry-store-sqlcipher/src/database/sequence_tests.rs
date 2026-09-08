@@ -313,6 +313,148 @@ fn legacy_migrations_preserve_replay_records_accounting_and_atomicity() -> TestR
 }
 
 #[test]
+fn version_seven_migration_repairs_usage_metadata_from_stored_records() -> TestResult {
+    for damage in [
+        "DELETE FROM storage_usage",
+        "UPDATE storage_usage SET records = 0, charged_bytes = 0",
+        "UPDATE storage_usage SET records = 32, charged_bytes = 16384",
+        "UPDATE storage_usage SET records = -1, charged_bytes = -1",
+        "UPDATE storage_usage SET charged_bytes = 'invalid'",
+        "UPDATE storage_usage SET records = 9223372036854775807,
+             charged_bytes = 9223372036854775807",
+        "UPDATE storage_usage SET charged_bytes = 1e100",
+    ] {
+        let directory = TempDir::new()?;
+        let path = directory.path().join("usage-repair.db");
+        let database_key = DatabaseKey::from_bytes([52; 32]);
+        let store = Arc::new(SqlCipherStore::open(&path, &database_key)?);
+        seed_migration_records(&store)?;
+        make_legacy_schema(&store, 7)?;
+        let expected = stored_rows(&*store.connection()?)?;
+        store.connection()?.execute_batch(&format!(
+            "PRAGMA ignore_check_constraints = ON;
+             {damage};
+             PRAGMA ignore_check_constraints = OFF;"
+        ))?;
+        drop(store);
+
+        let store = Arc::new(SqlCipherStore::open(&path, &database_key)?);
+        assert_eq!(schema_version(&*store.connection()?)?, 8);
+        assert_eq!(stored_rows(&*store.connection()?)?, expected, "{damage}");
+        assert_usage(&store)?;
+        claim_unknown(&dedup(&store), key("after_repair")?)?;
+        SqlCipherDeliveryLog::new(store.clone(), PersistentDeliveryLogLimits::default())
+            .insert_intent(DeliveryIntent::new(
+                RouteId::new("route")?,
+                DeliveryId::new("after_repair")?,
+                104,
+            ))?;
+        assert_usage(&store)?;
+        dedup(&store).resolve_unknown(&key("after_repair")?, DedupResolution::RetryAllowed, 105)?;
+        assert_usage(&store)?;
+        drop(store);
+        assert_usage(&SqlCipherStore::open(&path, &database_key)?)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn invalid_source_charges_roll_back_version_seven_usage_repair() -> TestResult {
+    for (table, damage) in [
+        (
+            "delivery_log",
+            "UPDATE delivery_log SET charged_bytes = 513",
+        ),
+        (
+            "webhook_dedup",
+            "UPDATE webhook_dedup SET charged_bytes = 96.5 WHERE route_id = 'unknown'",
+        ),
+        (
+            "delivery_log",
+            "INSERT INTO delivery_log (delivery_id, route_id, accepted_at_ms, state,
+                 updated_at_ms, charged_bytes)
+             VALUES ('offsetting', 'route', 100, 'pending', 100, 512);
+             UPDATE delivery_log SET charged_bytes =
+                 CASE delivery_id WHEN 'delivery' THEN 511 ELSE 513 END",
+        ),
+        (
+            "webhook_dedup",
+            "UPDATE webhook_dedup SET charged_bytes = 9223372036854775807",
+        ),
+        (
+            "webhook_dedup",
+            "UPDATE webhook_dedup SET charged_bytes = 128;
+             UPDATE webhook_dedup SET charged_bytes = 'invalid' WHERE route_id = 'unknown'",
+        ),
+        (
+            "webhook_dedup",
+            "UPDATE webhook_dedup SET charged_bytes = CASE route_id
+                 WHEN 'unknown' THEN 128.5 WHEN 'in_flight' THEN 127.5 ELSE 128 END",
+        ),
+    ] {
+        let directory = TempDir::new()?;
+        let path = directory.path().join("invalid-usage-source.db");
+        let database_key = DatabaseKey::from_bytes([53; 32]);
+        let store = Arc::new(SqlCipherStore::open(&path, &database_key)?);
+        seed_migration_records(&store)?;
+        make_legacy_schema(&store, 7)?;
+        store.connection()?.execute_batch(&format!(
+            "PRAGMA ignore_check_constraints = ON;
+             {damage};
+             PRAGMA ignore_check_constraints = OFF;"
+        ))?;
+        let expected_charges = stored_charges(&*store.connection()?, table)?;
+        let expected_usage = stored_usage_metadata(&*store.connection()?)?;
+        drop(store);
+
+        assert!(
+            SqlCipherStore::open(&path, &database_key).is_err(),
+            "{damage}"
+        );
+        let connection = Connection::open(&path)?;
+        connection.pragma_update(None, "key", database_key.sqlcipher_passphrase().as_str())?;
+        assert_eq!(schema_version(&connection)?, 7);
+        assert_eq!(stored_charges(&connection, table)?, expected_charges);
+        assert_eq!(stored_usage_metadata(&connection)?, expected_usage);
+        let sequence_exists: bool = connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM pragma_table_info('webhook_dedup')
+                 WHERE name = 'sequence')",
+            [],
+            |row| row.get(0),
+        )?;
+        assert!(!sequence_exists);
+        let replacement_exists: bool = connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE name = 'webhook_dedup_next')",
+            [],
+            |row| row.get(0),
+        )?;
+        assert!(!replacement_exists);
+    }
+    Ok(())
+}
+
+fn stored_charges(connection: &Connection, table: &str) -> rusqlite::Result<Vec<(i64, String)>> {
+    connection
+        .prepare(&format!(
+            "SELECT rowid, quote(charged_bytes) FROM {table} ORDER BY rowid"
+        ))?
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+        .collect()
+}
+
+fn stored_usage_metadata(
+    connection: &Connection,
+) -> rusqlite::Result<Vec<(String, String, String)>> {
+    connection
+        .prepare(
+            "SELECT table_name, quote(records), quote(charged_bytes)
+             FROM storage_usage ORDER BY table_name",
+        )?
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
+        .collect()
+}
+
+#[test]
 fn failed_insertions_preserve_sequence_accounting_and_existing_records() -> TestResult {
     let store = Arc::new(SqlCipherStore::open_in_memory(&DatabaseKey::from_bytes(
         [49; 32],
