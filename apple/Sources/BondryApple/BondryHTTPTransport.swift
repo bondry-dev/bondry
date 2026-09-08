@@ -36,7 +36,13 @@ public enum BondryIPAddress: Equatable, Sendable {
     }
   }
 
-  var normalized: BondryIPAddress {
+  var normalized: BondryIPAddress? {
+    switch self {
+    case .v4(let bytes):
+      guard bytes.count == 4 else { return nil }
+    case .v6(let bytes):
+      guard bytes.count == 16 else { return nil }
+    }
     guard case .v6(let bytes) = self,
       bytes.prefix(10).allSatisfy({ $0 == 0 }),
       bytes[bytes.startIndex + 10] == 0xff,
@@ -136,7 +142,10 @@ public struct BondryEndpointPolicy: Equatable, Sendable, CustomDebugStringConver
     else {
       throw BondryHTTPTransportError.connectionEvidenceMismatch
     }
-    switch address.addressClass {
+    guard let addressClass = address.addressClass else {
+      throw BondryHTTPTransportError.missingConnectionEvidence
+    }
+    switch addressClass {
     case .loopback where Self.hasLoopbackIntent(host):
       return
     case .loopback where allowHostnameLoopbackCleartext && !Self.looksLikeIPLiteral(host):
@@ -149,7 +158,7 @@ public struct BondryEndpointPolicy: Equatable, Sendable, CustomDebugStringConver
       throw BondryHTTPTransportError.privateCleartextDenied
     case .linkLocal where !allowLinkLocalCleartext:
       throw BondryHTTPTransportError.linkLocalCleartextDenied
-    case .linkLocal where interfaceScope == nil:
+    case .linkLocal where interfaceScope == nil || interfaceScope == 0:
       throw BondryHTTPTransportError.linkLocalScopeRequired
     case .linkLocal:
       return
@@ -330,7 +339,8 @@ private enum BondryIPAddressClass {
 }
 
 extension BondryIPAddress {
-  fileprivate var addressClass: BondryIPAddressClass {
+  fileprivate var addressClass: BondryIPAddressClass? {
+    guard let normalized else { return nil }
     switch normalized {
     case .v4(let data):
       let bytes = [UInt8](data)
