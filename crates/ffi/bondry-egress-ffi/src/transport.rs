@@ -623,16 +623,83 @@ fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 
 #[cfg(test)]
 mod tests {
-    use std::{ptr, time::Duration};
+    use std::{
+        future::Future,
+        pin::Pin,
+        ptr,
+        sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        },
+        task::{Context, Wake, Waker},
+        time::Duration,
+    };
 
-    use bondry_transport::{EndpointPolicy, PolicyError, TransportError};
+    use bondry_transport::{
+        EndpointPolicy, HttpLimits, NetworkEndpoint, PolicyError, TransportError,
+    };
 
     use super::{
         BONDRY_CONNECTION_EVIDENCE_TLS_V1, BONDRY_HTTP_RESULT_ERROR_V1,
         BONDRY_HTTP_RESULT_RESPONSE_V1, BONDRY_TRANSPORT_ERROR_DEADLINE_EXCEEDED_V1,
-        BondryConnectionEvidenceV1, BondryHTTPResultV1, parse_result,
-        remaining_timeout_milliseconds,
+        BondryConnectionEvidenceV1, BondryHTTPResultV1, CompletionState, ForeignTransportFuture,
+        complete_http, parse_result, remaining_timeout_milliseconds,
     };
+
+    #[derive(Default)]
+    struct WakeCounter(AtomicUsize);
+
+    impl Wake for WakeCounter {
+        fn wake(self: Arc<Self>) {
+            self.0.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    #[test]
+    fn late_host_completion_releases_state_after_the_waiter_is_dropped()
+    -> Result<(), Box<dyn std::error::Error>> {
+        for poll_before_drop in [false, true] {
+            for successful in [false, true] {
+                let completion = Arc::new(CompletionState::new(4096));
+                let retained = Arc::downgrade(&completion);
+                let callback_context = Arc::into_raw(Arc::clone(&completion)).cast_mut().cast();
+                let mut future = ForeignTransportFuture {
+                    completion,
+                    endpoint: NetworkEndpoint::new("https://example.com/hook".parse()?)?,
+                    policy: EndpointPolicy::default(),
+                    limits: HttpLimits::default(),
+                };
+                let wakes = Arc::new(WakeCounter::default());
+                let waker = Waker::from(Arc::clone(&wakes));
+                if poll_before_drop {
+                    assert!(
+                        Pin::new(&mut future)
+                            .poll(&mut Context::from_waker(&waker))
+                            .is_pending()
+                    );
+                }
+                drop(future);
+                assert_eq!(retained.strong_count(), 1);
+
+                let mut result = tls_result(b"example.com");
+                if !successful {
+                    result.kind = BONDRY_HTTP_RESULT_ERROR_V1;
+                    result.error = BONDRY_TRANSPORT_ERROR_DEADLINE_EXCEEDED_V1;
+                }
+                // SAFETY: The callback owns one Arc unit and all result fields remain readable.
+                unsafe { complete_http(callback_context, &result) };
+
+                assert!(retained.upgrade().is_none());
+                assert_eq!(
+                    wakes.0.load(Ordering::Relaxed),
+                    usize::from(poll_before_drop)
+                );
+                drop(waker);
+                assert_eq!(Arc::strong_count(&wakes), 1);
+            }
+        }
+        Ok(())
+    }
 
     #[test]
     fn rounds_remaining_deadlines_up_without_overflow() {
