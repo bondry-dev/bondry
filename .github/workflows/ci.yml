@@ -415,6 +415,9 @@ jobs:
       - name: Test Rust on Apple
         run: cargo test --workspace --all-features --locked
       - name: Test Swift
+        timeout-minutes: 5
+        env:
+          NSUnbufferedIO: "YES"
         run: |
           swift package dump-package > /dev/null
           swift test --package-path apple

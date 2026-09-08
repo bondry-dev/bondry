@@ -1,5 +1,4 @@
 import Foundation
-import Network
 import Security
 import XCTest
 
@@ -269,8 +268,7 @@ final class HTTPTransportTests: XCTestCase {
     func testCleartextTransportUsesConnectedLoopbackPeer() async throws {
       let server = try LoopbackHTTPServer()
       defer { server.stop() }
-      try await server.waitUntilReady()
-      let port = try XCTUnwrap(server.port)
+      let port = try await server.readyPort()
       let request = try BondryHTTPRequest(
         method: "POST",
         url: try XCTUnwrap(URL(string: "http://localhost:\(port)/deliver?source=test")),
@@ -455,89 +453,3 @@ extension BondryHTTPTransportError {
     }
   }
 }
-
-#if os(macOS)
-  private final class LoopbackHTTPServer: @unchecked Sendable {
-    private let listener: NWListener
-    private let queue = DispatchQueue(label: "dev.bondry.http-transport-test")
-    private let lock = NSLock()
-    private var received = Data()
-    private var connections: [NWConnection] = []
-
-    init() throws {
-      listener = try NWListener(using: .tcp, on: .any)
-      listener.newConnectionHandler = { connection in
-        self.accept(connection)
-      }
-      listener.start(queue: queue)
-    }
-
-    var port: UInt16? {
-      listener.port?.rawValue
-    }
-
-    var request: Data {
-      lock.withLock { received }
-    }
-
-    func waitUntilReady() async throws {
-      try await withCheckedThrowingContinuation { continuation in
-        queue.async {
-          if case .ready = self.listener.state {
-            continuation.resume()
-            return
-          }
-          self.listener.stateUpdateHandler = { state in
-            switch state {
-            case .ready:
-              self.listener.stateUpdateHandler = nil
-              continuation.resume()
-            case .failed:
-              self.listener.stateUpdateHandler = nil
-              continuation.resume(throwing: BondryHTTPTransportError.connectionFailed)
-            default:
-              break
-            }
-          }
-        }
-      }
-    }
-
-    func stop() {
-      listener.cancel()
-      lock.withLock {
-        for connection in connections {
-          connection.cancel()
-        }
-        connections.removeAll()
-      }
-    }
-
-    private func accept(_ connection: NWConnection) {
-      lock.withLock { connections.append(connection) }
-      connection.start(queue: queue)
-      receive(from: connection)
-    }
-
-    private func receive(from connection: NWConnection) {
-      connection.receive(minimumIncompleteLength: 1, maximumLength: 512 * 1_024) {
-        content,
-        _,
-        _,
-        error in
-        guard error == nil else { return }
-        if let content {
-          self.lock.withLock { self.received.append(content) }
-        }
-        guard self.request.range(of: Data("\r\n\r\n".utf8)) != nil else {
-          self.receive(from: connection)
-          return
-        }
-        let response = Data(
-          "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok".utf8
-        )
-        connection.send(content: response, completion: .contentProcessed { _ in })
-      }
-    }
-  }
-#endif
