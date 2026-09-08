@@ -46,3 +46,11 @@ tokio = { workspace = true, features = ["macros"] }
 
 [lints]
 workspace = true
+
+[[example]]
+name = "transport-size-baseline"
+required-features = ["http"]
+
+[[example]]
+name = "transport-size-http-tls"
+required-features = ["tls"]
