@@ -37,12 +37,15 @@ struct URLSessionHTTPTransport: Sendable {
       if delegate.didRedirect || (300...399).contains(response.statusCode) {
         throw BondryHTTPTransportError.redirectDenied
       }
-      if response.expectedContentLength > Int64(request.maximumResponseBodyBytes) {
+      if request.method != "HEAD",
+        response.expectedContentLength > Int64(request.maximumResponseBodyBytes)
+      {
         throw BondryHTTPTransportError.responseTooLarge
       }
       let headers = try Self.headers(from: response)
       var body = Data()
-      let expectedLength = max(0, Int(clamping: response.expectedContentLength))
+      let expectedLength =
+        request.method == "HEAD" ? 0 : max(0, Int(clamping: response.expectedContentLength))
       body.reserveCapacity(min(request.maximumResponseBodyBytes, expectedLength))
       for try await byte in bytes {
         guard body.count < request.maximumResponseBodyBytes else {
