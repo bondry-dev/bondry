@@ -206,6 +206,59 @@ final class BondryWebhookIngressTests: XCTestCase {
     XCTAssertEqual(bondry_test_webhook_register_count(), 0)
   }
 
+  func testReplayCleanupRejectsUnrepresentableCutoffsBeforeCallingNativeCode() throws {
+    let runtime = try makeRuntime()
+    let server = try runtime.startLocalServer(
+      configuration: BondryLocalServerConfiguration(adapters: [])
+    )
+    defer { try? server.stop() }
+    let registration = try runtime.registerWebhook(
+      on: server,
+      configuration: makeConfiguration(),
+      secretProvider: TestSecretProvider()
+    )
+    let seconds: [TimeInterval] = [
+      -1, .nan, .infinity, -.infinity,
+      Double(UInt64.max) / 1_000, .greatestFiniteMagnitude,
+    ]
+
+    for value in seconds {
+      XCTAssertThrowsError(
+        try registration.clearCompletedReplayRecords(before: Date(timeIntervalSince1970: value))
+      ) { error in
+        XCTAssertEqual(error as? BondryWebhookIngressError, .invalidData)
+      }
+    }
+    XCTAssertEqual(bondry_test_webhook_dedup_clear_count(), 0)
+  }
+
+  func testReplayCleanupFloorsRepresentableCutoffsToMilliseconds() throws {
+    let runtime = try makeRuntime()
+    let server = try runtime.startLocalServer(
+      configuration: BondryLocalServerConfiguration(adapters: [])
+    )
+    defer { try? server.stop() }
+    let registration = try runtime.registerWebhook(
+      on: server,
+      configuration: makeConfiguration(),
+      secretProvider: TestSecretProvider()
+    )
+    let cutoffs: [(TimeInterval, UInt64)] = [
+      (0, 0),
+      (1.2345, 1_234),
+      ((Double(UInt64.max) / 1_000).nextDown, UInt64.max - 4_095),
+    ]
+
+    for (seconds, milliseconds) in cutoffs {
+      XCTAssertEqual(
+        try registration.clearCompletedReplayRecords(before: Date(timeIntervalSince1970: seconds)),
+        0
+      )
+      XCTAssertEqual(bondry_test_webhook_dedup_cutoff(), milliseconds)
+    }
+    XCTAssertEqual(bondry_test_webhook_dedup_clear_count(), cutoffs.count)
+  }
+
   private func makeRuntime() throws -> BondryRuntime {
     try BondryRuntime.open(
       at: URL(fileURLWithPath: "/tmp/bondry-webhook-ingress-test.db"),

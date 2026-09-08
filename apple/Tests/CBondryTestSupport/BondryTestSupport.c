@@ -121,6 +121,8 @@ static uint8_t captured_webhook_configuration[BONDRY_WEBHOOK_MAX_CONFIGURATION_B
 static uint32_t captured_dedup_records = 0;
 static uint64_t captured_dedup_bytes = 0;
 static uint64_t captured_dedup_retention_seconds = 0;
+static size_t dedup_clear_count = 0;
+static uint64_t captured_dedup_cutoff = 0;
 static uint8_t captured_egress_route[131072];
 static size_t captured_egress_delivery_id_length = 0;
 static uint8_t captured_egress_delivery_id[BONDRY_IDENTIFIER_CAPACITY_V1];
@@ -289,6 +291,8 @@ void bondry_test_reset(void) {
     captured_dedup_records = 0;
     captured_dedup_bytes = 0;
     captured_dedup_retention_seconds = 0;
+    dedup_clear_count = 0;
+    captured_dedup_cutoff = 0;
 }
 
 void bondry_test_set_abi_version(uint32_t version) {
@@ -499,6 +503,14 @@ uint64_t bondry_test_webhook_dedup_bytes(void) {
 
 uint64_t bondry_test_webhook_dedup_retention_seconds(void) {
     return captured_dedup_retention_seconds;
+}
+
+size_t bondry_test_webhook_dedup_clear_count(void) {
+    return dedup_clear_count;
+}
+
+uint64_t bondry_test_webhook_dedup_cutoff(void) {
+    return captured_dedup_cutoff;
 }
 
 size_t bondry_test_path_length(void) {
@@ -872,6 +884,20 @@ BondryStatus bondry_automation_service_v1(
     return BONDRY_STATUS_OK;
 }
 
+static BondryStatus clear_completed_replay_records(
+    void *context,
+    uint64_t cutoff,
+    uint64_t *out_cleared
+) {
+    if (context == NULL || out_cleared == NULL) {
+        return BONDRY_STATUS_NULL_POINTER;
+    }
+    dedup_clear_count += 1;
+    captured_dedup_cutoff = cutoff;
+    *out_cleared = 0;
+    return BONDRY_STATUS_OK;
+}
+
 BondryStatus bondry_store_dedup_v1(
     const BondryStoreHandle *store,
     uint32_t max_records,
@@ -890,6 +916,8 @@ BondryStatus bondry_store_dedup_v1(
     out_dedup->struct_size = sizeof(*out_dedup);
     out_dedup->threading_model = BONDRY_DEDUP_THREADING_SERIALIZED_V1;
     out_dedup->durability = BONDRY_STORE_DURABILITY_PERSISTENT_V1;
+    out_dedup->context = &captured_dedup_cutoff;
+    out_dedup->clear_completed = clear_completed_replay_records;
     return BONDRY_STATUS_OK;
 }
 

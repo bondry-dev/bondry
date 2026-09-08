@@ -56,6 +56,8 @@ uint8_t bondry_test_webhook_configuration_byte(size_t index);
 uint32_t bondry_test_webhook_dedup_records(void);
 uint64_t bondry_test_webhook_dedup_bytes(void);
 uint64_t bondry_test_webhook_dedup_retention_seconds(void);
+size_t bondry_test_webhook_dedup_clear_count(void);
+uint64_t bondry_test_webhook_dedup_cutoff(void);
 size_t bondry_test_path_length(void);
 size_t bondry_test_key_length(void);
 uint8_t bondry_test_key_byte(size_t index);

@@ -470,10 +470,10 @@ private func currentUnixMilliseconds() throws -> UInt64 {
 
 private func unixMilliseconds(_ date: Date) throws -> UInt64 {
   let value = date.timeIntervalSince1970 * 1_000
-  guard value.isFinite, value >= 0, value <= Double(UInt64.max) else {
+  guard let milliseconds = UInt64(exactly: value.rounded(.down)) else {
     throw BondryWebhookIngressError.invalidData
   }
-  return UInt64(value.rounded(.down))
+  return milliseconds
 }
 
 private func requireWebhookSuccess(_ status: BondryStatus) throws {
