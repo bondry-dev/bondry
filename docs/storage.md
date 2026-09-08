@@ -19,11 +19,11 @@ Bondry's core is storage-neutral. `AuthStore` defines transactional client and t
 
 The store has no plaintext open function. Opening it requires a 256-bit `DatabaseKey`. The key must be persisted separately in a platform-secure secret store. Apple hosts can use the `BondryApple` Keychain provider; other platforms should use their native credential facilities or a host-provided equivalent.
 
-Opening an existing database automatically migrates it to schema version 7. Migrations preserve existing records and add ordered unknown-webhook traversal, transactional admission counters, and indexed retention cleanup. Counter initialization scans existing delivery and deduplication records once during migration. Older binaries reject the newer schema, so rolling back requires a compatible binary or a database backup from before migration.
+Opening an existing database automatically migrates it to schema version 8. Migrations preserve existing records and add non-reusable deduplication sequences, transactional admission counters, and indexed retention cleanup. Sequence assignment and counter initialization scan existing records once during their respective migrations. Older binaries reject the newer schema, so rolling back requires a compatible binary or a database backup from before migration.
 
 Delivery and deduplication admissions read persisted usage counters instead of aggregating retained history. Database triggers update those counters in the same transaction as supported store operations, including rollback and cleanup across independent connections. Missing or malformed counters cause admission to fail closed. See [admission performance](performance/store-admission.md) for measured query work and verification commands.
 
-Unknown webhook records are streamed in key order without holding the database lock during visitor callbacks. Enumeration is limited to the initial unknown-record count; concurrent changes may require a subsequent pass.
+Unknown webhook records are streamed in key order without holding the database lock during visitor callbacks. Traversal excludes records inserted after it captures the sequence ceiling. Each lookup observes current state, so existing records concurrently changed to or from unknown may be included or omitted. A later pass observes subsequent changes.
 
 ## Credential Storage
 

@@ -10,16 +10,17 @@ use rusqlite::{OptionalExtension, Row, Transaction, TransactionBehavior, params}
 use crate::SqlCipherStore;
 
 const DEDUP_RECORD_BASE_CHARGE_BYTES: u64 = 96;
+const SELECT_UNKNOWN_CEILING: &str = "SELECT COALESCE(MAX(sequence), 0) FROM webhook_dedup";
 const SELECT_FIRST_UNKNOWN: &str =
     "SELECT route_id, verifier_namespace, delivery_hash, state, updated_at_ms
      FROM webhook_dedup
-     WHERE state = 'unknown' AND rowid <= ?1
+     WHERE state = 'unknown' AND sequence <= ?1
      ORDER BY route_id, verifier_namespace, delivery_hash
      LIMIT 1";
 const SELECT_NEXT_UNKNOWN: &str =
     "SELECT route_id, verifier_namespace, delivery_hash, state, updated_at_ms
      FROM webhook_dedup
-     WHERE state = 'unknown' AND rowid <= ?4
+     WHERE state = 'unknown' AND sequence <= ?4
          AND (route_id, verifier_namespace, delivery_hash) > (?1, ?2, ?3)
      ORDER BY route_id, verifier_namespace, delivery_hash
      LIMIT 1";
@@ -74,22 +75,19 @@ impl SqlCipherDedupStore {
         }
     }
 
-    fn unknown_scan_bounds(&self) -> Result<(i64, i64), DedupStoreError> {
+    fn unknown_scan_ceiling(&self) -> Result<i64, DedupStoreError> {
         let connection = self.connection()?;
         connection
-            .query_row(
-                "SELECT COALESCE(MAX(rowid), 0), COUNT(*) FROM webhook_dedup
-                 WHERE state = 'unknown'",
-                [],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
+            .prepare_cached(SELECT_UNKNOWN_CEILING)
+            .map_err(|_| DedupStoreError::Unavailable)?
+            .query_row([], |row| row.get(0))
             .map_err(|_| DedupStoreError::Unavailable)
     }
 
     fn next_unknown(
         &self,
         after: Option<&DedupKey>,
-        rowid_ceiling: i64,
+        sequence_ceiling: i64,
     ) -> Result<Option<DedupRecord>, DedupStoreError> {
         let connection = self.connection()?;
         let record = match after {
@@ -101,7 +99,7 @@ impl SqlCipherDedupStore {
                         after.route().as_str(),
                         after.namespace().as_str(),
                         after.delivery_hash().as_bytes().as_slice(),
-                        rowid_ceiling,
+                        sequence_ceiling,
                     ],
                     RawDedupRecord::read,
                 )
@@ -109,7 +107,7 @@ impl SqlCipherDedupStore {
             None => connection
                 .prepare_cached(SELECT_FIRST_UNKNOWN)
                 .map_err(|_| DedupStoreError::Unavailable)?
-                .query_row([rowid_ceiling], RawDedupRecord::read)
+                .query_row([sequence_ceiling], RawDedupRecord::read)
                 .optional(),
         }
         .map_err(|_| DedupStoreError::Unavailable)?;
@@ -323,10 +321,10 @@ impl DedupStore for SqlCipherDedupStore {
         &self,
         visitor: &mut dyn FnMut(&DedupRecord) -> bool,
     ) -> Result<(), DedupStoreError> {
-        let (rowid_ceiling, record_count) = self.unknown_scan_bounds()?;
+        let sequence_ceiling = self.unknown_scan_ceiling()?;
         let mut cursor = None;
-        for _ in 0..record_count {
-            let Some(record) = self.next_unknown(cursor.as_ref(), rowid_ceiling)? else {
+        loop {
+            let Some(record) = self.next_unknown(cursor.as_ref(), sequence_ceiling)? else {
                 return Ok(());
             };
             cursor = Some(record.key().clone());
@@ -334,7 +332,6 @@ impl DedupStore for SqlCipherDedupStore {
                 return Ok(());
             }
         }
-        Ok(())
     }
 
     fn clear_completed_before(&self, updated_before_unix_ms: u64) -> Result<u64, DedupStoreError> {

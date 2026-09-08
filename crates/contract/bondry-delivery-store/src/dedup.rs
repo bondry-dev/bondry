@@ -187,6 +187,7 @@ pub trait DedupStore: Send + Sync {
     ) -> Result<(), DedupStoreError>;
 
     /// Visits unknown records in key order without holding a store lock during callbacks.
+    /// Concurrent state changes may affect which existing records are visited.
     fn visit_unknown(
         &self,
         visitor: &mut dyn FnMut(&DedupRecord) -> bool,

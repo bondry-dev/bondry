@@ -10,7 +10,7 @@ use thiserror::Error;
 
 use crate::DatabaseKey;
 
-const SCHEMA_VERSION: i64 = 7;
+const SCHEMA_VERSION: i64 = 8;
 
 /// SQLCipher-backed authentication and audit persistence.
 pub struct SqlCipherStore {
@@ -89,22 +89,29 @@ fn protect_database_file(path: &Path) -> Result<(), SqlCipherStoreError> {
 }
 
 fn migrate(connection: &mut Connection) -> Result<(), SqlCipherStoreError> {
-    let version: i64 = connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
-    match version {
-        SCHEMA_VERSION => Ok(()),
-        6 => migrate_from_version_six(connection),
-        5 => migrate_from_version_five(connection),
-        4 => migrate_from_version_four(connection),
-        3 => migrate_from_version_three(connection),
-        2 => migrate_from_version_two(connection),
-        1 => migrate_from_version_one(connection),
-        0 => migrate_from_empty(connection),
-        unsupported => Err(SqlCipherStoreError::UnsupportedSchema(unsupported)),
+    let version: i64 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
+    if version == SCHEMA_VERSION {
+        return Ok(());
     }
+    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let version: i64 = transaction.pragma_query_value(None, "user_version", |row| row.get(0))?;
+    match version {
+        SCHEMA_VERSION => return Ok(()),
+        7 => migrate_from_version_seven(&transaction)?,
+        5 | 6 => migrate_legacy_dedup(&transaction)?,
+        4 => migrate_from_version_four(&transaction)?,
+        3 => migrate_from_version_three(&transaction)?,
+        2 => migrate_from_version_two(&transaction)?,
+        1 => migrate_from_version_one(&transaction)?,
+        0 => migrate_from_empty(&transaction)?,
+        unsupported => return Err(SqlCipherStoreError::UnsupportedSchema(unsupported)),
+    }
+    transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+    transaction.commit()?;
+    Ok(())
 }
 
-fn migrate_from_empty(connection: &mut Connection) -> Result<(), SqlCipherStoreError> {
-    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+fn migrate_from_empty(transaction: &rusqlite::Transaction<'_>) -> rusqlite::Result<()> {
     transaction.execute_batch(
         "CREATE TABLE clients (
              id TEXT PRIMARY KEY NOT NULL,
@@ -159,13 +166,12 @@ fn migrate_from_empty(connection: &mut Connection) -> Result<(), SqlCipherStoreE
              PRIMARY KEY (principal_id, adapter_id, capability_id)
          );",
     )?;
-    create_delivery_log_table(&transaction)?;
-    create_webhook_dedup_table(&transaction)?;
-    finish_migration(transaction)
+    create_delivery_log_table(transaction)?;
+    create_webhook_dedup_table(transaction)?;
+    initialize_storage_accounting(transaction)
 }
 
-fn migrate_from_version_one(connection: &mut Connection) -> Result<(), SqlCipherStoreError> {
-    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+fn migrate_from_version_one(transaction: &rusqlite::Transaction<'_>) -> rusqlite::Result<()> {
     transaction.execute_batch(
         "CREATE TABLE grants (
              principal_id TEXT NOT NULL,
@@ -174,56 +180,47 @@ fn migrate_from_version_one(connection: &mut Connection) -> Result<(), SqlCipher
              PRIMARY KEY (principal_id, adapter_id, capability_id)
          );",
     )?;
-    rebuild_audit_table(&transaction)?;
-    create_delivery_log_table(&transaction)?;
-    create_webhook_dedup_table(&transaction)?;
-    finish_migration(transaction)
+    rebuild_audit_table(transaction)?;
+    create_delivery_log_table(transaction)?;
+    create_webhook_dedup_table(transaction)?;
+    initialize_storage_accounting(transaction)
 }
 
-fn migrate_from_version_two(connection: &mut Connection) -> Result<(), SqlCipherStoreError> {
-    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    rebuild_audit_table(&transaction)?;
-    create_delivery_log_table(&transaction)?;
-    create_webhook_dedup_table(&transaction)?;
-    finish_migration(transaction)
+fn migrate_from_version_two(transaction: &rusqlite::Transaction<'_>) -> rusqlite::Result<()> {
+    rebuild_audit_table(transaction)?;
+    create_delivery_log_table(transaction)?;
+    create_webhook_dedup_table(transaction)?;
+    initialize_storage_accounting(transaction)
 }
 
-fn migrate_from_version_three(connection: &mut Connection) -> Result<(), SqlCipherStoreError> {
-    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    create_delivery_log_table(&transaction)?;
-    create_webhook_dedup_table(&transaction)?;
-    finish_migration(transaction)
+fn migrate_from_version_three(transaction: &rusqlite::Transaction<'_>) -> rusqlite::Result<()> {
+    create_delivery_log_table(transaction)?;
+    create_webhook_dedup_table(transaction)?;
+    initialize_storage_accounting(transaction)
 }
 
-fn migrate_from_version_four(connection: &mut Connection) -> Result<(), SqlCipherStoreError> {
-    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    create_webhook_dedup_table(&transaction)?;
-    finish_migration(transaction)
+fn migrate_from_version_four(transaction: &rusqlite::Transaction<'_>) -> rusqlite::Result<()> {
+    create_webhook_dedup_table(transaction)?;
+    initialize_storage_accounting(transaction)
 }
 
-fn migrate_from_version_five(connection: &mut Connection) -> Result<(), SqlCipherStoreError> {
-    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    create_webhook_dedup_key_index(&transaction)?;
-    finish_migration(transaction)
+fn migrate_legacy_dedup(transaction: &rusqlite::Transaction<'_>) -> rusqlite::Result<()> {
+    rebuild_webhook_dedup_table(transaction)?;
+    initialize_storage_accounting(transaction)
 }
 
-fn migrate_from_version_six(connection: &mut Connection) -> Result<(), SqlCipherStoreError> {
-    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    finish_migration(transaction)
+fn migrate_from_version_seven(transaction: &rusqlite::Transaction<'_>) -> rusqlite::Result<()> {
+    rebuild_webhook_dedup_table(transaction)?;
+    crate::usage::create_triggers(transaction, "webhook_dedup")?;
+    Ok(())
 }
 
-fn finish_migration(transaction: rusqlite::Transaction<'_>) -> Result<(), SqlCipherStoreError> {
-    crate::usage::initialize(&transaction)?;
+fn initialize_storage_accounting(transaction: &rusqlite::Transaction<'_>) -> rusqlite::Result<()> {
+    crate::usage::initialize(transaction)?;
     transaction.execute_batch(
         "CREATE INDEX delivery_log_terminal_expiry
-             ON delivery_log(updated_at_ms) WHERE state != 'pending';
-         DROP INDEX webhook_dedup_by_expiry;
-         CREATE INDEX webhook_dedup_by_expiry
-             ON webhook_dedup(state, expires_at_ms)
-             WHERE state = 'completed' AND expires_at_ms IS NOT NULL;",
+             ON delivery_log(updated_at_ms) WHERE state != 'pending';",
     )?;
-    transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
-    transaction.commit()?;
     Ok(())
 }
 
@@ -265,8 +262,17 @@ fn create_delivery_log_table(transaction: &rusqlite::Transaction<'_>) -> rusqlit
 }
 
 fn create_webhook_dedup_table(transaction: &rusqlite::Transaction<'_>) -> rusqlite::Result<()> {
-    transaction.execute_batch(
-        "CREATE TABLE webhook_dedup (
+    create_webhook_dedup_rows(transaction, "webhook_dedup")?;
+    finish_webhook_dedup_schema(transaction)
+}
+
+fn create_webhook_dedup_rows(
+    transaction: &rusqlite::Transaction<'_>,
+    table: &str,
+) -> rusqlite::Result<()> {
+    transaction.execute_batch(&format!(
+        "CREATE TABLE {table} (
+             sequence INTEGER PRIMARY KEY AUTOINCREMENT,
              route_id TEXT NOT NULL,
              verifier_namespace TEXT NOT NULL,
              delivery_hash BLOB NOT NULL CHECK (length(delivery_hash) = 32),
@@ -275,28 +281,47 @@ fn create_webhook_dedup_table(transaction: &rusqlite::Transaction<'_>) -> rusqli
              updated_at_ms INTEGER NOT NULL CHECK (updated_at_ms >= 0),
              expires_at_ms INTEGER,
              charged_bytes INTEGER NOT NULL CHECK (charged_bytes >= 96),
-             PRIMARY KEY (route_id, verifier_namespace, delivery_hash),
+             UNIQUE (route_id, verifier_namespace, delivery_hash),
              CHECK (
                  (state = 'completed' AND automatic_expiry = 1 AND expires_at_ms IS NOT NULL)
                  OR (state = 'completed' AND automatic_expiry = 0 AND expires_at_ms IS NULL)
                  OR (state != 'completed' AND expires_at_ms IS NULL)
              )
-         );
-         CREATE INDEX webhook_dedup_by_state
-             ON webhook_dedup(state, updated_at_ms);
-         CREATE INDEX webhook_dedup_by_expiry
-             ON webhook_dedup(expires_at_ms)
-             WHERE expires_at_ms IS NOT NULL;",
-    )?;
-    create_webhook_dedup_key_index(transaction)
+         );"
+    ))
 }
 
-fn create_webhook_dedup_key_index(transaction: &rusqlite::Transaction<'_>) -> rusqlite::Result<()> {
+fn finish_webhook_dedup_schema(transaction: &rusqlite::Transaction<'_>) -> rusqlite::Result<()> {
     transaction.execute_batch(
-        "CREATE INDEX webhook_dedup_by_state_key
+        "CREATE INDEX webhook_dedup_by_state
+             ON webhook_dedup(state, updated_at_ms);
+         CREATE INDEX webhook_dedup_by_expiry
+             ON webhook_dedup(state, expires_at_ms)
+             WHERE state = 'completed' AND expires_at_ms IS NOT NULL;
+         CREATE INDEX webhook_dedup_by_state_key
              ON webhook_dedup(state, route_id, verifier_namespace, delivery_hash)
-             WHERE state = 'unknown';",
+             WHERE state = 'unknown';
+         CREATE TRIGGER webhook_dedup_sequence_immutable BEFORE UPDATE ON webhook_dedup
+         WHEN NEW.sequence IS NOT OLD.sequence BEGIN
+             SELECT RAISE(ABORT, 'dedup sequence is immutable');
+         END;",
     )
+}
+
+fn rebuild_webhook_dedup_table(transaction: &rusqlite::Transaction<'_>) -> rusqlite::Result<()> {
+    create_webhook_dedup_rows(transaction, "webhook_dedup_next")?;
+    transaction.execute_batch(
+        "INSERT INTO webhook_dedup_next (
+             route_id, verifier_namespace, delivery_hash, state, automatic_expiry,
+             updated_at_ms, expires_at_ms, charged_bytes
+         )
+         SELECT route_id, verifier_namespace, delivery_hash, state, automatic_expiry,
+             updated_at_ms, expires_at_ms, charged_bytes
+         FROM webhook_dedup ORDER BY rowid;
+         DROP TABLE webhook_dedup;
+         ALTER TABLE webhook_dedup_next RENAME TO webhook_dedup;",
+    )?;
+    finish_webhook_dedup_schema(transaction)
 }
 
 fn rebuild_audit_table(transaction: &rusqlite::Transaction<'_>) -> rusqlite::Result<()> {
@@ -362,3 +387,6 @@ pub enum SqlCipherStoreError {
     #[error("SQLCipher storage is unavailable")]
     Unavailable,
 }
+
+#[cfg(test)]
+mod sequence_tests;
